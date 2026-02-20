@@ -52,6 +52,9 @@ install-dev: ## Install in editable mode for development
 		$(PYTHON) -m pip install -e ".[dev]"
 	@echo "✓ Dev install complete"
 
+setup: ## Install all 21 external security tools (nuclei, nmap, sqlmap, etc.)
+	@chmod +x install.sh && bash -c 'source install.sh && install_external_tools'
+
 # ── Uninstall ────────────────────────────────────────────
 
 uninstall: ## Uninstall beatrix from everywhere

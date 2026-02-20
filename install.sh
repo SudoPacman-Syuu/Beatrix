@@ -182,32 +182,387 @@ _add_to_path() {
     fi
 }
 
-# ── Optional Tools ───────────────────────────────────────────
+# ── Package Manager Detection ────────────────────────────────
+
+detect_pkg_manager() {
+    if command_exists apt-get; then
+        PKG_MGR="apt"
+    elif command_exists dnf; then
+        PKG_MGR="dnf"
+    elif command_exists pacman; then
+        PKG_MGR="pacman"
+    elif command_exists apk; then
+        PKG_MGR="apk"
+    else
+        PKG_MGR="unknown"
+    fi
+}
+
+pkg_install() {
+    local pkg="$1"
+    case "$PKG_MGR" in
+        apt)    sudo apt-get install -y -qq "$pkg" 2>/dev/null ;;
+        dnf)    sudo dnf install -y -q "$pkg" 2>/dev/null ;;
+        pacman) sudo pacman -S --noconfirm --needed "$pkg" 2>/dev/null ;;
+        apk)    sudo apk add --quiet "$pkg" 2>/dev/null ;;
+        *)      return 1 ;;
+    esac
+}
+
+# ── Go Toolchain ─────────────────────────────────────────────
+
+ensure_go() {
+    if command_exists go; then
+        success "Go already installed ($(go version | grep -oP 'go\d+\.\d+\.\d+'))"
+        return 0
+    fi
+
+    info "Installing Go toolchain..."
+    local GO_VERSION="1.22.5"
+    local ARCH
+    ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+    local GO_TAR="go${GO_VERSION}.linux-${ARCH}.tar.gz"
+
+    curl -sSL "https://go.dev/dl/${GO_TAR}" -o "/tmp/${GO_TAR}" || { warn "Failed to download Go"; return 1; }
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf "/tmp/${GO_TAR}" || { warn "Failed to extract Go"; return 1; }
+    rm -f "/tmp/${GO_TAR}"
+
+    export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+    _add_to_path "/usr/local/go/bin"
+    _add_to_path "$HOME/go/bin"
+
+    if command_exists go; then
+        success "Go installed ($(go version | grep -oP 'go\d+\.\d+\.\d+'))"
+        return 0
+    else
+        warn "Go installation failed"
+        return 1
+    fi
+}
+
+go_install_tool() {
+    local name="$1"
+    local pkg="$2"
+    if command_exists "$name"; then
+        success "$name (already installed)"
+        return 0
+    fi
+    info "Installing $name..."
+    go install -v "$pkg" &>/dev/null && success "$name" || { warn "Failed to install $name"; return 1; }
+}
+
+# ── Node.js / npm ────────────────────────────────────────────
+
+ensure_node() {
+    if command_exists node && command_exists npm; then
+        return 0
+    fi
+    info "Installing Node.js..."
+    case "$PKG_MGR" in
+        apt)
+            curl -fsSL https://deb.nodesource.com/setup_20.x 2>/dev/null | sudo -E bash - &>/dev/null
+            sudo apt-get install -y -qq nodejs 2>/dev/null
+            ;;
+        dnf)    sudo dnf install -y -q nodejs npm 2>/dev/null ;;
+        pacman) sudo pacman -S --noconfirm --needed nodejs npm 2>/dev/null ;;
+        *)      warn "Cannot auto-install Node.js on this system"; return 1 ;;
+    esac
+    command_exists node && success "Node.js installed" || { warn "Node.js install failed"; return 1; }
+}
+
+# ── External Tools Installer ─────────────────────────────────
+
+install_external_tools() {
+    # Temporarily disable exit-on-error (tool installs may fail gracefully)
+    set +e
+
+    echo ""
+    echo -e "${YELLOW}${BOLD}╔══════════════════════════════════════════╗${RESET}"
+    echo -e "${YELLOW}${BOLD}║       ⚔️  ARMING THE ARSENAL  ⚔️         ║${RESET}"
+    echo -e "${YELLOW}${BOLD}╚══════════════════════════════════════════╝${RESET}"
+    echo ""
+
+    local installed=0
+    local failed=0
+    local skipped=0
+    local total=21
+
+    detect_pkg_manager
+    info "Detected package manager: ${BOLD}${PKG_MGR}${RESET}"
+
+    # ── 1. System packages (apt/dnf/pacman) ──────────────
+    echo ""
+    echo -e "${BOLD}[1/6] System packages...${RESET}"
+
+    if [[ "$PKG_MGR" == "apt" ]]; then
+        sudo apt-get update -qq 2>/dev/null
+    fi
+
+    declare -A SYS_PKGS
+    case "$PKG_MGR" in
+        apt)
+            SYS_PKGS=(
+                [nmap]="nmap"
+                [sqlmap]="sqlmap"
+                [whatweb]="whatweb"
+                [adb]="android-tools-adb"
+            )
+            ;;
+        dnf)
+            SYS_PKGS=(
+                [nmap]="nmap"
+                [sqlmap]="sqlmap"
+                [whatweb]="whatweb"
+                [adb]="android-tools"
+            )
+            ;;
+        pacman)
+            SYS_PKGS=(
+                [nmap]="nmap"
+                [sqlmap]="sqlmap"
+                [whatweb]="whatweb"
+                [adb]="android-tools"
+            )
+            ;;
+        *)
+            SYS_PKGS=()
+            ;;
+    esac
+
+    for tool in nmap sqlmap whatweb adb; do
+        if command_exists "$tool"; then
+            success "$tool (already installed)"
+            ((skipped++))
+        elif [[ -n "${SYS_PKGS[$tool]+x}" ]]; then
+            info "Installing $tool..."
+            if pkg_install "${SYS_PKGS[$tool]}"; then
+                success "$tool"
+                ((installed++))
+            else
+                warn "Failed to install $tool"
+                ((failed++))
+            fi
+        else
+            warn "Cannot auto-install $tool on this system"
+            ((failed++))
+        fi
+    done
+
+    # ── 2. Go-based tools ────────────────────────────────
+    echo ""
+    echo -e "${BOLD}[2/6] Go-based security tools...${RESET}"
+
+    if ensure_go; then
+        export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+        export GOPATH="${GOPATH:-$HOME/go}"
+        export GOBIN="$GOPATH/bin"
+        mkdir -p "$GOBIN"
+
+        declare -A GO_TOOLS=(
+            [nuclei]="github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
+            [httpx]="github.com/projectdiscovery/httpx/cmd/httpx@latest"
+            [subfinder]="github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
+            [ffuf]="github.com/ffuf/ffuf/v2@latest"
+            [katana]="github.com/projectdiscovery/katana/cmd/katana@latest"
+            [gospider]="github.com/jaeles-project/gospider@latest"
+            [hakrawler]="github.com/hakluke/hakrawler@latest"
+            [gau]="github.com/lc/gau/v2/cmd/gau@latest"
+            [dalfox]="github.com/hahwul/dalfox/v2@latest"
+            [amass]="github.com/owasp-amass/amass/v4/...@master"
+        )
+
+        for tool in nuclei httpx subfinder ffuf katana gospider hakrawler gau dalfox amass; do
+            if command_exists "$tool"; then
+                success "$tool (already installed)"
+                ((skipped++))
+            else
+                if go_install_tool "$tool" "${GO_TOOLS[$tool]}"; then
+                    ((installed++))
+                else
+                    ((failed++))
+                fi
+            fi
+        done
+
+        _add_to_path "$GOBIN"
+    else
+        warn "Skipping Go tools (Go not available)"
+        ((failed+=10))
+    fi
+
+    # ── 3. Python tools ──────────────────────────────────
+    echo ""
+    echo -e "${BOLD}[3/6] Python security tools...${RESET}"
+
+    for tool in mitmproxy commix; do
+        if command_exists "$tool"; then
+            success "$tool (already installed)"
+            ((skipped++))
+        else
+            info "Installing $tool..."
+            if $PYTHON -m pip install --user --break-system-packages "$tool" &>/dev/null || \
+               $PYTHON -m pip install --user "$tool" &>/dev/null; then
+                success "$tool"
+                ((installed++))
+            else
+                warn "Failed to install $tool"
+                ((failed++))
+            fi
+        fi
+    done
+
+    # jwt_tool
+    if command_exists jwt_tool || command_exists jwt_tool.py; then
+        success "jwt_tool (already installed)"
+        ((skipped++))
+    else
+        info "Installing jwt_tool..."
+        local JWT_DIR="$HOME/.local/share/jwt_tool"
+        mkdir -p "$JWT_DIR"
+        if curl -sSL "https://raw.githubusercontent.com/ticarpi/jwt_tool/master/jwt_tool.py" -o "$JWT_DIR/jwt_tool.py" && \
+           chmod +x "$JWT_DIR/jwt_tool.py" && \
+           $PYTHON -m pip install --user --break-system-packages termcolor cprint pycryptodomex requests &>/dev/null; then
+            mkdir -p "$HOME/.local/bin"
+            cat > "$HOME/.local/bin/jwt_tool" <<WRAPPER
+#!/usr/bin/env bash
+exec $PYTHON "$JWT_DIR/jwt_tool.py" "\$@"
+WRAPPER
+            chmod +x "$HOME/.local/bin/jwt_tool"
+            success "jwt_tool"
+            ((installed++))
+        else
+            warn "Failed to install jwt_tool"
+            ((failed++))
+        fi
+    fi
+
+    # dirsearch
+    if command_exists dirsearch; then
+        success "dirsearch (already installed)"
+        ((skipped++))
+    else
+        info "Installing dirsearch..."
+        if $PYTHON -m pip install --user --break-system-packages dirsearch &>/dev/null || \
+           $PYTHON -m pip install --user dirsearch &>/dev/null; then
+            success "dirsearch"
+            ((installed++))
+        else
+            warn "Failed to install dirsearch"
+            ((failed++))
+        fi
+    fi
+
+    # ── 4. Playwright (browser automation) ───────────────
+    echo ""
+    echo -e "${BOLD}[4/6] Playwright (browser automation)...${RESET}"
+
+    if command_exists playwright; then
+        success "playwright (already installed)"
+        ((skipped++))
+    else
+        info "Installing playwright..."
+        if $PYTHON -m pip install --user --break-system-packages playwright &>/dev/null || \
+           $PYTHON -m pip install --user playwright &>/dev/null; then
+            info "Installing Chromium browser for playwright..."
+            $PYTHON -m playwright install chromium --with-deps &>/dev/null && \
+                success "playwright + Chromium" || \
+                { success "playwright (run 'playwright install chromium' for browser)"; }
+            ((installed++))
+        else
+            warn "Failed to install playwright"
+            ((failed++))
+        fi
+    fi
+
+    # ── 5. Node.js tools ─────────────────────────────────
+    echo ""
+    echo -e "${BOLD}[5/6] Node.js tools...${RESET}"
+
+    if command_exists wappalyzer; then
+        success "wappalyzer (already installed)"
+        ((skipped++))
+    else
+        if ensure_node; then
+            info "Installing wappalyzer..."
+            if sudo npm install -g wappalyzer &>/dev/null || npm install -g wappalyzer &>/dev/null; then
+                success "wappalyzer"
+                ((installed++))
+            else
+                warn "Failed to install wappalyzer"
+                ((failed++))
+            fi
+        else
+            warn "Skipping wappalyzer (Node.js not available)"
+            ((failed++))
+        fi
+    fi
+
+    # ── 6. Metasploit Framework ──────────────────────────
+    echo ""
+    echo -e "${BOLD}[6/6] Metasploit Framework...${RESET}"
+
+    if command_exists msfconsole; then
+        success "metasploit (already installed)"
+        ((skipped++))
+    else
+        info "Installing Metasploit Framework (this may take a few minutes)..."
+        if curl -sSL https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > /tmp/msfinstall 2>/dev/null && \
+           chmod +x /tmp/msfinstall && \
+           sudo /tmp/msfinstall &>/dev/null; then
+            rm -f /tmp/msfinstall
+            success "metasploit"
+            ((installed++))
+        else
+            rm -f /tmp/msfinstall
+            warn "Failed to install metasploit (try manually: curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall && chmod +x msfinstall && sudo ./msfinstall)"
+            ((failed++))
+        fi
+    fi
+
+    # ── Summary ──────────────────────────────────────────
+    echo ""
+    echo -e "${BOLD}Arsenal Summary:${RESET}"
+    echo -e "  ${GREEN}✓ Installed:${RESET}  $installed"
+    echo -e "  ${CYAN}○ Skipped:${RESET}   $skipped (already present)"
+    if [[ $failed -gt 0 ]]; then
+        echo -e "  ${RED}✗ Failed:${RESET}    $failed"
+    fi
+
+    local ready=$((installed + skipped))
+    echo ""
+    echo -e "  ${BOLD}${ready}/${total} tools armed.${RESET}"
+
+    if [[ $failed -gt 0 ]]; then
+        echo ""
+        echo -e "  ${DIM}Run ${BOLD}beatrix setup${DIM} anytime to retry failed installations.${RESET}"
+    fi
+
+    # Re-enable strict mode
+    set -euo pipefail
+}
+
+# ── Optional Tools (check only) ──────────────────────────────
 
 check_optional_tools() {
     echo ""
-    echo -e "${BOLD}Optional tools (not required, but unlock more features):${RESET}"
+    echo -e "${BOLD}External tools status:${RESET}"
 
     local tools=("nuclei" "httpx" "subfinder" "ffuf" "katana" "sqlmap" "nmap" "adb" "mitmproxy" "playwright" "amass" "whatweb" "wappalyzer" "gospider" "hakrawler" "gau" "dirsearch" "dalfox" "commix" "jwt_tool" "msfconsole")
-    local missing=()
+    local found=0
+    local total=${#tools[@]}
 
     for tool in "${tools[@]}"; do
         if command_exists "$tool"; then
             success "$tool"
+            ((found++))
         else
             echo -e "  ${DIM}○ $tool (not installed)${RESET}"
-            missing+=("$tool")
         fi
     done
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo ""
-        echo -e "  ${DIM}Install missing tools:${RESET}"
-        echo -e "  ${DIM}  Go-based: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest${RESET}"
-        echo -e "  ${DIM}  Or:       sudo apt install nmap sqlmap adb mitmproxy amass dalfox commix${RESET}"
-        echo -e "  ${DIM}  Python:   pip install dirsearch jwt_tool${RESET}"
-        echo -e "  ${DIM}  Node:     npm install -g wappalyzer playwright${RESET}"
-    fi
+    echo ""
+    echo -e "  ${found}/${total} tools available."
 }
 
 # ── Main ─────────────────────────────────────────────────────
@@ -257,6 +612,10 @@ main() {
     fi
 
     check_optional_tools
+
+    echo ""
+    echo -e "${BOLD}Installing external tools (the full arsenal)...${RESET}"
+    install_external_tools
 
     echo ""
     echo -e "${GREEN}${BOLD}══════════════════════════════════════════${RESET}"

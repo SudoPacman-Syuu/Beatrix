@@ -562,6 +562,7 @@
                 <li class="sub-item"><a href="#cmd-h1">h1 (HackerOne)</a></li>
                 <li class="sub-item"><a href="#cmd-mobile">mobile</a></li>
                 <li class="sub-item"><a href="#cmd-manual">manual</a></li>
+                <li class="sub-item"><a href="#cmd-setup">setup</a></li>
                 
                 <li><a href="#modules">5. The Arsenal (38+ Modules)</a></li>
                 <li class="sub-item"><a href="#mod-recon">Phase 1: Reconnaissance</a></li>
@@ -621,7 +622,10 @@ make install-venv
 sudo pip install .</code></pre>
 
                 <h3 id="dependencies">External Dependencies</h3>
-                <p>While Beatrix's core engine is pure Python, maximum lethality requires several external binaries and tools. Beatrix acts as an orchestrator for these tools during the Reconnaissance, Vulnerable Component, and Exploitation phases.</p>
+                <p>While Beatrix's core engine is pure Python, maximum lethality requires 21 external binaries and tools. <strong>All of these are automatically installed</strong> when you run <code>./install.sh</code> or <code>beatrix setup</code>.</p>
+                <div class="pro-tip">
+                    <strong>Auto-Install:</strong> You never need to install these manually. The installer handles Go, Python, Node.js, and system packages automatically. To re-run the setup later: <code>beatrix setup</code>. To check status: <code>beatrix setup --check</code>.
+                </div>
                 <ul>
                     <li><code>nuclei</code> (Go) - Used for CVE scanning, misconfigs, and default logins (8000+ templates).</li>
                     <li><code>subfinder</code> (Go) - Used for passive subdomain enumeration.</li>
@@ -680,7 +684,7 @@ beatrix config --set ai.model claude-3-5-sonnet-20241022</code></pre>
 
             <section id="commands">
                 <h2>4. Command Reference</h2>
-                <p>Beatrix provides <strong>19 top-level commands</strong> (plus 10 subcommands across 3 groups). Listed below from simplest to most complex.</p>
+                <p>Beatrix provides <strong>20 top-level commands</strong> (plus 10 subcommands across 3 groups). Listed below from simplest to most complex.</p>
 
                 <!-- ═══════════ TIER 1: Quick & Simple ═══════════ -->
                 <h3>Tier 1: Quick &amp; Simple</h3>
@@ -712,6 +716,25 @@ beatrix help findings</code></pre>
                     <div class="detail-body">
                         <pre><code>beatrix manual</code></pre>
                         <p>Opens this comprehensive HTML manual in your system's default browser. Works offline — no internet connection required. The manual covers every command, every module, all flags, presets, workflows, and the full OWASP reference.</p>
+                    </div>
+                </details>
+
+                <details id="cmd-setup">
+                    <summary>setup — Install All External Security Tools</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix setup [OPTIONS]</code></pre>
+                        <p>Automatically installs all 21 external security tools that Beatrix orchestrates. Detects your system's package manager and installs each tool using the best method (apt/dnf/pacman for system packages, <code>go install</code> for Go tools, pip for Python tools, npm for Node tools, and the official Metasploit installer).</p>
+                        <table class="flag-table">
+                            <tr><td>--check</td><td>Only show tool status, don't install anything</td></tr>
+                        </table>
+                        <pre><code># Install all missing tools
+beatrix setup
+
+# Just check what's installed
+beatrix setup --check</code></pre>
+                        <div class="pro-tip">
+                            <strong>Note:</strong> This is automatically run during <code>./install.sh</code>. Use <code>beatrix setup</code> to retry failed installations or after a fresh system setup.
+                        </div>
                     </div>
                 </details>
 

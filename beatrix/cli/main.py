@@ -702,6 +702,7 @@ def cli(ctx, quiet):
       beatrix help <command>                Detailed command help
       beatrix manual                        Open the full HTML manual
       beatrix arsenal                       Full module reference
+      beatrix setup                         Install all external tools
       beatrix --version                     Show version
 
     \b
@@ -750,6 +751,7 @@ def _show_quick_reference():
     table.add_row("arsenal", "Full module reference", "beatrix arsenal")
     table.add_row("help CMD", "Detailed command help", "beatrix help hunt")
     table.add_row("manual", "Open HTML manual in browser", "beatrix manual")
+    table.add_row("setup", "Install all external tools", "beatrix setup")
 
     console.print(table)
     console.print()
@@ -959,6 +961,139 @@ def manual_cmd(ctx):
     console.print(f"[bright_yellow]📖 Opening manual in your browser...[/bright_yellow]")
     console.print(f"[dim]{url}[/dim]")
     webbrowser.open(url)
+
+
+# =============================================================================
+# SETUP — Install all external dependencies automatically
+# =============================================================================
+
+def _find_install_sh() -> Path | None:
+    """Locate install.sh across all installation methods."""
+    candidates = []
+
+    pkg_dir = Path(__file__).resolve().parent.parent  # beatrix/
+    src_root = pkg_dir.parent  # repo root
+
+    # Editable / git clone
+    candidates.append(src_root / "install.sh")
+
+    # Try git rev-parse
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            repo = Path(result.stdout.strip())
+            candidates.append(repo / "install.sh")
+    except Exception:
+        pass
+
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+@cli.command("setup")
+@click.option("--check", is_flag=True, help="Only check tool status, don't install")
+@click.pass_context
+def setup_cmd(ctx, check):
+    """
+    Install all external security tools (the full arsenal).
+
+    \b
+    Automatically installs all 21 external dependencies:
+    nuclei, httpx, subfinder, ffuf, katana, sqlmap, nmap,
+    adb, mitmproxy, playwright, amass, whatweb, wappalyzer,
+    gospider, hakrawler, gau, dirsearch, dalfox, commix,
+    jwt_tool, and metasploit.
+
+    \b
+    Uses the best method for each tool:
+      • System packages (apt/dnf/pacman) for nmap, sqlmap, etc.
+      • Go install for nuclei, subfinder, httpx, ffuf, etc.
+      • pip for mitmproxy, playwright, dirsearch, commix
+      • npm for wappalyzer
+      • Official installer for metasploit
+
+    \b
+    Examples:
+        beatrix setup           Install all missing tools
+        beatrix setup --check   Just show what's installed
+    """
+    import shutil
+    import subprocess
+
+    tools = [
+        "nuclei", "httpx", "subfinder", "ffuf", "katana", "sqlmap",
+        "nmap", "adb", "mitmproxy", "playwright", "amass", "whatweb",
+        "wappalyzer", "gospider", "hakrawler", "gau", "dirsearch",
+        "dalfox", "commix", "jwt_tool", "msfconsole",
+    ]
+
+    if check:
+        # Check-only mode
+        from rich.table import Table
+        table = Table(title="External Tools Status", border_style="bright_yellow")
+        table.add_column("Tool", style="bold")
+        table.add_column("Status", justify="center")
+        table.add_column("Path", style="dim")
+
+        found = 0
+        for tool in tools:
+            path = shutil.which(tool)
+            if path:
+                table.add_row(tool, "[green]✓ installed[/green]", path)
+                found += 1
+            else:
+                table.add_row(tool, "[red]✗ missing[/red]", "")
+
+        console.print(table)
+        console.print(f"\n[bold]{found}/{len(tools)}[/bold] tools available.")
+        if found < len(tools):
+            console.print("[dim]Run [bold]beatrix setup[/bold] (without --check) to install missing tools.[/dim]")
+        return
+
+    # Install mode — delegate to install.sh
+    install_sh = _find_install_sh()
+
+    if install_sh is None:
+        # Fallback: download install.sh from GitHub
+        console.print("[bright_yellow]Downloading installer from GitHub...[/bright_yellow]")
+        try:
+            result = subprocess.run(
+                ["curl", "-sSL", "https://raw.githubusercontent.com/SudoPacman-Syuu/Beatrix/main/install.sh"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0 and "install_external_tools" in result.stdout:
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+                    f.write(result.stdout)
+                    install_sh = Path(f.name)
+                install_sh.chmod(0o755)
+            else:
+                console.print("[red]✗ Could not download installer.[/red]")
+                raise SystemExit(1)
+        except Exception as e:
+            console.print(f"[red]✗ Failed to fetch installer: {e}[/red]")
+            raise SystemExit(1)
+
+    console.print("[bright_yellow]⚔️  Arming the full arsenal...[/bright_yellow]")
+    console.print(f"[dim]Using {install_sh}[/dim]\n")
+
+    # Source install.sh and call install_external_tools directly
+    bash_cmd = f'source "{install_sh}" && install_external_tools'
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", bash_cmd],
+            env={**__import__("os").environ, "PYTHON": shutil.which("python3") or "python3"},
+        )
+        raise SystemExit(proc.returncode)
+    except FileNotFoundError:
+        console.print("[red]✗ bash not found.[/red]")
+        raise SystemExit(1)
 
 
 # =============================================================================

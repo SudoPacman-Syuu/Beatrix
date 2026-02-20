@@ -26,7 +26,7 @@ This opens the full manual in your default browser — no internet required. You
 git clone https://github.com/SudoPacman-Syuu/Beatrix.git && cd Beatrix && ./install.sh
 ```
 
-That's it. The installer auto-detects your Python, picks the best install method, and puts `beatrix` on your PATH.
+That's it. The installer auto-detects your Python, picks the best install method, puts `beatrix` on your PATH, and **automatically installs all 21 external security tools** (nuclei, nmap, sqlmap, subfinder, ffuf, etc.).
 
 ### Other Install Methods
 
@@ -93,6 +93,7 @@ beatrix arsenal                      # full module reference
 | `arsenal` | Full module reference | `beatrix arsenal` |
 | `help CMD` | Detailed command help | `beatrix help hunt` |
 | `manual` | Open HTML manual in browser | `beatrix manual` |
+| `setup` | Install all external tools | `beatrix setup` |
 
 ---
 
@@ -100,7 +101,14 @@ beatrix arsenal                      # full module reference
 
 - **Python 3.11+** (the installer checks this for you)
 - **Linux** (Debian, Ubuntu, Fedora, Arch, etc.)
-- Optional external tools for extended features: `nuclei`, `httpx`, `subfinder`, `ffuf`, `katana`, `sqlmap`, `nmap`, `adb`, `mitmproxy`, `playwright`, `amass`, `whatweb`, `wappalyzer`, `gospider`, `hakrawler`, `gau`, `dirsearch`, `dalfox`, `commix`, `jwt_tool`, `metasploit`
+- 21 external tools are **automatically installed** by `./install.sh` and `beatrix setup`
+
+All external tools are installed automatically during setup. To reinstall or update them later:
+
+```bash
+beatrix setup            # install all missing tools
+beatrix setup --check    # just show what's installed
+```
 
 ### Verify installation
 
