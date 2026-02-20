@@ -1,0 +1,25 @@
+# Credentials - never commit
+config/hackerone_credentials.csv
+config/*.csv
+config/*.key
+config/*.secret
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

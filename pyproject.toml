@@ -1,0 +1,87 @@
+[project]
+name = "beatrix-cli"
+version = "1.0.0"
+description = "The Black Mamba — Bug Bounty Hunting CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "The Omega Project"}
+]
+keywords = ["security", "pentesting", "bug-bounty", "vulnerability-scanner"]
+
+dependencies = [
+    # CLI
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    
+    # HTTP
+    "httpx>=0.25.0",
+    "aiohttp>=3.9.0",
+    "requests>=2.31.0",
+    "urllib3>=2.0.0",
+    
+    # Parsing
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0",
+    
+    # Config
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    
+    # Database
+    "sqlalchemy>=2.0.0",
+    "aiosqlite>=0.19.0",
+    
+    # AI
+    "anthropic>=0.18.0",
+    "boto3>=1.34.0",
+    
+    # Security / Scanning
+    "PyJWT>=2.8.0",
+    "dnspython>=2.4.0",
+    "python-nmap>=0.7.1",
+    "paramiko>=3.4.0",
+    "scapy>=2.5.0",
+    
+    # Utils
+    "aiofiles>=23.0.0",
+    "python-dateutil>=2.8.0",
+    "regex>=2023.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+extended = [
+    "mitmproxy>=10.0.0",
+    "playwright>=1.40.0",
+    "cloudscraper>=1.2.71",
+    "networkx>=3.2.0",
+    "matplotlib>=3.8.0",
+]
+
+[project.scripts]
+beatrix = "beatrix.cli.main:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["beatrix"]
+
+[tool.black]
+line-length = 160
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 160
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
