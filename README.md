@@ -2,9 +2,9 @@
 
 > *"Revenge is a dish best served with a working PoC."*
 
-A human-centric command-line bug bounty hunting framework. 38+ scanner modules, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal.
+A command-line bug bounty hunting framework. 38+ scanner modules, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal.
 
-Globally installable on any Linux system. Call it from anywhere, like `nmap`.
+Globally installable on any Linux system. Call it from anywhere.
 
 ---
 
