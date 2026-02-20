@@ -188,7 +188,7 @@ check_optional_tools() {
     echo ""
     echo -e "${BOLD}Optional tools (not required, but unlock more features):${RESET}"
 
-    local tools=("nuclei" "httpx" "subfinder" "ffuf" "katana" "sqlmap" "nmap")
+    local tools=("nuclei" "httpx" "subfinder" "ffuf" "katana" "sqlmap" "nmap" "adb" "mitmproxy" "playwright" "amass" "whatweb" "wappalyzer" "gospider" "hakrawler" "gau" "dirsearch" "dalfox" "commix" "jwt_tool" "msfconsole")
     local missing=()
 
     for tool in "${tools[@]}"; do
@@ -204,7 +204,9 @@ check_optional_tools() {
         echo ""
         echo -e "  ${DIM}Install missing tools:${RESET}"
         echo -e "  ${DIM}  Go-based: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest${RESET}"
-        echo -e "  ${DIM}  Or:       sudo apt install nmap sqlmap${RESET}"
+        echo -e "  ${DIM}  Or:       sudo apt install nmap sqlmap adb mitmproxy amass dalfox commix${RESET}"
+        echo -e "  ${DIM}  Python:   pip install dirsearch jwt_tool${RESET}"
+        echo -e "  ${DIM}  Node:     npm install -g wappalyzer playwright${RESET}"
     fi
 }
 

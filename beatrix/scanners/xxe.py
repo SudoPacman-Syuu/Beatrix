@@ -22,7 +22,7 @@ SEVERITY: HIGH-CRITICAL — XXE can achieve:
 - Port scanning → use external entities to probe internal network
 
 OWASP: WSTG-INPV-07 (Testing for XML Injection)
-       A05:2021 - Security Misconfiguration (XXE)
+       A03:2021 - Injection (XXE)
 
 MITRE: T1190 (Exploit Public-Facing Application)
        T1005 (Data from Local System)

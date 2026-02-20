@@ -515,7 +515,7 @@ MODULE_REFERENCE = {
     },
     "headers": {
         "name": "Header Security Scanner",
-        "category": "A02: Security Misconfiguration",
+        "category": "A02: Cryptographic Failures",
         "description": "Analyzes security headers: CSP, HSTS, X-Frame-Options, X-Content-Type-Options, etc.",
         "payloads": "Passive analysis, no active payloads",
     },
@@ -553,7 +553,7 @@ MODULE_REFERENCE = {
     # ── Phase 3: Delivery ─────────────────────────────────────────────────────
     "cors": {
         "name": "CORS Scanner",
-        "category": "A02: Security Misconfiguration",
+        "category": "A02: Cryptographic Failures",
         "description": "Tests for CORS misconfigurations: origin reflection, null origin, wildcard, credential leaks",
         "payloads": "17+ test origins including subdomain tricks, null, protocol downgrade",
     },
@@ -632,7 +632,7 @@ MODULE_REFERENCE = {
     },
     "graphql": {
         "name": "GraphQL Scanner",
-        "category": "A02: Security Misconfiguration",
+        "category": "A02: Cryptographic Failures",
         "description": "GraphQL endpoint discovery, introspection bypass, schema parsing, depth attack, batch",
         "payloads": "Introspection, field suggestion, alias overloading, batch query attacks",
     },
@@ -700,6 +700,7 @@ def cli(ctx, quiet):
     \b
     HELP:
       beatrix help <command>                Detailed command help
+      beatrix manual                        Open the full HTML manual
       beatrix arsenal                       Full module reference
       beatrix --version                     Show version
 
@@ -748,6 +749,7 @@ def _show_quick_reference():
     table.add_row("list", "List modules/presets", "beatrix list --modules")
     table.add_row("arsenal", "Full module reference", "beatrix arsenal")
     table.add_row("help CMD", "Detailed command help", "beatrix help hunt")
+    table.add_row("manual", "Open HTML manual in browser", "beatrix manual")
 
     console.print(table)
     console.print()
@@ -848,8 +850,25 @@ def arsenal(ctx):
     tools = [
         ("nuclei", "CVE scanning, misconfigs, default logins, 8000+ templates"),
         ("subfinder", "Passive subdomain enumeration from multiple sources"),
-        ("nmap", "Port scanning, service detection, vulnerability scripts"),
+        ("httpx", "Rapid live-host probing and fingerprinting"),
         ("ffuf", "Directory fuzzing, parameter discovery, content brute-forcing"),
+        ("katana", "Deep crawling and JavaScript analysis"),
+        ("sqlmap", "Advanced database takeover and SQL injection exploitation"),
+        ("nmap", "Port scanning, service detection, vulnerability scripts"),
+        ("adb", "Android Debug Bridge for mobile app interception"),
+        ("mitmproxy", "SSL/TLS traffic interception for mobile testing"),
+        ("playwright", "Browser automation for DOM XSS and WAF evasion"),
+        ("amass", "Advanced subdomain enumeration and attack surface mapping"),
+        ("whatweb", "Technology fingerprinting and version detection"),
+        ("wappalyzer", "Technology fingerprinting and version detection"),
+        ("gospider", "Fast web spidering and URL discovery"),
+        ("hakrawler", "Web crawler for discovering endpoints and assets"),
+        ("gau", "Fetch known URLs from AlienVault's Open Threat Exchange, the Wayback Machine, and Common Crawl"),
+        ("dirsearch", "Web path scanner and directory brute-forcing"),
+        ("dalfox", "Parameter analysis and XSS scanning"),
+        ("commix", "Automated command injection exploitation"),
+        ("jwt_tool", "JSON Web Token manipulation and vulnerability testing"),
+        ("msfconsole", "Metasploit Framework for advanced exploitation and post-exploitation"),
     ]
     for tool_name, purpose in tools:
         found = shutil.which(tool_name)
@@ -876,6 +895,70 @@ def arsenal(ctx):
         standalone_table.add_row(name, desc)
     console.print(standalone_table)
     console.print()
+
+
+# =============================================================================
+# MANUAL — Open the comprehensive HTML manual in the user's browser
+# =============================================================================
+
+def _find_manual() -> Path | None:
+    """Locate the manual HTML across all installation methods."""
+    candidates = []
+
+    # 1. Shipped inside the package wheel (pipx / pip install)
+    pkg_dir = Path(__file__).resolve().parent.parent  # beatrix/
+    candidates.append(pkg_dir / "_manual" / "index.html")
+
+    # 2. Relative to source tree (editable / git clone)
+    src_root = pkg_dir.parent  # repo root
+    candidates.append(src_root / "docs" / "manual" / "index.html")
+
+    # 3. Try git rev-parse if we're anywhere inside the repo
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            repo = Path(result.stdout.strip())
+            candidates.append(repo / "docs" / "manual" / "index.html")
+    except Exception:
+        pass
+
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+@cli.command("manual")
+@click.pass_context
+def manual_cmd(ctx):
+    """
+    Open the BEATRIX manual in your default browser.
+
+    \b
+    Launches the comprehensive HTML reference manual covering
+    all commands, modules, presets, and workflows.
+
+    \b
+    Examples:
+        beatrix manual
+    """
+    import webbrowser
+
+    manual_path = _find_manual()
+
+    if manual_path is None:
+        console.print("[red]✗ Manual not found.[/red]")
+        console.print("[dim]Try reinstalling Beatrix: pipx install --force .[/dim]")
+        raise SystemExit(1)
+
+    url = manual_path.as_uri()
+    console.print(f"[bright_yellow]📖 Opening manual in your browser...[/bright_yellow]")
+    console.print(f"[dim]{url}[/dim]")
+    webbrowser.open(url)
 
 
 # =============================================================================

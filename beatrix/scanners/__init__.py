@@ -5,7 +5,7 @@ BEATRIX Scanner Modules
 
 OWASP Top 10:2025 Coverage:
 - A01: Broken Access Control → IDORScanner, BACScanner, EndpointProber, MassAssignmentScanner
-- A02: Security Misconfiguration → HeaderSecurityScanner, CORSScanner, GraphQLScanner
+- A02: Cryptographic Failures → HeaderSecurityScanner, CORSScanner, GraphQLScanner
 - A03: Injection → InjectionScanner, SSTIScanner, XXEScanner, DeserializationScanner
 - A04: Insecure Design → PaymentScanner, BusinessLogicScanner, FileUploadScanner
 - A05: Security Misconfiguration → ErrorDisclosureScanner, JSBundleAnalyzer, CachePoisoningScanner
@@ -75,7 +75,7 @@ __all__ = [
     "IDORScanner",
     "BACScanner",
     "MassAssignmentScanner",
-    # A02: Security Misconfiguration
+    # A02: Cryptographic Failures
     "CORSScanner",
     "HeaderSecurityScanner",
     # A03: Injection

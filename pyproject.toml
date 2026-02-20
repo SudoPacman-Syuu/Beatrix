@@ -75,6 +75,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["beatrix"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"docs/manual" = "beatrix/_manual"
+
 [tool.black]
 line-length = 160
 target-version = ["py311"]

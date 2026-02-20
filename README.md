@@ -8,6 +8,18 @@ Globally installable on any Linux system. Call it from anywhere.
 
 ---
 
+## 📖 The Manual
+
+Beatrix ships with an interactive, comprehensive HTML manual covering every command, every module, all flags, presets, and real-world workflows:
+
+```bash
+beatrix manual
+```
+
+This opens the full manual in your default browser — no internet required. You can also open it directly at [`docs/manual/index.html`](docs/manual/index.html).
+
+---
+
 ## Install (One Command)
 
 ```bash
@@ -80,6 +92,7 @@ beatrix arsenal                      # full module reference
 | `list` | List modules/presets | `beatrix list --modules` |
 | `arsenal` | Full module reference | `beatrix arsenal` |
 | `help CMD` | Detailed command help | `beatrix help hunt` |
+| `manual` | Open HTML manual in browser | `beatrix manual` |
 
 ---
 
@@ -87,7 +100,7 @@ beatrix arsenal                      # full module reference
 
 - **Python 3.11+** (the installer checks this for you)
 - **Linux** (Debian, Ubuntu, Fedora, Arch, etc.)
-- Optional external tools for extended features: `nuclei`, `httpx`, `subfinder`, `ffuf`, `katana`, `sqlmap`, `nmap`
+- Optional external tools for extended features: `nuclei`, `httpx`, `subfinder`, `ffuf`, `katana`, `sqlmap`, `nmap`, `adb`, `mitmproxy`, `playwright`, `amass`, `whatweb`, `wappalyzer`, `gospider`, `hakrawler`, `gau`, `dirsearch`, `dalfox`, `commix`, `jwt_tool`, `metasploit`
 
 ### Verify installation
 
@@ -135,7 +148,7 @@ Run `beatrix arsenal` for the full table. Core modules:
 | Module | Category | What It Tests |
 |--------|----------|---------------|
 | `cors` | A02 | Origin reflection, null origin, wildcard, credential leaks |
-| `injection` | A05 | SQLi, XSS, command injection with WAF bypass |
+| `injection` | A03 | SQLi, XSS, command injection with WAF bypass |
 | `headers` | A02 | CSP, HSTS, X-Frame-Options analysis |
 | `redirect` | Redirect | Open redirect detection |
 | `ssrf` | A10 | Cloud metadata extraction, internal service access |
@@ -143,7 +156,7 @@ Run `beatrix arsenal` for the full table. Core modules:
 | `idor` | A01 | ID manipulation, sequential/UUID/negative |
 | `bac` | A01 | Method override, force browsing, privilege escalation |
 | `auth` | A07 | JWT attacks, 2FA bypass, session management |
-| `error_disclosure` | A02 | Stack traces, SQL errors, debug info |
+| `error_disclosure` | A05 | Stack traces, SQL errors, debug info |
 | `js_analysis` | Recon | API routes, secrets from JS bundles |
 | `endpoint_prober` | Recon | Admin panels, debug routes, hidden endpoints |
 
@@ -311,6 +324,9 @@ beatrix config --set output.dir ./my_results
 ## Getting Help
 
 ```bash
+# Open the full interactive HTML manual (recommended)
+beatrix manual
+
 # Quick reference table
 beatrix
 

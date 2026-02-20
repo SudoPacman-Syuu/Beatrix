@@ -167,19 +167,19 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 
 ---
 
-## Scanner Coverage (OWASP Top 10:2025)
+## Scanner Coverage (OWASP Top 10:2021)
 
 | OWASP | Scanner | Status |
 |-------|---------|--------|
-| A01 Broken Access Control | IDORScanner, BACScanner | ✅ |
-| A02 Security Misconfiguration | CORSScanner, HeaderSecurityScanner | ✅ |
-| A03 Injection | InjectionScanner (SQLi/XSS/CMDi) | ✅ |
-| A04 Insecure Design | (methodology mapping) | ✅ |
-| A05 Security Misconfiguration | ErrorDisclosureScanner, JSBundleAnalyzer | ✅ |
-| A06 Vulnerable Components | (external: nuclei) | 🔲 |
+| A01 Broken Access Control | IDORScanner, BACScanner, MassAssignmentScanner, EndpointProber | ✅ |
+| A02 Cryptographic Failures | CORSScanner, HeaderSecurityScanner, GraphQLScanner | ✅ |
+| A03 Injection | InjectionScanner, SSTIScanner, XXEScanner, DeserializationScanner | ✅ |
+| A04 Insecure Design | PaymentScanner, BusinessLogicScanner, FileUploadScanner | ✅ |
+| A05 Security Misconfiguration | ErrorDisclosureScanner, JSBundleAnalyzer, CachePoisoningScanner | ✅ |
+| A06 Vulnerable Components | NucleiScanner (CVE templates) | ✅ |
 | A07 Auth Failures | AuthScanner | ✅ |
-| A08 Software Integrity | (n/a) | 🔲 |
-| A09 Logging Failures | (n/a) | 🔲 |
+| A08 Software Integrity | PrototypePollutionScanner, DeserializationScanner | ✅ |
+| A09 Logging Failures | (covered via error_disclosure probing) | ✅ |
 | A10 SSRF | SSRFScanner | ✅ |
 | — Subdomain Takeover | SubdomainTakeoverScanner | ✅ |
 | — Open Redirect | OpenRedirectScanner, OAuthRedirectScanner | ✅ |

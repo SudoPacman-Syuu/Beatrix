@@ -1,0 +1,1761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BEATRIX - The Black Mamba Comprehensive Manual</title>
+    <style>
+        /* ── Theme tokens ─────────────────────────────────────────────── */
+        :root {
+            --kb-yellow: #e8c840;          /* warmer, less neon */
+            --kb-yellow-hover: #f0d860;
+            --kb-yellow-muted: rgba(232, 200, 64, 0.12);
+            --kb-black: #0c0c0e;
+            --kb-red: #c0392b;             /* slightly muted brick */
+            --kb-red-muted: rgba(192, 57, 43, 0.12);
+            --kb-white: #e8e6e3;           /* warm off-white — easier on eyes */
+            --kb-gray: #161618;
+            --kb-light-gray: #2a2a2e;
+            --kb-border: #333338;
+            --kb-surface: #18181b;
+            --kb-surface-raised: #1e1e22;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --transition: 0.25s cubic-bezier(.4,0,.2,1);
+        }
+
+        /* ── Reset & base ─────────────────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; }
+
+        html {
+            scroll-behavior: smooth;
+            scroll-padding-top: 32px;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--kb-black);
+            color: var(--kb-white);
+            margin: 0;
+            padding: 0;
+            line-height: 1.8;
+            font-size: 15.5px;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Typography ───────────────────────────────────────────────── */
+        h1, h2, h3, h4, h5 {
+            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        h1 {
+            color: var(--kb-yellow);
+            font-size: 4.5rem;
+            text-align: center;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 0 rgba(192,57,43,0.45);
+        }
+
+        h2 {
+            color: var(--kb-black);
+            background: linear-gradient(135deg, var(--kb-yellow) 0%, #d4b330 100%);
+            padding: 14px 28px;
+            display: inline-block;
+            border-left: 10px solid var(--kb-red);
+            border-radius: 0 var(--radius-md) var(--radius-md) 0;
+            margin-top: 64px;
+            margin-bottom: 24px;
+            font-size: 1.6rem;
+            width: calc(100% - 40px);
+        }
+
+        h3 {
+            color: var(--kb-yellow);
+            border-bottom: 2px solid var(--kb-red);
+            padding-bottom: 10px;
+            margin-top: 48px;
+            margin-bottom: 20px;
+            font-size: 1.35rem;
+        }
+
+        h4 {
+            color: var(--kb-white);
+            margin-top: 32px;
+            font-size: 1.15rem;
+            text-decoration: none;
+            border-bottom: 2px solid var(--kb-red);
+            padding-bottom: 6px;
+            display: inline-block;
+        }
+
+        p {
+            margin-bottom: 18px;
+        }
+
+        ul, ol {
+            margin-bottom: 20px;
+            padding-left: 24px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        a {
+            color: var(--kb-yellow);
+            text-decoration: none;
+            transition: color var(--transition), text-decoration var(--transition);
+        }
+
+        a:hover {
+            color: var(--kb-yellow-hover);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        strong {
+            color: #f0ece6;
+        }
+
+        /* ── Layout ───────────────────────────────────────────────────── */
+        .container {
+            display: flex;
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 28px;
+            gap: 40px;
+        }
+
+        /* ── Sidebar / TOC ────────────────────────────────────────────── */
+        .sidebar {
+            width: 290px;
+            min-width: 290px;
+            position: sticky;
+            top: 24px;
+            height: calc(100vh - 48px);
+            overflow-y: auto;
+            background-color: var(--kb-surface);
+            padding: 24px 20px;
+            border: 1px solid var(--kb-border);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+        }
+
+        .sidebar h3 {
+            color: var(--kb-white);
+            border-bottom: 2px solid var(--kb-yellow);
+            margin-top: 0;
+            margin-bottom: 16px;
+            font-size: 1rem;
+            letter-spacing: 2px;
+            padding-bottom: 12px;
+        }
+
+        .sidebar ul {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .sidebar li {
+            margin-bottom: 4px;
+        }
+
+        .sidebar li.sub-item {
+            margin-left: 16px;
+            font-size: 0.88rem;
+        }
+
+        .sidebar a {
+            display: block;
+            padding: 7px 12px;
+            border-left: 3px solid transparent;
+            border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+            font-size: 0.92rem;
+            color: #aaa;
+            transition: all var(--transition);
+        }
+
+        .sidebar a:hover {
+            border-left-color: var(--kb-red);
+            background-color: var(--kb-yellow-muted);
+            color: var(--kb-yellow);
+            text-decoration: none;
+        }
+
+        .sidebar .back-to-top {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            padding: 10px;
+            background: var(--kb-yellow-muted);
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--kb-yellow);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .sidebar .back-to-top:hover {
+            background: rgba(232, 200, 64, 0.22);
+            text-decoration: none;
+        }
+
+        /* ── Main content ─────────────────────────────────────────────── */
+        .content {
+            flex: 1;
+            padding: 0 24px;
+            max-width: 960px;
+            min-width: 0;
+        }
+
+        section {
+            margin-bottom: 32px;
+            padding-bottom: 16px;
+        }
+
+        /* ── Code blocks ──────────────────────────────────────────────── */
+        pre {
+            background-color: #0e0e12;
+            border: 1px solid var(--kb-border);
+            border-left: 4px solid var(--kb-yellow);
+            border-radius: var(--radius-md);
+            padding: 20px 24px;
+            overflow-x: auto;
+            color: #7ae582;
+            margin: 20px 0 24px;
+            font-size: 0.9rem;
+            line-height: 1.7;
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+            background-color: rgba(232, 200, 64, 0.08);
+            padding: 2px 7px;
+            color: var(--kb-yellow);
+            border-radius: 4px;
+            font-size: 0.88em;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: inherit;
+            font-size: inherit;
+        }
+
+        /* ── Tables ───────────────────────────────────────────────────── */
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin: 28px 0;
+            background-color: var(--kb-surface);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            border: 1px solid var(--kb-border);
+        }
+
+        th, td {
+            border-bottom: 1px solid var(--kb-border);
+            padding: 14px 18px;
+            text-align: left;
+        }
+
+        td {
+            border-right: 1px solid var(--kb-border);
+        }
+
+        td:last-child {
+            border-right: none;
+        }
+
+        th {
+            background: linear-gradient(135deg, var(--kb-yellow) 0%, #d4b330 100%);
+            color: var(--kb-black);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            font-size: 0.95rem;
+        }
+
+        tr:nth-child(even) {
+            background-color: var(--kb-surface-raised);
+        }
+
+        tr:hover td {
+            background-color: rgba(232, 200, 64, 0.05);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* ── Callout boxes ────────────────────────────────────────────── */
+        .quote {
+            font-style: italic;
+            font-size: 1.3rem;
+            text-align: center;
+            color: var(--kb-white);
+            margin: 40px 0;
+            padding: 28px 32px;
+            border-top: 2px solid var(--kb-red);
+            border-bottom: 2px solid var(--kb-red);
+            border-radius: var(--radius-md);
+            background-color: var(--kb-red-muted);
+            line-height: 1.9;
+        }
+
+        .warning {
+            background-color: var(--kb-red-muted);
+            border-left: 5px solid var(--kb-red);
+            border-radius: var(--radius-md);
+            padding: 22px 26px;
+            margin: 28px 0;
+            line-height: 1.8;
+        }
+
+        .pro-tip {
+            background-color: var(--kb-yellow-muted);
+            border-left: 5px solid var(--kb-yellow);
+            border-radius: var(--radius-md);
+            padding: 22px 26px;
+            margin: 28px 0;
+            line-height: 1.8;
+        }
+
+        /* ── Hero banner (grindhouse yellow — smoothed) ────────────── */
+        .hero {
+            background-color: var(--kb-yellow);
+            background-image:
+                repeating-linear-gradient(45deg, transparent, transparent 12px, rgba(0,0,0,0.03) 12px, rgba(0,0,0,0.03) 24px);
+            color: var(--kb-black);
+            padding: 80px 24px 72px;
+            text-align: center;
+            border-bottom: 10px solid var(--kb-red);
+            margin-bottom: 0;
+        }
+
+        .hero h1 {
+            color: var(--kb-black);
+            text-shadow: 2px 2px 0 rgba(192,57,43,0.25);
+            margin: 0;
+            font-size: 5.5rem;
+            letter-spacing: 8px;
+        }
+
+        .hero p {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-top: 16px;
+            letter-spacing: 3px;
+            opacity: 0.7;
+        }
+
+        .hero .version-badge {
+            display: inline-block;
+            margin-top: 18px;
+            padding: 5px 16px;
+            background: var(--kb-black);
+            color: var(--kb-yellow);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+
+        /* ── Scrollbar ────────────────────────────────────────────────── */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--kb-black);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--kb-light-gray);
+            border-radius: 8px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--kb-yellow);
+        }
+
+        /* ── Module cards ─────────────────────────────────────────────── */
+        .module-card {
+            background-color: var(--kb-surface);
+            border: 1px solid var(--kb-border);
+            border-left: 4px solid var(--kb-yellow);
+            border-radius: var(--radius-md);
+            padding: 24px 28px;
+            margin-bottom: 24px;
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+
+        .module-card:hover {
+            border-color: var(--kb-yellow);
+            box-shadow: 0 2px 16px rgba(232, 200, 64, 0.06);
+        }
+
+        .module-card h4 {
+            margin-top: 0;
+            display: block;
+            color: var(--kb-yellow);
+            text-decoration: none;
+            border-bottom: 1px solid var(--kb-border);
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+        }
+
+        .module-card ul {
+            margin-top: 12px;
+        }
+
+        .module-card li {
+            margin-bottom: 10px;
+        }
+
+        /* ── OWASP tags ───────────────────────────────────────────────── */
+        .tag {
+            display: inline-block;
+            background-color: var(--kb-red);
+            color: white;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            margin-left: 10px;
+            vertical-align: middle;
+            letter-spacing: 0.5px;
+        }
+
+        /* ── Ordered list (Kill Chain) polish ─────────────────────────── */
+        section ol > li {
+            padding-left: 6px;
+            margin-bottom: 12px;
+        }
+
+        /* ── Selection colour ─────────────────────────────────────────── */
+        ::selection {
+            background: var(--kb-yellow);
+            color: var(--kb-black);
+        }
+
+        /* ── Collapsible details/summary ─────────────────────────────── */
+        details {
+            background-color: var(--kb-surface);
+            border: 1px solid var(--kb-border);
+            border-left: 4px solid var(--kb-yellow);
+            border-radius: var(--radius-md);
+            margin-bottom: 20px;
+            transition: border-color var(--transition);
+        }
+
+        details:hover {
+            border-color: var(--kb-yellow);
+        }
+
+        details[open] {
+            border-color: var(--kb-yellow);
+            box-shadow: 0 2px 16px rgba(232, 200, 64, 0.06);
+        }
+
+        details summary {
+            cursor: pointer;
+            padding: 16px 24px;
+            font-weight: 700;
+            color: var(--kb-yellow);
+            font-size: 1.05rem;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            user-select: none;
+        }
+
+        details summary::-webkit-details-marker { display: none; }
+
+        details summary::before {
+            content: '▸';
+            font-size: 0.9rem;
+            transition: transform var(--transition);
+            display: inline-block;
+        }
+
+        details[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        details .detail-body {
+            padding: 0 24px 20px;
+            border-top: 1px solid var(--kb-border);
+        }
+
+        details .detail-body p:first-child {
+            margin-top: 16px;
+        }
+
+        /* ── Flag tables (command reference) ───────────────────────────── */
+        .flag-table {
+            font-size: 0.9rem;
+            margin: 16px 0;
+        }
+
+        .flag-table td:first-child {
+            white-space: nowrap;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            color: var(--kb-yellow);
+        }
+
+        /* ── Sidebar active link ───────────────────────────────────────── */
+        .sidebar a.active {
+            border-left-color: var(--kb-yellow);
+            background-color: var(--kb-yellow-muted);
+            color: var(--kb-yellow);
+        }
+
+        /* ── Responsive ───────────────────────────────────────────────── */
+        @media (max-width: 1024px) {
+            .sidebar { display: none; }
+            .container { padding: 16px; }
+            .content { padding: 0; max-width: 100%; }
+            h1, .hero h1 { font-size: 3rem; }
+            h2 { font-size: 1.3rem; width: 100%; }
+            details summary { padding: 14px 18px; }
+            details .detail-body { padding: 0 18px 16px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="top" class="hero">
+        <h1>BEATRIX</h1>
+        <p>THE BLACK MAMBA OF BUG BOUNTY FRAMEWORKS</p>
+        <span class="version-badge">38+ Modules · 21 External Tools · Full OWASP Top 10</span>
+    </div>
+
+    <div class="container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <h3>THE DEATH LIST</h3>
+            <ul>
+                <li><a href="#intro">1. Introduction</a></li>
+                <li><a href="#install">2. Installation & Setup</a></li>
+                <li class="sub-item"><a href="#dependencies">External Dependencies</a></li>
+                <li class="sub-item"><a href="#config">Configuration</a></li>
+                
+                <li><a href="#architecture">3. Architecture & Kill Chain</a></li>
+                
+                <li><a href="#commands">4. Command Reference</a></li>
+                <li class="sub-item"><a href="#cmd-probe">probe</a></li>
+                <li class="sub-item"><a href="#cmd-recon">recon</a></li>
+                <li class="sub-item"><a href="#cmd-strike">strike</a></li>
+                <li class="sub-item"><a href="#cmd-hunt">hunt</a></li>
+                <li class="sub-item"><a href="#cmd-batch">batch & rapid</a></li>
+                <li class="sub-item"><a href="#cmd-bounty">bounty-hunt</a></li>
+                <li class="sub-item"><a href="#cmd-ghost">ghost</a></li>
+                <li class="sub-item"><a href="#cmd-findings">findings</a></li>
+                <li class="sub-item"><a href="#cmd-h1">h1 (HackerOne)</a></li>
+                <li class="sub-item"><a href="#cmd-mobile">mobile</a></li>
+                <li class="sub-item"><a href="#cmd-manual">manual</a></li>
+                
+                <li><a href="#modules">5. The Arsenal (38+ Modules)</a></li>
+                <li class="sub-item"><a href="#mod-recon">Phase 1: Reconnaissance</a></li>
+                <li class="sub-item"><a href="#mod-weap">Phase 2: Weaponization</a></li>
+                <li class="sub-item"><a href="#mod-deliv">Phase 3: Delivery</a></li>
+                <li class="sub-item"><a href="#mod-exploit">Phase 4: Exploitation</a></li>
+                <li class="sub-item"><a href="#mod-logic">Phase 5: Business Logic</a></li>
+                <li class="sub-item"><a href="#mod-standalone">Standalone Modules</a></li>
+                
+                <li><a href="#ai-ghost">6. GHOST: AI Pentester</a></li>
+                <li class="sub-item"><a href="#ghost-tools">The 10 Tools</a></li>
+                <li class="sub-item"><a href="#ghost-usage">Usage & Examples</a></li>
+                
+                <li><a href="#hackerone">7. HackerOne Integration</a></li>
+                <li><a href="#workflows">8. Advanced Workflows</a></li>
+                <li><a href="#pros-cons">9. Pros, Cons & Limitations</a></li>
+                <li><a href="#references">10. References</a></li>
+            </ul>
+            <a href="#top" class="back-to-top">↑ Back to Top</a>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="content">
+            <div class="quote">
+                "Revenge is a dish best served with a working PoC."
+            </div>
+
+            <section id="intro">
+                <h2>1. Introduction</h2>
+                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 38+ scanner modules, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration directly to your terminal.</p>
+                <p>Beatrix is built for operators who prefer a terminal over a GUI. It bridges the gap between high-level automation (for rapid, wide-scale sweeps) and low-level manual control (for surgical, targeted strikes).</p>
+                
+                <div class="warning">
+                    <strong>LEGAL DISCLAIMER:</strong> This tool is designed for authorized security testing only. Only use Beatrix against targets you have explicit permission to test. Unauthorized access to computer systems is illegal. The operators of this tool are responsible for ensuring all applicable laws and regulations are followed.
+                </div>
+            </section>
+
+            <section id="install">
+                <h2>2. Installation & Setup</h2>
+                <p>Beatrix is designed to be globally installable on any Linux system (Debian, Ubuntu, Fedora, Arch, etc.) running Python 3.11+.</p>
+                
+                <h3>The One-Strike Install</h3>
+                <pre><code>git clone https://github.com/SudoPacman-Syuu/Beatrix.git && cd Beatrix && ./install.sh</code></pre>
+                <p>The installer auto-detects your Python environment, selects the best installation method, and places <code>beatrix</code> on your PATH.</p>
+
+                <h3>Alternative Methods</h3>
+                <pre><code># Using pipx (Recommended for isolation)
+pipx install .
+
+# Using make
+make install
+
+# Dedicated venv + symlink to /usr/local/bin
+make install-venv
+
+# System-wide (Use with caution)
+sudo pip install .</code></pre>
+
+                <h3 id="dependencies">External Dependencies</h3>
+                <p>While Beatrix's core engine is pure Python, maximum lethality requires several external binaries and tools. Beatrix acts as an orchestrator for these tools during the Reconnaissance, Vulnerable Component, and Exploitation phases.</p>
+                <ul>
+                    <li><code>nuclei</code> (Go) - Used for CVE scanning, misconfigs, and default logins (8000+ templates).</li>
+                    <li><code>subfinder</code> (Go) - Used for passive subdomain enumeration.</li>
+                    <li><code>httpx</code> (Go) - Used for rapid live-host probing.</li>
+                    <li><code>ffuf</code> (Go) - Used for directory fuzzing and parameter discovery.</li>
+                    <li><code>katana</code> (Go) - Used for deep crawling and JavaScript analysis.</li>
+                    <li><code>nmap</code> (C/C++) - Used for port scanning and service detection.</li>
+                    <li><code>sqlmap</code> (Python) - Used by the exploitation engine for advanced database takeover.</li>
+                    <li><code>adb</code> (Android Debug Bridge) - Required by the Mobile Interceptor to launch and control the Android emulator.</li>
+                    <li><code>mitmproxy</code> (Python) - Required by the Mobile Interceptor for SSL/TLS traffic interception.</li>
+                    <li><code>playwright</code> (Chromium) - Required by the Browser Scanner for DOM XSS detection and WAF evasion.</li>
+                    <li><code>amass</code> (Go) - Used for advanced subdomain enumeration.</li>
+                    <li><code>whatweb</code> / <code>wappalyzer</code> - Used for technology fingerprinting.</li>
+                    <li><code>gospider</code> / <code>hakrawler</code> / <code>gau</code> - Used for crawling and URL discovery.</li>
+                    <li><code>dirsearch</code> (Python) - Used for directory brute-forcing.</li>
+                    <li><code>dalfox</code> (Go) - Used for XSS scanning.</li>
+                    <li><code>commix</code> (Python) - Used for command injection exploitation.</li>
+                    <li><code>jwt_tool</code> (Python) - Used for JWT manipulation and testing.</li>
+                    <li><code>metasploit</code> (Ruby) - Used for advanced exploitation and post-exploitation.</li>
+                </ul>
+
+                <h3 id="config">Configuration</h3>
+                <p>Beatrix stores its configuration in <code>~/.beatrix/config.yaml</code>. You can manage this via the CLI:</p>
+                <pre><code># Show current config
+beatrix config --show
+
+# Set scanning limits
+beatrix config --set scanning.threads 50
+beatrix config --set scanning.rate_limit 100
+beatrix config --set scanning.timeout 10
+
+# Configure AI (Required for GHOST and Haiku-Hunt)
+beatrix config --set ai.enabled true
+beatrix config --set ai.provider anthropic  # or 'bedrock'
+beatrix config --set ai.model claude-3-5-sonnet-20241022</code></pre>
+
+                <div class="pro-tip">
+                    <strong>Environment Variables:</strong> You can also configure sensitive keys via environment variables: <code>ANTHROPIC_API_KEY</code>, <code>AWS_REGION</code>, <code>GITHUB_TOKEN</code>, <code>H1_USERNAME</code>, and <code>H1_API_TOKEN</code>.
+                </div>
+            </section>
+
+            <section id="architecture">
+                <h2>3. Architecture & The Kill Chain</h2>
+                <p>Beatrix doesn't just scan blindly; it hunts with purpose. Every <code>hunt</code> follows a structured 7-phase approach based on the Cyber Kill Chain.</p>
+
+                <ol>
+                    <li><strong>🔍 Reconnaissance:</strong> Target discovery, subdomain enumeration (via <code>subfinder</code>), port scanning (via <code>nmap</code>), service detection, and JavaScript bundle analysis.</li>
+                    <li><strong>⚔️ Weaponization:</strong> Payload crafting, WAF fingerprinting, and attack planning.</li>
+                    <li><strong>📦 Delivery:</strong> Endpoint discovery, parameter fuzzing, and request delivery.</li>
+                    <li><strong>💥 Exploitation:</strong> Active scanning using the 38+ modules (Injection, Auth bypass, IDOR, CORS, SSRF, etc.).</li>
+                    <li><strong>🔧 Installation:</strong> Persistence testing (e.g., File Upload bypasses).</li>
+                    <li><strong>📡 Command & Control:</strong> Data exfiltration and Out-Of-Band (OOB) channel testing.</li>
+                    <li><strong>🎯 Objectives:</strong> Impact assessment, PoC generation, and report formatting.</li>
+                </ol>
+            </section>
+
+            <section id="commands">
+                <h2>4. Command Reference</h2>
+                <p>Beatrix provides <strong>19 top-level commands</strong> (plus 10 subcommands across 3 groups). Listed below from simplest to most complex.</p>
+
+                <!-- ═══════════ TIER 1: Quick & Simple ═══════════ -->
+                <h3>Tier 1: Quick &amp; Simple</h3>
+
+                <details id="cmd-help">
+                    <summary>help — Get Help on Any Command</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix help [COMMAND]</code></pre>
+                        <p>Show detailed help for a specific command, or the general help if no command is given.</p>
+                        <pre><code># General help
+beatrix help
+
+# Help for a specific command
+beatrix help ghost
+beatrix help findings</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-arsenal">
+                    <summary>arsenal — List All Scanner Modules</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix arsenal</code></pre>
+                        <p>Displays the full Beatrix arsenal — all 38+ scanner modules with descriptions, categories, and OWASP mappings. No arguments needed.</p>
+                    </div>
+                </details>
+
+                <details id="cmd-manual">
+                    <summary>manual — Open This Manual in Your Browser</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix manual</code></pre>
+                        <p>Opens this comprehensive HTML manual in your system's default browser. Works offline — no internet connection required. The manual covers every command, every module, all flags, presets, workflows, and the full OWASP reference.</p>
+                    </div>
+                </details>
+
+                <details id="cmd-list">
+                    <summary>list — List Modules or Presets</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix list [OPTIONS]</code></pre>
+                        <table class="flag-table">
+                            <tr><td>-m, --modules</td><td>List available scanner modules</td></tr>
+                            <tr><td>-p, --presets</td><td>List available scan presets</td></tr>
+                        </table>
+                        <pre><code># Show all available modules
+beatrix list -m
+
+# Show all presets with descriptions
+beatrix list -p</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-probe">
+                    <summary>probe — Quick Target Health Check</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix probe TARGET</code></pre>
+                        <p>The first step in any engagement. Checks if a target is alive, what server it runs, detects WAFs, and reports basic headers. Fast and quiet — no exploitation.</p>
+                        <pre><code>beatrix probe example.com
+beatrix probe https://api.target.com</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-config">
+                    <summary>config — Manage Configuration</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix config [OPTIONS]</code></pre>
+                        <p>Configuration is stored in <code>~/.beatrix/config.yaml</code>.</p>
+                        <table class="flag-table">
+                            <tr><td>--show</td><td>Display current configuration</td></tr>
+                            <tr><td>--set KEY VALUE</td><td>Set a config option (repeatable)</td></tr>
+                        </table>
+                        <pre><code># View all settings
+beatrix config --show
+
+# Set scanning limits
+beatrix config --set scanning.threads 50
+beatrix config --set scanning.rate_limit 100
+beatrix config --set scanning.timeout 10
+
+# Configure AI backend
+beatrix config --set ai.enabled true
+beatrix config --set ai.provider anthropic
+beatrix config --set ai.model claude-3-5-sonnet-20241022</code></pre>
+                        <div class="pro-tip">
+                            <strong>Environment Variables:</strong> Sensitive keys can also be set via env vars: <code>ANTHROPIC_API_KEY</code>, <code>AWS_REGION</code>, <code>GITHUB_TOKEN</code>, <code>H1_USERNAME</code>, <code>H1_API_TOKEN</code>.
+                        </div>
+                    </div>
+                </details>
+
+                <!-- ═══════════ TIER 2: Reconnaissance ═══════════ -->
+                <h3>Tier 2: Reconnaissance</h3>
+
+                <details id="cmd-recon">
+                    <summary>recon — Deep Subdomain &amp; Endpoint Discovery</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix recon DOMAIN [OPTIONS]</code></pre>
+                        <p>Full reconnaissance: subdomain enumeration (via subfinder/amass), technology detection, JavaScript bundle analysis, and endpoint discovery.</p>
+                        <table class="flag-table">
+                            <tr><td>-d, --deep</td><td>Deep scan — also checks subdomain liveness</td></tr>
+                            <tr><td>-j, --json-output</td><td>Output results as JSON</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Save results to file</td></tr>
+                        </table>
+                        <pre><code># Basic recon
+beatrix recon example.com
+
+# Deep recon with JSON output
+beatrix recon example.com --deep -j -o recon.json</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-github-recon">
+                    <summary>github-recon — Scan GitHub for Leaked Secrets</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix github-recon ORG [OPTIONS]</code></pre>
+                        <p>Scans a GitHub organization or user's public repositories for hardcoded secrets, config files, and git history leaks.</p>
+                        <table class="flag-table">
+                            <tr><td>--repo REPO</td><td>Scan a specific repo (org/repo format)</td></tr>
+                            <tr><td>--token TOKEN</td><td>GitHub personal access token</td></tr>
+                            <tr><td>--quick</td><td>Quick scan — skip git history analysis</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Output report file (markdown)</td></tr>
+                        </table>
+                        <pre><code># Scan an entire org
+beatrix github-recon shopify --token ghp_xxx
+
+# Scan a specific repo with full history analysis
+beatrix github-recon shopify --repo shopify/hydrogen --token ghp_xxx
+
+# Quick scan (no git history)
+beatrix github-recon target-corp --quick -o github_report.md</code></pre>
+                    </div>
+                </details>
+
+                <!-- ═══════════ TIER 3: Targeted Attacks ═══════════ -->
+                <h3>Tier 3: Targeted Attacks</h3>
+
+                <details id="cmd-strike">
+                    <summary>strike — Single Module Attack</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix strike TARGET -m MODULE</code></pre>
+                        <p>Surgical precision. Execute one specific scanner against a specific URL. Perfect for when you've manually found an interesting endpoint.</p>
+                        <table class="flag-table">
+                            <tr><td>-m, --module MODULE</td><td><strong>(Required)</strong> Module to execute</td></tr>
+                        </table>
+                        <pre><code># Test for IDOR on a specific API endpoint
+beatrix strike https://api.example.com/v1/users -m idor
+
+# Test for CORS misconfiguration
+beatrix strike https://api.target.com/v2/account -m cors
+
+# Test for SQL injection
+beatrix strike https://shop.example.com/search?q=test -m injection</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-hunt">
+                    <summary>hunt — Full Vulnerability Scan (Kill Chain)</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix hunt TARGET [OPTIONS]</code></pre>
+                        <p>The main event. Runs the full kill chain methodology against a target.</p>
+                        <table class="flag-table">
+                            <tr><td>-p, --preset PRESET</td><td>Scan intensity (default: standard)</td></tr>
+                            <tr><td>--ai</td><td>Enable AI analysis (Claude Haiku via Bedrock)</td></tr>
+                            <tr><td>-m, --modules MOD</td><td>Run specific modules only (repeatable)</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Output directory for reports</td></tr>
+                        </table>
+                        <p><strong>Available Presets:</strong></p>
+                        <table>
+                            <tr><th>Preset</th><th>Description</th><th>Est. Time</th></tr>
+                            <tr><td><code>quick</code></td><td>Recon only — subdomain enum, tech detect</td><td>~5 min</td></tr>
+                            <tr><td><code>standard</code></td><td>Balanced scan — recon + top vuln scanners</td><td>~15 min</td></tr>
+                            <tr><td><code>full</code></td><td>Complete kill chain — all 38+ modules</td><td>~30 min</td></tr>
+                            <tr><td><code>stealth</code></td><td>Low-and-slow to avoid WAF detection</td><td>~45 min</td></tr>
+                            <tr><td><code>injection</code></td><td>Injection-focused (SQLi, XSS, SSTI, CMDi)</td><td>~20 min</td></tr>
+                            <tr><td><code>api</code></td><td>API-focused (IDOR, auth, GraphQL, CORS)</td><td>~15 min</td></tr>
+                            <tr><td><code>web</code></td><td>Web app focused (forms, sessions, logic)</td><td>~20 min</td></tr>
+                            <tr><td><code>recon</code></td><td>Extended recon (deep subdomain + JS analysis)</td><td>~10 min</td></tr>
+                        </table>
+                        <pre><code># Standard hunt
+beatrix hunt example.com
+
+# Full kill chain with AI
+beatrix hunt example.com --preset full --ai
+
+# Injection-only scan on specific modules
+beatrix hunt https://api.target.com -m injection -m ssti -m xxe
+
+# Stealth scan with output
+beatrix hunt target.com --preset stealth -o ./reports</code></pre>
+                    </div>
+                </details>
+
+                <!-- ═══════════ TIER 4: Multi-Target & Batch ═══════════ -->
+                <h3>Tier 4: Multi-Target Operations</h3>
+
+                <details id="cmd-batch">
+                    <summary>batch — Batch Scan from File</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix batch TARGETS_FILE -m MODULE [OPTIONS]</code></pre>
+                        <p>Scan multiple targets from a text file (one URL per line) with a specific module.</p>
+                        <table class="flag-table">
+                            <tr><td>-m, --module MODULE</td><td><strong>(Required)</strong> Module to run against each target</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Output directory (default: ./reports)</td></tr>
+                            <tr><td>-t, --threads N</td><td>Concurrent scans (default: 5)</td></tr>
+                        </table>
+                        <pre><code># Batch CORS scan with 10 threads
+beatrix batch targets.txt -m cors -t 10
+
+# Batch IDOR check
+beatrix batch api_endpoints.txt -m idor -o ./idor_results</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-rapid">
+                    <summary>rapid — Speed Blitz Multi-Target Sweep</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix rapid [OPTIONS]</code></pre>
+                        <p>Quick multi-target sweep that checks for subdomain takeovers, debug endpoints, and CORS misconfigurations across many domains simultaneously.</p>
+                        <table class="flag-table">
+                            <tr><td>-t, --targets FILE</td><td>File with target domains</td></tr>
+                            <tr><td>-d, --domain DOMAIN</td><td>Individual target domain (repeatable)</td></tr>
+                            <tr><td>-q, --quiet</td><td>Suppress verbose output</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Save findings to JSON file</td></tr>
+                        </table>
+                        <pre><code># Rapid sweep of multiple domains
+beatrix rapid -d shopify.com -d gitlab.com -d stripe.com
+
+# Rapid sweep from file
+beatrix rapid -t bugbounty_targets.txt -o rapid_results.json</code></pre>
+                    </div>
+                </details>
+
+                <!-- ═══════════ TIER 5: Advanced / AI ═══════════ -->
+                <h3>Tier 5: Advanced &amp; AI-Powered</h3>
+
+                <details id="cmd-bounty">
+                    <summary>bounty-hunt — Full OWASP Top 10 Pipeline</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix bounty-hunt TARGET [OPTIONS]</code></pre>
+                        <p>The whole enchilada. Runs OWASP Top 10 scanning (IDOR, auth, injection, redirect, SSRF, takeover) then validates all findings through the <code>ImpactValidator</code> and <code>ReadinessGate</code> to ensure you don't submit theoretical garbage.</p>
+                        <table class="flag-table">
+                            <tr><td>-H, --header HEADER</td><td>Add HTTP header (repeatable, format: "Name: Value")</td></tr>
+                            <tr><td>-u, --urls PATH</td><td>Additional URL paths to scan (repeatable)</td></tr>
+                            <tr><td>--jwt TOKEN</td><td>JWT tokens to analyze (repeatable)</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Output report filename</td></tr>
+                            <tr><td>-v, --verbose</td><td>Verbose output</td></tr>
+                        </table>
+                        <pre><code># Authenticated bounty hunt
+beatrix bounty-hunt https://api.example.com -H "Authorization: Bearer TOKEN"
+
+# With additional paths and JWT analysis
+beatrix bounty-hunt https://target.com -u /api/v2/users -u /admin --jwt eyJ... -v
+
+# Save full report
+beatrix bounty-hunt https://target.com -H "Cookie: session=abc" -o bounty_report.json</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-ghost">
+                    <summary>ghost — AI Autonomous Penetration Tester</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix ghost TARGET [OPTIONS]</code></pre>
+                        <p>Launch GHOST (Generative Heuristic Offensive Security Tester) — an autonomous AI agent that thinks, hypothesizes, and exploits like a real pentester.</p>
+                        <table class="flag-table">
+                            <tr><td>-o, --objective TEXT</td><td>Investigation objective (default: "Find all security vulnerabilities")</td></tr>
+                            <tr><td>-X, --method METHOD</td><td>HTTP method for base request (default: GET)</td></tr>
+                            <tr><td>-H, --header HEADER</td><td>Add header (repeatable, format: "Name: Value")</td></tr>
+                            <tr><td>-d, --data BODY</td><td>Request body (JSON, form data, etc.)</td></tr>
+                            <tr><td>-t, --max-turns N</td><td>Maximum investigation turns (default: 30)</td></tr>
+                            <tr><td>--model MODEL</td><td>Claude model to use (default: claude-sonnet-4-20250514)</td></tr>
+                            <tr><td>--api-key KEY</td><td>Anthropic API key (or set ANTHROPIC_API_KEY env var)</td></tr>
+                            <tr><td>--bedrock</td><td>Use AWS Bedrock instead of Anthropic API</td></tr>
+                        </table>
+                        <pre><code># Basic investigation
+beatrix ghost https://api.example.com/users?id=1
+
+# Directed investigation with POST data
+beatrix ghost https://api.example.com/update -X POST \
+  -d '{"user":"admin"}' -o "Test for Mass Assignment and SQLi"
+
+# Authenticated deep investigation
+beatrix ghost https://example.com/dashboard \
+  -H "Authorization: Bearer TOKEN" --max-turns 50
+
+# Use Bedrock backend
+beatrix ghost https://target.com/api --bedrock --model claude-3-haiku</code></pre>
+                        <div class="pro-tip">
+                            <strong>Pro Tip:</strong> GHOST is most effective when given a specific objective and an authenticated session. Don't point it at a homepage — point it at a complex API endpoint with a valid JWT.
+                        </div>
+                    </div>
+                </details>
+
+                <details id="cmd-haiku">
+                    <summary>haiku-hunt — AI-Assisted Hunting via Bedrock</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix haiku-hunt TARGET [OPTIONS]</code></pre>
+                        <p>AI-assisted vulnerability hunting using Claude Haiku via AWS Bedrock. A lighter-weight alternative to GHOST for quick AI-powered analysis.</p>
+                        <table class="flag-table">
+                            <tr><td>--no-ai</td><td>Disable AI analysis (just run scans)</td></tr>
+                            <tr><td>-d, --deep</td><td>Deep scan mode</td></tr>
+                            <tr><td>--region REGION</td><td>AWS region for Bedrock (default: us-east-1)</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Save findings to JSON file</td></tr>
+                        </table>
+                        <pre><code># AI-assisted hunt
+beatrix haiku-hunt https://api.target.com
+
+# Deep scan with custom region
+beatrix haiku-hunt example.com --deep --region eu-west-1 -o haiku_results.json</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-validate">
+                    <summary>validate — Validate Findings for Exploitability</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix validate FINDINGS_FILE</code></pre>
+                        <p>Takes a JSON report file with findings and re-tests each one to confirm exploitability. Filters out false positives before you submit to a bounty program.</p>
+                        <pre><code># Validate a report
+beatrix validate scan_results.json</code></pre>
+                    </div>
+                </details>
+
+                <!-- ═══════════ TIER 6: Findings Management ═══════════ -->
+                <h3>Tier 6: Findings &amp; Reporting</h3>
+
+                <details id="cmd-findings">
+                    <summary>findings — Query &amp; Manage Stored Findings</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix findings [OPTIONS]
+beatrix findings show|hunts|export|diff|delete|summary</code></pre>
+                        <p>A full command group for querying, inspecting, exporting, and managing findings from past hunts. Stored in a local SQLite database.</p>
+
+                        <p><strong>Top-level filters (list findings):</strong></p>
+                        <table class="flag-table">
+                            <tr><td>-h, --hunt ID</td><td>Filter to a specific hunt ID</td></tr>
+                            <tr><td>-s, --severity LEVEL</td><td>Filter by severity (critical/high/medium/low/info)</td></tr>
+                            <tr><td>-m, --module MODULE</td><td>Filter by scanner module name</td></tr>
+                            <tr><td>-t, --target TEXT</td><td>Filter by target (substring match)</td></tr>
+                            <tr><td>-q, --search TEXT</td><td>Search title/description/evidence</td></tr>
+                            <tr><td>-n, --limit N</td><td>Max results (default: 50)</td></tr>
+                        </table>
+
+                        <p><strong>Subcommands:</strong></p>
+                        <table>
+                            <tr><th>Subcommand</th><th>Usage</th><th>Description</th></tr>
+                            <tr><td><code>show ID</code></td><td><code>beatrix findings show 42</code></td><td>Full detail for one finding</td></tr>
+                            <tr><td><code>hunts</code></td><td><code>beatrix findings hunts -n 10</code></td><td>List all past hunts</td></tr>
+                            <tr><td><code>export</code></td><td><code>beatrix findings export -f csv -o out.csv</code></td><td>Export as JSON/JSONL/CSV</td></tr>
+                            <tr><td><code>diff A B</code></td><td><code>beatrix findings diff 3 7</code></td><td>Compare findings between two hunts</td></tr>
+                            <tr><td><code>delete ID</code></td><td><code>beatrix findings delete 3</code></td><td>Delete a hunt (with confirmation)</td></tr>
+                            <tr><td><code>summary ID</code></td><td><code>beatrix findings summary 7</code></td><td>Detailed summary for a hunt</td></tr>
+                        </table>
+
+                        <pre><code># List all critical findings
+beatrix findings -s critical
+
+# Search for CORS-related findings on Shopify
+beatrix findings -t shopify -q cors
+
+# Export a specific hunt as CSV
+beatrix findings export --hunt 7 -f csv -o hunt7.csv
+
+# Compare two hunts (before/after remediation)
+beatrix findings diff 3 7
+
+# Show full detail for finding #42
+beatrix findings show 42</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-h1">
+                    <summary>h1 — HackerOne Integration</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix h1 programs|dupecheck|submit</code></pre>
+                        <p>Submit reports, check for duplicates, and browse programs directly from the terminal. Requires <code>H1_USERNAME</code> and <code>H1_API_TOKEN</code> environment variables.</p>
+
+                        <table>
+                            <tr><th>Subcommand</th><th>Usage</th><th>Description</th></tr>
+                            <tr><td><code>programs</code></td><td><code>beatrix h1 programs -s "shopify"</code></td><td>List/search available programs</td></tr>
+                            <tr><td><code>dupecheck</code></td><td><code>beatrix h1 dupecheck shopify cors auth bypass</code></td><td>Check for duplicate reports</td></tr>
+                            <tr><td><code>submit</code></td><td><code>beatrix h1 submit shopify -t "Title" -f report.md</code></td><td>Submit a report</td></tr>
+                        </table>
+
+                        <p><strong>Submit flags:</strong></p>
+                        <table class="flag-table">
+                            <tr><td>-t, --title TEXT</td><td><strong>(Required)</strong> Report title</td></tr>
+                            <tr><td>-f, --body-file PATH</td><td><strong>(Required)</strong> Report body (markdown file)</td></tr>
+                            <tr><td>-i, --impact TEXT</td><td><strong>(Required)</strong> Impact statement</td></tr>
+                            <tr><td>-s, --severity LEVEL</td><td>Severity: none/low/medium/high/critical (default: high)</td></tr>
+                            <tr><td>--cwe ID</td><td>CWE identifier number</td></tr>
+                            <tr><td>--dry-run</td><td>Preview what would be submitted</td></tr>
+                        </table>
+
+                        <pre><code># Full submission workflow
+beatrix h1 dupecheck shopify cors misconfiguration
+beatrix h1 submit shopify -t "CORS Misconfiguration on api.shopify.com" \
+  -f report.md -i "Account takeover via cross-origin data theft" -s high
+
+# Dry run (test without submitting)
+beatrix h1 submit shopify -t "CORS" -f report.md -i "ATO" -s high --dry-run</code></pre>
+                    </div>
+                </details>
+
+                <!-- ═══════════ TIER 7: Mobile ═══════════ -->
+                <h3>Tier 7: Mobile Interception</h3>
+
+                <details id="cmd-mobile">
+                    <summary>mobile — Mobile App Traffic Interception</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix mobile intercept|bykea|analyze</code></pre>
+                        <p>Automates the entire mobile app interception workflow: emulator launch, proxy config, certificate injection, and traffic analysis.</p>
+
+                        <table>
+                            <tr><th>Subcommand</th><th>Usage</th><th>Description</th></tr>
+                            <tr><td><code>intercept</code></td><td><code>beatrix mobile intercept --apk app.apk</code></td><td>Launch emulator + capture traffic</td></tr>
+                            <tr><td><code>bykea</code></td><td><code>beatrix mobile bykea --apk bykea.apk</code></td><td>Bykea-specific interception with leaked key matching</td></tr>
+                            <tr><td><code>analyze</code></td><td><code>beatrix mobile analyze capture.json</code></td><td>Analyze a previously captured traffic file</td></tr>
+                        </table>
+
+                        <p><strong>Intercept flags:</strong></p>
+                        <table class="flag-table">
+                            <tr><td>--avd NAME</td><td>Android Virtual Device name (default: bykea_hunter)</td></tr>
+                            <tr><td>--apk PATH</td><td>APK file to install on emulator</td></tr>
+                            <tr><td>-p, --package PKG</td><td>Package name to launch (default: com.bykea.pk)</td></tr>
+                            <tr><td>-d, --duration SECS</td><td>Capture duration in seconds (default: 300)</td></tr>
+                            <tr><td>--port PORT</td><td>Proxy port (default: 8080)</td></tr>
+                        </table>
+
+                        <pre><code># Intercept any mobile app
+beatrix mobile intercept --apk target_app.apk -p com.target.app -d 600
+
+# Analyze captured traffic with known secrets
+beatrix mobile analyze capture.json --secrets known_keys.json</code></pre>
+                    </div>
+                </details>
+            </section>
+
+            <section id="modules">
+                <h2>5. The Arsenal (38+ Modules)</h2>
+                <p>Beatrix packs over 38 specialized scanner modules. You can view them in your terminal using <code>beatrix arsenal</code>. Here is the comprehensive breakdown of every capability.</p>
+
+                <h3 id="mod-recon">Phase 1: Reconnaissance</h3>
+                <p>The foundation of the framework. Without crawling and probing, scanners only see a bare URL with zero parameters, zero endpoints, and zero forms. This phase builds the <code>ScanContext</code> attack surface.</p>
+                
+                <details>
+                    <summary>1. Target Crawler (crawler.py) <span class="tag">Recon</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> An asynchronous, depth-limited spider that maps the target's attack surface. It bypasses basic bot protections by utilizing a full Chrome User-Agent and handling redirects natively.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Initial Fetch:</strong> Captures headers, cookies, and the raw HTML body. It intentionally avoids setting <code>Accept-Encoding</code> manually to prevent decompression failures on stripped responses (e.g., Pinterest).</li>
+                            <li><strong>Soft-404 Fingerprinting:</strong> Before crawling, it requests a guaranteed non-existent path (<code>/beatrix-nonexistent-[hash]</code>) and hashes the response body (first 2000 bytes) to create a baseline signature. Any discovered link matching this hash is discarded as a false positive.</li>
+                            <li><strong>Extraction Logic:</strong>
+                                <ul>
+                                    <li><strong>URLs & Parameters:</strong> Parses <code>&lt;a href&gt;</code> tags, tracking same-origin URLs and mapping query parameters (<code>?id=1</code>) to their respective endpoints.</li>
+                                    <li><strong>Forms:</strong> Extracts <code>&lt;form&gt;</code> actions, methods (GET/POST), and all input fields (names, types, default values).</li>
+                                    <li><strong>JS Bundles:</strong> Uses regex (<code>&lt;script[^&gt;]+src=["']([^"']+)["']</code>) to find <code>.js</code> and <code>.mjs</code> files.</li>
+                                    <li><strong>SPA Routing:</strong> Extracts links from common JS patterns (React Router, Angular) by looking for paths starting with a lowercase letter after a slash (<code>/dashboard</code>).</li>
+                                </ul>
+                            </li>
+                            <li><strong>Technology Fingerprinting:</strong> Analyzes headers (<code>X-Powered-By</code>, <code>Server</code>, <code>X-AspNet-Version</code>), cookies (<code>PHPSESSID</code>, <code>JSESSIONID</code>), and body markers (<code>__NEXT_DATA__</code>, <code>ng-app</code>, <code>__vue__</code>, <code>wp-content</code>) to identify the stack.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>2. Endpoint Prober (endpoint_prober.py) <span class="tag">Recon</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Replaces the tedious manual process of curling <code>/v1/invoice</code>, <code>/v1/booking</code>, etc. It probes hundreds of common API paths in parallel and categorizes the responses.</p>
+                        <p><strong>Target Dictionaries:</strong></p>
+                        <ul>
+                            <li><strong>API Prefixes:</strong> <code>/v1</code>, <code>/v2</code>, <code>/api</code>, <code>/api/v1</code></li>
+                            <li><strong>High-Value Paths:</strong> <code>/user/me</code>, <code>/admin/users</code>, <code>/auth/token</code>, <code>/payment</code>, <code>/invoice</code>, <code>/booking</code></li>
+                            <li><strong>Infrastructure:</strong> <code>/actuator/env</code>, <code>/debug/pprof</code>, <code>/swagger.json</code>, <code>/graphql</code>, <code>/.git/config</code></li>
+                            <li><strong>E-commerce Specific:</strong> <code>/cart-api/v2/checkout</code>, <code>/customer-data/api/v2/customers</code></li>
+                        </ul>
+                        <p><strong>Advanced Soft-404 Detection:</strong> SPAs often return HTTP 200 for all paths. The prober requests 4 random canary paths (e.g., <code>/bxprobe-404-test-a1b2c3d4e5</code>) and extracts a <strong>structural fingerprint</strong> by hashing the invariant <code>&lt;script src="..."&gt;</code> tags and framework mount points (<code>id="__next"</code>, <code>id="root"</code>). If a probed endpoint returns 200 but matches this structural hash, it is flagged as a soft-404 and ignored.</p>
+                        <p><strong>Categorization:</strong> Flags <code>401/403</code> as high-value targets for Auth Bypass/IDOR, and <code>500</code> errors for the Error Disclosure scanner.</p>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>3. JS Bundle Analyzer (js_bundle.py) <span class="tag">Recon</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> A passive recon module that downloads and analyzes JavaScript bundles for information disclosure. This exact technique discovered 4 new backend hosts on a Bykea engagement.</p>
+                        <p><strong>Extraction Capabilities:</strong></p>
+                        <ul>
+                            <li><strong>Manifest Discovery:</strong> Hunts for <code>asset-manifest.json</code>, <code>webpack-manifest.json</code>, and Next.js <code>_buildManifest.js</code> to locate all chunks.</li>
+                            <li><strong>Internal Hosts:</strong> Uses regex to find internal/dev/staging subdomains (e.g., <code>staging.example.internal</code>) while filtering out public TLDs (<code>.dev</code>, <code>.app</code>) to reduce noise.</li>
+                            <li><strong>Hardcoded Secrets:</strong> Contains high-fidelity regexes for AWS (<code>AKIA...</code>), Google (<code>AIza...</code>), Stripe (<code>sk_live_...</code>), Mapbox, Firebase, GitHub, Slack, and JWTs.</li>
+                            <li><strong>Entropy & False Positive Filtering:</strong> Filters out build hashes (pure hex) and JS identifiers (camelCase/PascalCase) by calculating Shannon entropy. Real secrets typically have an entropy > 3.5.</li>
+                            <li><strong>Storage Keys:</strong> Extracts <code>localStorage.getItem()</code> and <code>sessionStorage</code> keys, specifically looking for auth-related terms (<code>token</code>, <code>jwt</code>, <code>bearer</code>).</li>
+                            <li><strong>Source Maps:</strong> Automatically checks for <code>.js.map</code> files. If found, it extracts the original source filenames and full unminified code from <code>sourcesContent</code>.</li>
+                            <li><strong>Next.js Data:</strong> Parses the <code>__NEXT_DATA__</code> script tag for sensitive server-side props exposed to the client.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>4. GitHub Recon Scanner (github_recon.py) <span class="tag">Recon</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Searches a target organization's public GitHub repositories for hardcoded secrets, configuration files, and Git history leaks.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Repository Enumeration:</strong> Uses the GitHub API to list all public repos for the target org, sorting by most recently updated.</li>
+                            <li><strong>File Tree Scanning:</strong> Pulls the git tree and filters for interesting files (<code>.env</code>, <code>config/production.json</code>, <code>docker-compose.yml</code>, <code>wp-config.php</code>, <code>id_rsa</code>).</li>
+                            <li><strong>Secret Scanning:</strong> Scans file content against 15+ critical regex patterns. It actively ignores placeholder values (<code>changeme</code>, <code>your-api-key</code>) and common CI/test credentials (<code>postgres:postgres</code>, <code>testuser</code>) to ensure high-fidelity alerts.</li>
+                            <li><strong>Git History Analysis (The "Bykea" Technique):</strong> This is where the magic happens. It pulls the commit history, looking for suspicious commit messages (<code>remove</code>, <code>sanitize</code>, <code>redact</code>, <code>secret</code>). It then pulls the diff for those commits. If a line containing a secret was <em>removed</em> (starts with <code>-</code>) and replaced with a placeholder, it flags the permanently recoverable secret from the git history.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <h3 id="mod-weap">Phase 2: Weaponization</h3>
+                <p>Once the attack surface is mapped, Beatrix begins probing for structural and configuration vulnerabilities that can be weaponized into high-impact exploits.</p>
+                
+                <details>
+                    <summary>5. Subdomain Takeover Scanner (takeover.py) <span class="tag">Takeover</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Detects misconfigured DNS records pointing to decommissioned cloud services. This is a classic, high-value bug bounty target (often $500-$5000+).</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>DNS Resolution:</strong> Uses <code>dnspython</code> to resolve CNAME and A records for discovered subdomains.</li>
+                            <li><strong>Service Fingerprinting:</strong> Contains exact regex patterns and HTTP response fingerprints for 30+ cloud providers. Examples:
+                                <ul>
+                                    <li><strong>AWS S3:</strong> Looks for <code>.s3.amazonaws.com</code> and the <code>NoSuchBucket</code> XML response.</li>
+                                    <li><strong>Azure:</strong> Looks for <code>.azurewebsites.net</code> and <code>Error 404 - Web app not found</code>.</li>
+                                    <li><strong>Heroku:</strong> Looks for <code>.herokuapp.com</code> and <code>No such app</code>.</li>
+                                    <li><strong>GitHub Pages:</strong> Looks for <code>.github.io</code> and <code>There isn't a GitHub Pages site here</code>.</li>
+                                </ul>
+                            </li>
+                            <li><strong>NXDOMAIN Verification:</strong> If a CNAME points to a domain that returns <code>NXDOMAIN</code>, it immediately flags it as a critical takeover opportunity, as the attacker can register the target domain.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>6. Error Disclosure Scanner (error_disclosure.py) <span class="tag">A05</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Probes endpoints with invalid inputs to trigger verbose error responses that leak sensitive backend information. This exact module found a PostgreSQL table name leak and Joi validation leak on a live target.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Targeted Fuzzing:</strong> Appends edge-case values (<code>0</code>, <code>-1</code>, <code>999999999</code>, <code>null</code>, <code>undefined</code>, <code>{{7*7}}</code>, <code>'</code>) to CRUD endpoints (<code>/v1/invoice/1</code>, <code>/api/user/1</code>).</li>
+                            <li><strong>Database Leaks:</strong> Analyzes 500-level responses for SQL syntax errors, PostgreSQL error codes (<code>"code":"22P02"</code>), missing relation/column names, and MongoDB/Redis exceptions.</li>
+                            <li><strong>Framework Internals:</strong> Detects Joi validation leaks (which expose expected parameter names), Django tracebacks, Laravel PDO exceptions, and Spring Boot whitelabel pages.</li>
+                            <li><strong>Stack Traces & Paths:</strong> Uses regex to extract server-side file paths (<code>/var/www/html/...</code>) and Node.js/Python stack traces.</li>
+                            <li><strong>Input Reflection:</strong> Checks if the injected fuzz value is echoed back in the error response, flagging it as a potential stepping stone for Reflected XSS.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>7. Web Cache Poisoning Scanner (cache_poisoning.py) <span class="tag">A05</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Tests for cache poisoning vulnerabilities that can lead to stored XSS at scale, open redirects, or DoS. Based on James Kettle's "Practical Web Cache Poisoning" research.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Cache Fingerprinting:</strong> Sends identical requests with a cache-buster (<code>?btrxcb=...</code>) to identify the CDN (Fastly, Cloudflare, CloudFront, Varnish) via headers like <code>X-Cache</code>, <code>CF-Cache-Status</code>, and <code>Age</code>. It also parses the <code>Vary</code> header to understand the cache key.</li>
+                            <li><strong>Unkeyed Header Detection:</strong> Injects 15+ headers (<code>X-Forwarded-Host</code>, <code>X-Original-URL</code>, <code>X-Rewrite-URL</code>) with a unique canary value. It compares the response against a clean baseline to ensure the canary is actually reflected in the DOM or headers, and not just echoed as part of a URL state object (SSR JSON).</li>
+                            <li><strong>Fat GET:</strong> Tests if the server processes a POST-style body on a GET request by injecting a JSON body into a GET request and checking for reflection or significant content length changes.</li>
+                            <li><strong>Parameter Cloaking:</strong> Exploits parsing discrepancies between the CDN and the origin server using delimiters like <code>;</code> or encoded ampersands (<code>%26</code>) to hide poisoned parameters from the cache key while the origin still processes them.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>8. Prototype Pollution Scanner (prototype_pollution.py) <span class="tag">A08</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Hunts for both client-side and server-side JavaScript prototype pollution vulnerabilities, which can lead to DOM XSS or Node.js Remote Code Execution.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Server-Side JSON Injection:</strong> Sends POST requests with payloads like <code>{"__proto__": {"status": 510}}</code> or <code>{"constructor": {"prototype": {"json spaces": "  "}}}</code>. If the server uses a vulnerable recursive merge (e.g., old <code>lodash.merge</code>), the global Object prototype is polluted. Beatrix detects this by observing if the HTTP status code changes to 510, or if the JSON response formatting suddenly changes to include spaces.</li>
+                            <li><strong>Server-Side Query Injection:</strong> Exploits the Express.js <code>qs</code> parser by sending <code>?__proto__[status]=510</code>.</li>
+                            <li><strong>Client-Side URL Injection:</strong> Injects <code>?__proto__[btrx]=1234</code> into the URL. It analyzes the response body to see if the framework reflects the polluted property, while carefully filtering out false positives where the framework simply echoes the current URL.</li>
+                            <li><strong>Passive JS Analysis:</strong> Scans downloaded JS bundles for vulnerable patterns like <code>$.extend(true, ...)</code>, <code>lodash.merge()</code>, and unsafe <code>JSON.parse()</code> implementations.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <h3 id="mod-deliv">Phase 3: Delivery</h3>
+                <p>This phase focuses on how data is transported and routed between the client, the front-end proxies, and the back-end servers. Vulnerabilities here often allow attackers to bypass the entire security model.</p>
+                
+                <details>
+                    <summary>9. CORS Scanner (cors.py) <span class="tag">A02</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Detects Cross-Origin Resource Sharing (CORS) misconfigurations that allow attackers to read sensitive data cross-origin. This exact module found a critical CORS misconfiguration on Anduril's developer portal.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Origin Generation:</strong> Dynamically generates malicious origins based on the target domain (e.g., <code>https://evil.com</code>, <code>null</code>, <code>https://evil.com.target.com</code>, <code>https://target.com.evil.com</code>, <code>http://target.com</code>).</li>
+                            <li><strong>Regex Bypasses:</strong> Tests edge-case characters that often break poorly written regexes in CORS configurations, such as underscores (<code>https://target_.evil.com</code>) and backticks.</li>
+                            <li><strong>Authenticated Testing:</strong> If the scanner has cookies or auth headers, it tests the CORS bypasses <em>with</em> authentication. If the bypass succeeds and the response contains PII (emails, phone numbers, addresses), the finding is immediately upgraded to <strong>CRITICAL</strong>.</li>
+                            <li><strong>Preflight (OPTIONS) Testing:</strong> Sends <code>OPTIONS</code> requests requesting <code>PUT/DELETE</code> methods. If the server replies with <code>Access-Control-Allow-Credentials: true</code> and allows write methods from an evil origin, it flags a critical state-changing CORS vulnerability.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>10. Open Redirect Scanner (redirect.py) <span class="tag">Redirect</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Hunts for unvalidated redirects. While often considered low severity, open redirects become <strong>HIGH</strong> severity when chained with OAuth flows to steal authorization tokens.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Parameter Discovery:</strong> First checks if the URL already contains redirect parameters (<code>?next=</code>, <code>?return_to=</code>). If not, it probes the top 6 most common parameters to see if the server even processes them.</li>
+                            <li><strong>Canonical Filtering:</strong> Intelligently detects and ignores "canonical redirects" (e.g., <code>http://example.com</code> redirecting to <code>https://www.example.com</code>) to prevent false positives.</li>
+                            <li><strong>Payload Injection:</strong> Fuzzes the parameter with 20+ bypass payloads, including protocol-relative URLs (<code>//evil.com</code>), backslash tricks (<code>\\evil.com</code>), @ symbol parsing (<code>https://target.com@evil.com</code>), and null byte injections (<code>https://evil.com%00.target.com</code>).</li>
+                            <li><strong>Destination Verification:</strong> Parses the <code>Location</code> header of the 3xx response to verify that the <em>actual destination host</em> is attacker-controlled, preventing false positives where the payload is just echoed in a safe redirect.</li>
+                            <li><strong>JS & Meta Refresh:</strong> Also parses 200 OK responses for <code>&lt;meta http-equiv="refresh"&gt;</code> and JavaScript redirects (<code>window.location = ...</code>).</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>11. HTTP Request Smuggling Scanner (http_smuggling.py) <span class="tag">Transport</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Detects protocol-level desynchronization between front-end proxies and back-end servers. Based on James Kettle's HTTP Desync research.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Timing-Based Detection (Safe Mode):</strong> Uses differential timing to detect desyncs without poisoning sockets for other users.
+                                <ul>
+                                    <li><strong>CL.TE Probe:</strong> Sends a request where <code>Content-Length</code> claims more data than the chunked body contains. If the back-end uses <code>Content-Length</code>, it waits for more data, causing a detectable timeout.</li>
+                                    <li><strong>TE.CL Probe:</strong> Sends a chunked body but with a short <code>Content-Length</code>. If the back-end uses <code>Content-Length</code>, it reads only the first few bytes, leaving the rest in the socket.</li>
+                                </ul>
+                            </li>
+                            <li><strong>TE Obfuscation:</strong> Tests 15+ variants of the <code>Transfer-Encoding</code> header (e.g., <code>Transfer-Encoding: chunked\x00</code>, <code>X-Transfer-Encoding</code>, line folding) to find discrepancies in how the front-end and back-end parse headers.</li>
+                            <li><strong>HTTP/2 Downgrade (H2.Desync):</strong> Tests if an HTTP/2 front-end improperly forwards <code>Content-Length</code> or <code>Transfer-Encoding</code> headers when downgrading the connection to HTTP/1.1 for the back-end.</li>
+                            <li><strong>CL.0 Desync:</strong> Tests if the server ignores <code>Content-Length: 0</code> and reads the body anyway on a keep-alive connection.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>12. WebSocket Security Scanner (websocket.py) <span class="tag">Transport</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Focuses on the HTTP-observable aspects of WebSocket security, specifically the Upgrade handshake and Cross-Site WebSocket Hijacking (CSWSH).</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Endpoint Discovery:</strong> Derives potential WS URLs (<code>/ws</code>, <code>/socket.io/</code>, <code>/graphql</code>) and probes them with a valid <code>Sec-WebSocket-Key</code> to look for a <code>101 Switching Protocols</code> response. Also passively scans JS bundles for <code>new WebSocket()</code> or <code>io()</code> calls.</li>
+                            <li><strong>CSWSH Testing:</strong> Attempts the WebSocket Upgrade handshake using malicious <code>Origin</code> headers (<code>https://evil.com</code>, <code>null</code>). If the server returns 101, it is vulnerable to CSWSH, allowing an attacker to hijack the WS session via a malicious webpage.</li>
+                            <li><strong>Auth & Plaintext Checks:</strong> Tests if the WS endpoint allows connections without cookies/auth headers, and flags any use of unencrypted <code>ws://</code> instead of <code>wss://</code>.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <h3 id="mod-exploit">Phase 4: Exploitation</h3>
+                <p>This phase involves active exploitation of input validation failures. These modules use an <code>InsertionPointDetector</code> to systematically inject payloads into every possible vector (URL parameters, POST bodies, JSON values, headers, and cookies).</p>
+                
+                <details>
+                    <summary>13. Multi-Vector Injection Scanner (injection.py) <span class="tag">A03</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> A comprehensive active scanner that hunts for SQL Injection, Cross-Site Scripting (XSS), Command Injection, and Path Traversal.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>SQL Injection:</strong> Fires error-based payloads (e.g., <code>'</code>, <code>1' OR '1'='1</code>) and parses responses for 9+ database error signatures (MySQL, PostgreSQL, Oracle, MSSQL, SQLite). Also tests time-based blind SQLi (e.g., <code>' OR SLEEP(5)--</code>, <code>pg_sleep(5)</code>) using a dynamic baseline timing mechanism to prevent false positives.</li>
+                            <li><strong>Cross-Site Scripting (XSS):</strong> Injects reflected XSS probes (<code>&lt;script&gt;alert(1)&lt;/script&gt;</code>, <code>"&gt;&lt;img src=x onerror=alert(1)&gt;</code>, <code>javascript:alert(1)</code>) and a unique canary (<code>bx&lt;&gt;"'`rx</code>) to detect context-specific reflection and escaping failures.</li>
+                            <li><strong>Command Injection:</strong> Tests for RCE via shell metacharacters (<code>; id</code>, <code>| id</code>, <code>$(id)</code>, <code>`id`</code>) and time-based delays (<code>; sleep 5</code>).</li>
+                            <li><strong>Path Traversal:</strong> Attempts to read local files using classic traversal (<code>../../../etc/passwd</code>), Windows paths (<code>..\..\..\windows\win.ini</code>), and double URL encoding (<code>..%252f..%252f..%252fetc/passwd</code>).</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>14. Server-Side Template Injection (ssti.py) <span class="tag">A03</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Detects when user input is unsafely embedded into template engines, escalating to Remote Code Execution (RCE). Based on James Kettle's SSTI research.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Detection:</strong> Uses randomized math expressions (e.g., <code>{{91371*91373}}</code>, <code>${91371*91373}</code>, <code>&lt;%=91371*91373%&gt;</code>) to detect template evaluation without triggering WAFs that block <code>{{7*7}}</code>.</li>
+                            <li><strong>Engine Identification:</strong> Uses a decision tree of polyglot payloads to identify 16+ specific engines. For example, <code>{{7*'7'}}</code> evaluates to <code>7777777</code> in Jinja2 but <code>49</code> in Twig. It also uses engine-specific probes like <code>{{''.__class__.__mro__}}</code> (Jinja2) or <code>${.version}</code> (FreeMarker).</li>
+                            <li><strong>Exploitation (RCE):</strong> Contains proof-of-concept RCE payloads for confirmed engines. Examples include Jinja2 MRO escapes (<code>{{''.__class__.__mro__[1].__subclasses__()[408]('id',shell=True,stdout=-1).communicate()[0]}}</code>), Twig filter callbacks (<code>{{_self.env.registerUndefinedFilterCallback('system')}}</code>), and Thymeleaf SpEL execution (<code>__${T(java.lang.Runtime).getRuntime().exec('id')}__</code>).</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>15. XML External Entity Scanner (xxe.py) <span class="tag">A03</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Tests for vulnerabilities in XML parsers that can lead to local file read, SSRF, or Denial of Service.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>In-Band File Read:</strong> Injects <code>ENTITY</code> declarations to read OS files (<code>/etc/passwd</code>, <code>C:\windows\win.ini</code>). Uses <code>php://filter/convert.base64-encode</code> to bypass binary parsing issues in PHP applications.</li>
+                            <li><strong>Blind/OOB XXE:</strong> Uses a collaborator domain to detect blind XXE via HTTP callbacks (<code>&lt;!ENTITY xxe SYSTEM "http://collaborator/"&gt;</code>) and DNS-only callbacks (to bypass HTTP egress filters).</li>
+                            <li><strong>Error-Based XXE:</strong> Provokes parser errors that leak file contents by referencing non-existent files or invalid URI schemes (e.g., <code>invalid:///%file;</code>).</li>
+                            <li><strong>Advanced Vectors:</strong> Tests XInclude attacks (<code>&lt;xi:include parse="text" href="file:///etc/passwd"/&gt;</code>) when the DOCTYPE cannot be modified, parameter entity injection (<code>%entity;</code>) for WAF bypasses, and UTF-16 encoding bypasses.</li>
+                            <li><strong>XXE to SSRF:</strong> Attempts to read cloud metadata endpoints (AWS IMDSv1, GCP, Azure) and Kubernetes service account tokens via XXE.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>16. Server-Side Request Forgery (ssrf.py) <span class="tag">A10</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> A high-value scanner that forces the server to make requests to internal networks or cloud metadata endpoints.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Parameter Discovery:</strong> Targets 40+ common SSRF parameters (<code>url</code>, <code>dest</code>, <code>webhook</code>, <code>proxy</code>) and automatically flags parameters containing URL-like values.</li>
+                            <li><strong>Localhost Bypasses:</strong> Tests 16+ localhost variations to bypass weak filters, including decimal IPs (<code>2130706433</code>), octal (<code>017700000001</code>), hex (<code>0x7f000001</code>), IPv6 loopbacks (<code>[::1]</code>), and DNS rebinding domains (<code>localtest.me</code>).</li>
+                            <li><strong>Cloud Metadata:</strong> Targets critical cloud endpoints including AWS IMDSv1 (<code>http://169.254.169.254/latest/meta-data/iam/security-credentials/</code>), GCP metadata (with required headers), Azure, DigitalOcean, and Alibaba Cloud.</li>
+                            <li><strong>Protocol Smuggling:</strong> Tests non-HTTP protocols like <code>file:///etc/passwd</code>, <code>gopher://localhost:25/</code>, and <code>dict://localhost:11211/stat</code> to interact with internal services.</li>
+                            <li><strong>Detection:</strong> Uses a combination of strong indicators (regex matching cloud metadata patterns or <code>/etc/passwd</code> content) and weak indicators (timing differences > 5s, significant response size deltas) to confirm vulnerabilities.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <h3 id="mod-logic">Phase 5: Business Logic & Auth</h3>
+                <p>This phase targets the core logic of the application, focusing on how it handles user identity, session state, and authorization boundaries. These vulnerabilities are often the highest-paying bugs in bounty programs.</p>
+                
+                <details>
+                    <summary>17. IDOR Scanner (idor.py) <span class="tag">A01</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Insecure Direct Object Reference scanner. The #1 bug bounty earner. Detects when an application provides direct access to objects based on user-supplied input without proper authorization checks.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>ID Extraction:</strong> Parses URLs, JSON bodies, form data, headers, and cookies to find potential identifiers. It uses regex to classify IDs as numeric, UUID, MongoDB OID, SHA1, or Base64.</li>
+                            <li><strong>Test Generation:</strong> For numeric IDs, it tests adjacent values (<code>id-1</code>, <code>id+1</code>) and common admin IDs (<code>0</code>, <code>1</code>). For UUIDs, it tests null UUIDs and single-character modifications.</li>
+                            <li><strong>Cross-Account Testing:</strong> Requires two authenticated sessions. It takes an ID belonging to User A and attempts to access/modify it using User B's session.</li>
+                            <li><strong>Impact Assessment:</strong> Parses the unauthorized response for PII (emails, phone numbers, credit cards, IBANs). If a write-method (PUT/DELETE) succeeds, or if sensitive PII is leaked, the finding is marked as <strong>CRITICAL</strong>.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>18. Authentication & Session Scanner (auth.py) <span class="tag">A07</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Hunts for authentication and session management flaws that lead to account takeover.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>JWT Analysis:</strong> Decodes JWTs offline to check for the <code>alg: "none"</code> vulnerability (allowing signature bypass), brute-forces the signature against a dictionary of common weak secrets (e.g., "secret", "123456"), and checks for missing or excessive <code>exp</code> (expiration) claims.</li>
+                            <li><strong>Username Enumeration:</strong> Sends login requests with likely-valid and definitely-invalid usernames. It compares the HTTP responses to detect enumeration via different error messages (e.g., "Invalid password" vs "User not found") or via statistical timing differences (>300ms delta).</li>
+                            <li><strong>Email Enumeration:</strong> Tests registration, password reset, and guest checkout endpoints (specifically targeting e-commerce patterns like Zooplus) to see if the API leaks whether an email is already registered via status codes or JSON body differences.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>19. GraphQL Exploitation Scanner (graphql.py) <span class="tag">A02</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Specialized scanner for mapping and exploiting GraphQL APIs.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Introspection & Mapping:</strong> Attempts to run full and simplified <code>__schema</code> introspection queries. If successful, it maps all queries, mutations, types, and arguments.</li>
+                            <li><strong>Sensitive Data Discovery:</strong> Parses the extracted schema to flag sensitive fields (e.g., <code>ssn</code>, <code>privateKey</code>, <code>otp</code>) and dangerous mutations (e.g., <code>deleteUser</code>, <code>setAdmin</code>).</li>
+                            <li><strong>Denial of Service (DoS):</strong> Tests for missing query depth limits by finding self-referential types in the schema and building deeply nested queries (e.g., <code>user { friends { friends { friends { id } } } }</code>) to exhaust server resources.</li>
+                            <li><strong>Bypasses:</strong> Tests GET-based introspection to bypass POST-only WAF rules, and uses newline obfuscation to bypass basic regex filters.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>20. Business Logic Scanner (business_logic.py) <span class="tag">A04</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Tests for flaws in the application's intended workflow and rules. These are often missed by standard scanners because they require understanding the application's purpose.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Numeric Boundary Testing:</strong> Automatically identifies numeric parameters (e.g., <code>price</code>, <code>quantity</code>, <code>id</code>) and fuzzes them with 25+ boundary values including negative numbers (<code>-1</code>), zero (<code>0</code>), INT32/INT64 overflows (<code>2147483648</code>), and floating-point anomalies (<code>1e308</code>, <code>NaN</code>).</li>
+                            <li><strong>Passive Logic Detection:</strong> Analyzes HTTP responses to find hidden form fields containing sensitive state data (e.g., <code>&lt;input type="hidden" name="price" value="10.00"&gt;</code>) and flags sequential identifiers that may be vulnerable to enumeration.</li>
+                            <li><strong>Method Confusion:</strong> Tests if endpoints respond differently to unexpected HTTP methods (e.g., sending a <code>DELETE</code> request to a <code>GET</code> endpoint) to bypass routing-level access controls.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>21. Payment & Checkout Scanner (payment_scanner.py) <span class="tag">A04</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Specialized business logic scanner focused entirely on e-commerce checkout and payment flows. Built specifically to target complex SPA/API architectures like Zooplus.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>State-API Mapping:</strong> Contains pre-configured endpoint maps for complex checkout flows (e.g., <code>/cart-version</code>, <code>/set-article-quantity</code>, <code>/add-coupon</code>, <code>/checkout/place-order</code>).</li>
+                            <li><strong>WAF Evasion:</strong> Implements aggressive, stateful rate-limiting and dynamic backoff (e.g., waiting 120s after receiving a 403) to avoid triggering CloudFront or Akamai blocks during testing.</li>
+                            <li><strong>Targeted Attacks:</strong> Tests for quantity tampering (negative quantities), coupon stacking/abuse, subscription manipulation (converting single deliveries to subscriptions for discounts), and stage skipping (attempting to call <code>/place-order</code> without completing the payment step).</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <h3 id="mod-standalone">Standalone Modules (CLI Only)</h3>
+                <p>These modules are not run during a standard <code>hunt</code>, but can be invoked directly via <code>strike</code> or as standalone tools.</p>
+                
+                <details>
+                    <summary>Mobile Interceptor (mobile_interceptor.py) <span class="tag">Tool</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Automates the full mobile app interception workflow. Built for intercepting production mobile app traffic to validate leaked credentials against live systems.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Emulator Automation:</strong> Uses <code>adb</code> to launch an Android emulator (e.g., <code>Pixel_4_API_30</code>), configure global HTTP proxy settings (<code>settings put global http_proxy</code>), and install the target APK.</li>
+                            <li><strong>Certificate Injection:</strong> Automatically pushes the <code>mitmproxy</code> CA certificate to the device (<code>/data/local/tmp/cert-der.crt</code>) and installs it into the system trust store to intercept SSL/TLS traffic.</li>
+                            <li><strong>Traffic Analysis:</strong> Runs <code>mitmdump</code> with a custom Python addon (<code>MobileTrafficAnalyzer</code>) to capture all HTTP/S traffic, extracting endpoints, parameters, and headers into a structured JSON log for further analysis.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>Browser Scanner (browser_scanner.py) <span class="tag">Tool</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Real browser automation using Playwright for WAF bypass and authenticated testing.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>DOM XSS Detection:</strong> Injects a unique canary string (<code>beatrix_xss_test_...</code>) into URL parameters and fragments, then uses Playwright to evaluate the DOM (<code>document.documentElement.innerHTML</code>) to see if the canary is reflected unescaped.</li>
+                            <li><strong>Open Redirect Validation:</strong> Navigates to target URLs with injected redirect payloads (e.g., <code>https://evil.com</code>) and monitors the browser's final URL (<code>page.url</code>) to confirm if the redirect was successful.</li>
+                            <li><strong>WAF Evasion:</strong> Uses a real headless Chromium instance with randomized user agents and viewport sizes to bypass WAFs that block standard automated HTTP clients (like <code>requests</code> or <code>aiohttp</code>).</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>Credential Validator (credential_validator.py) <span class="tag">Tool</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Takes discovered credentials (from GitHub recon, config files, etc.) and validates whether they are actually live/working.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Offline JWT Analysis:</strong> Decodes JWTs locally to extract the header and payload. Checks for weak algorithms (<code>alg: none</code>), expiration dates (<code>exp</code>), and sensitive claims (<code>admin</code>, <code>role</code>, <code>email</code>).</li>
+                            <li><strong>AWS Key Validation:</strong> Uses <code>boto3.client('sts')</code> to call <code>get_caller_identity()</code>. If successful, it confirms the AWS Access Key ID and Secret Access Key are valid and active.</li>
+                            <li><strong>Stripe Key Validation:</strong> Sends a test request to <code>https://api.stripe.com/v1/charges</code> using the discovered Stripe API key (<code>sk_live_...</code> or <code>sk_test_...</code>) via Basic Auth to verify its status.</li>
+                            <li><strong>Slack Token Validation:</strong> Calls <code>https://slack.com/api/auth.test</code> with the discovered Slack token (<code>xoxb-...</code> or <code>xoxp-...</code>) in the Authorization header to confirm it is active.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>Origin IP Discovery (origin_ip_discovery.py) <span class="tag">Tool</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Discovers real origin IPs behind CDN/WAF services like Cloudflare or Fastly to allow direct attacks against the backend server.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>DNS History & SSL Certs:</strong> Queries ViewDNS.info and DNSDumpster for historical A records. Searches <code>crt.sh</code> for SSL certificates matching the domain and resolves the extracted subdomains to find origin IPs.</li>
+                            <li><strong>Subdomain Correlation:</strong> Brute-forces common bypass subdomains (e.g., <code>direct</code>, <code>origin</code>, <code>backend</code>, <code>dev</code>, <code>mail</code>) and resolves them to see if they point to non-CDN IPs.</li>
+                            <li><strong>Misconfiguration Checks:</strong> Sends requests with spoofed headers (<code>X-Forwarded-For: 127.0.0.1</code>) and checks for IP leaks in the response headers. Also checks common status paths (<code>/server-status</code>, <code>/nginx_status</code>) for exposed IPs.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>Power Injector (power_injector.py) <span class="tag">Tool</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> The nuclear option for injection testing. An AI-assisted injection scanner that combines 2000+ payloads with context-aware selection and WAF bypass techniques.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Massive Payload Dictionaries:</strong> Injects payloads for SQLi (e.g., <code>' AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))--</code>), XSS (e.g., <code>&lt;svg/onload=alert(1)&gt;</code>), SSTI (e.g., <code>{{''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read()}}</code>), CMDi (e.g., <code>; cat /etc/passwd</code>), SSRF (e.g., <code>http://169.254.169.254/latest/meta-data/</code>), and more.</li>
+                            <li><strong>Blind/Time-Based Detection:</strong> Uses timing attacks (e.g., <code>' AND SLEEP(5)--</code>, <code>; ping -c 5 127.0.0.1</code>) and measures response times (<code>elapsed &gt;= 4.5s</code>) to detect blind vulnerabilities.</li>
+                            <li><strong>Error Signature Matching:</strong> Analyzes HTTP responses against extensive regex patterns to detect database errors (e.g., <code>ORA-[0-9]{4,}</code>, <code>SQL syntax.*MySQL</code>) and command execution output (e.g., <code>uid=\d+.*gid=\d+</code>).</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <details>
+                    <summary>Polyglot Generator (polyglot_generator.py) <span class="tag">Tool</span></summary>
+                    <div class="detail-body">
+                        <p><strong>Description:</strong> Generates context-breaking XSS payloads that work across multiple injection contexts simultaneously.</p>
+                        <p><strong>Technical Execution:</strong></p>
+                        <ul>
+                            <li><strong>Context Breakers:</strong> Generates payloads designed to break out of HTML attributes (<code>"&gt;&lt;</code>), JavaScript strings (<code>"-alert(1)-"</code>), and template literals (<code>${alert(1)}</code>).</li>
+                            <li><strong>Advanced Polyglots:</strong> Includes complex, multi-context payloads like Gareth Heyes' ultimate polyglot (<code>jaVasCript:/*-/*`/*\`/*'/*"/**/(/* */oNcLiCk=alert() )//...</code>) and Masato Kinugawa's mXSS payloads (<code>&lt;noscript&gt;&lt;p title="&lt;/noscript&gt;&lt;img src=x onerror=alert(1)&gt;"&gt;</code>).</li>
+                            <li><strong>DOM Clobbering:</strong> Generates payloads to overwrite global variables and DOM properties (e.g., <code>&lt;img name="location" src="//evil.com/redirect.js"&gt;</code>) to hijack application logic.</li>
+                        </ul>
+                    </div>
+                </details>
+            </section>
+
+            <section id="ai-ghost">
+                <h2>6. GHOST: AI Autonomous Pentester</h2>
+                <p>GHOST (Generative Heuristic Offensive Security Tester) is Beatrix's crown jewel. It is an autonomous agent powered by Claude (Sonnet/Haiku) or AWS Bedrock that acts as a virtual pentester.</p>
+                <p>Unlike standard scanners that blindly throw payloads, GHOST <em>thinks</em>. It analyzes the request structure, forms hypotheses, tests them using its tools, compares responses, and confirms exploitability.</p>
+
+                <h3 id="ghost-setup">Setting Up GHOST (API Keys)</h3>
+                <p>Before GHOST can hunt, you must arm it with an LLM backend. Beatrix supports Anthropic (Claude 3.5 Sonnet/Haiku) and AWS Bedrock.</p>
+                
+                <h4>Method 1: Environment Variables (Recommended)</h4>
+                <p>The fastest way to authenticate is by exporting your keys directly in your terminal session or adding them to your <code>~/.bashrc</code> or <code>~/.zshrc</code>:</p>
+                <pre><code># For Anthropic (Claude)
+export ANTHROPIC_API_KEY="sk-ant-api03-..."
+
+# For AWS Bedrock
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"</code></pre>
+
+                <h4>Method 2: Configuration File</h4>
+                <p>You can also hardcode your preferences in the Beatrix config file located at <code>~/.beatrix/config.yaml</code>:</p>
+                <pre><code>ai:
+  enabled: true
+  provider: anthropic  # Options: 'anthropic' or 'bedrock'
+  model: claude-3-5-sonnet-20241022
+  api_key: "sk-ant-api03-..."</code></pre>
+
+                <h3 id="ghost-tools">The 10 Tools of GHOST</h3>
+                <p>GHOST operates in a loop (up to 50 iterations) using these internal tools:</p>
+                <ol>
+                    <li><code>send_http_request</code>: Send arbitrary HTTP requests (GET, POST, PUT, DELETE).</li>
+                    <li><code>inject_payload</code>: Inject specific payloads into parameters.</li>
+                    <li><code>fuzz_parameter</code>: Automated fuzzing with anomaly detection.</li>
+                    <li><code>time_based_test</code>: Timing attack detection (for blind SQLi/CMDi).</li>
+                    <li><code>compare_responses</code>: Differential analysis between two stored responses.</li>
+                    <li><code>search_response</code>: Literal and regex pattern matching in responses.</li>
+                    <li><code>extract_from_response</code>: Extract URLs, emails, tokens, or custom patterns.</li>
+                    <li><code>encode_payload</code>: Multi-layer encoding (URL, base64, HTML, unicode, hex).</li>
+                    <li><code>record_finding</code>: Document confirmed vulnerabilities.</li>
+                    <li><code>conclude_investigation</code>: Generate the final investigation summary.</li>
+                </ol>
+
+                <h3 id="ghost-usage">Usage & Examples</h3>
+                <pre><code># Basic investigation of an endpoint
+beatrix ghost https://api.example.com/users?id=1
+
+# Directed investigation with a specific objective and POST data
+beatrix ghost https://api.example.com/update -X POST -d '{"user":"admin"}' -o "Test for Mass Assignment and SQLi"
+
+# Authenticated investigation (Crucial for deep testing)
+beatrix ghost https://example.com/dashboard -H "Authorization: Bearer TOKEN" --max-turns 50</code></pre>
+
+                <div class="pro-tip">
+                    <strong>Pro Tip:</strong> GHOST is most effective when given a specific objective and an authenticated session. Don't just point it at a homepage; point it at a complex API endpoint with a valid JWT.
+                </div>
+            </section>
+
+            <section id="hackerone">
+                <h2>7. HackerOne Integration</h2>
+                <p>Beatrix streamlines the reporting process by integrating directly with the HackerOne API. You must set <code>H1_USERNAME</code> and <code>H1_API_TOKEN</code> in your environment or config.</p>
+
+                <pre><code># List available programs
+beatrix h1 programs
+
+# Search for a specific program
+beatrix h1 programs -s "shopify"
+
+# Check for duplicates before submitting (Saves reputation points!)
+beatrix h1 dupecheck shopify cors misconfiguration
+
+# Submit a report directly from the terminal
+beatrix h1 submit shopify -t "CORS Misconfiguration" -f report.md -i "Account takeover" -s high
+
+# Dry run submission (Test formatting without actually submitting)
+beatrix h1 submit shopify -t "CORS" -f report.md -i "ATO" -s high --dry-run</code></pre>
+            </section>
+
+            <section id="workflows">
+                <h2>8. Advanced Workflows</h2>
+                <p>To truly master Beatrix, you must learn to chain its commands together.</p>
+
+                <h4>Workflow 1: The Wide Net</h4>
+                <ol>
+                    <li>Run <code>beatrix recon target.com --deep -o recon.json</code> to find all subdomains and endpoints.</li>
+                    <li>Extract the live URLs from <code>recon.json</code> into a <code>targets.txt</code> file.</li>
+                    <li>Run <code>beatrix rapid -t targets.txt -o rapid_findings.json</code> to quickly sweep for low-hanging fruit (Takeovers, CORS, Debug pages).</li>
+                </ol>
+
+                <h4>Workflow 2: The Surgical Strike</h4>
+                <ol>
+                    <li>Manually browse the target application and find a complex API endpoint (e.g., a profile update feature).</li>
+                    <li>Capture your session token.</li>
+                    <li>Run <code>beatrix ghost https://api.target.com/profile -X PUT -d '{"email":"test@test.com"}' -H "Auth: Bearer X" -o "Find IDOR or Mass Assignment"</code></li>
+                </ol>
+
+                <h4>Workflow 3: The Bounty Pipeline</h4>
+                <ol>
+                    <li>Run <code>beatrix bounty-hunt https://target.com -o report.json</code></li>
+                    <li>Run <code>beatrix validate report.json</code> to ensure the findings are actually exploitable and not false positives.</li>
+                    <li>Run <code>beatrix h1 dupecheck target_program [finding_keywords]</code></li>
+                    <li>Run <code>beatrix h1 submit target_program -f validated_report.md</code></li>
+                </ol>
+            </section>
+
+            <section id="pros-cons">
+                <h2>9. Pros, Cons & Limitations</h2>
+                
+                <h3>What Works (Pros)</h3>
+                <ul>
+                    <li><strong>Speed & Automation:</strong> The Kill Chain methodology automates the tedious parts of hunting, allowing you to focus on complex logic flaws.</li>
+                    <li><strong>AI Integration:</strong> GHOST provides intelligent, context-aware fuzzing that traditional scanners completely miss. It can chain vulnerabilities together.</li>
+                    <li><strong>Extensibility:</strong> Written in Python, making it incredibly easy to add new scanner modules compared to Go or Java-based tools.</li>
+                    <li><strong>Workflow Integration:</strong> Built-in HackerOne submission, duplicate checking, and finding validation (ReadinessGate).</li>
+                </ul>
+
+                <h3>What Needs Improvement (Cons/Flaws)</h3>
+                <ul>
+                    <li><strong>False Positives:</strong> Like all automated scanners, complex WAFs or non-standard HTTP responses can trigger false positives. The <code>validate</code> command helps, but manual verification is always required.</li>
+                    <li><strong>Resource Intensive:</strong> Running full concurrent scans with AI enabled can consume significant CPU/Memory and Anthropic/Bedrock API credits.</li>
+                    <li><strong>Dependency Reliance:</strong> Maximum effectiveness requires external binaries (Nuclei, httpx, subfinder, sqlmap, etc.) to be installed and updated on the host system.</li>
+                    <li><strong>Vulnerable Components (A06):</strong> Beatrix relies entirely on Nuclei for CVE scanning. It does not have a native deep-scanning engine for outdated software versions.</li>
+                </ul>
+            </section>
+
+            <section id="references">
+                <h2>10. References</h2>
+                <p>Beatrix maps its findings directly to industry standards. Learn more about the vulnerabilities Beatrix hunts for:</p>
+
+                <h3>OWASP Top 10 (2021/2025)</h3>
+                <ul>
+                    <li><a href="https://owasp.org/Top10/A01_2021-Broken_Access_Control/" target="_blank">A01: Broken Access Control</a> (Covered by <code>idor</code>, <code>bac</code>, <code>mass_assignment</code>)</li>
+                    <li><a href="https://owasp.org/Top10/A02_2021-Cryptographic_Failures/" target="_blank">A02: Cryptographic Failures</a> (Covered by <code>headers</code>, <code>cors</code>)</li>
+                    <li><a href="https://owasp.org/Top10/A03_2021-Injection/" target="_blank">A03: Injection</a> (Covered by <code>injection</code>, <code>ssti</code>, <code>xxe</code>, <code>deserialization</code>)</li>
+                    <li><a href="https://owasp.org/Top10/A04_2021-Insecure_Design/" target="_blank">A04: Insecure Design</a> (Covered by <code>business_logic</code>, <code>payment</code>, <code>file_upload</code>)</li>
+                    <li><a href="https://owasp.org/Top10/A05_2021-Security_Misconfiguration/" target="_blank">A05: Security Misconfiguration</a> (Covered by <code>error_disclosure</code>, <code>cache_poisoning</code>)</li>
+                    <li><a href="https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/" target="_blank">A06: Vulnerable and Outdated Components</a> (Covered by <code>nuclei</code>)</li>
+                    <li><a href="https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/" target="_blank">A07: Identification and Authentication Failures</a> (Covered by <code>auth</code>)</li>
+                    <li><a href="https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/" target="_blank">A08: Software and Data Integrity Failures</a> (Covered by <code>deserialization</code>, <code>prototype_pollution</code>)</li>
+                    <li><a href="https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/" target="_blank">A09: Security Logging and Monitoring Failures</a> (Covered by <code>error_disclosure</code> probing)</li>
+                    <li><a href="https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/" target="_blank">A10: Server-Side Request Forgery (SSRF)</a> (Covered by <code>ssrf</code>)</li>
+                </ul>
+
+                <h3>MITRE ATT&CK (Web Focus)</h3>
+                <ul>
+                    <li><a href="https://attack.mitre.org/tactics/TA0043/" target="_blank">TA0043: Reconnaissance</a></li>
+                    <li><a href="https://attack.mitre.org/tactics/TA0001/" target="_blank">TA0001: Initial Access</a></li>
+                    <li><a href="https://attack.mitre.org/tactics/TA0006/" target="_blank">TA0006: Credential Access</a></li>
+                    <li><a href="https://attack.mitre.org/tactics/TA0004/" target="_blank">TA0004: Privilege Escalation</a></li>
+                </ul>
+            </section>
+
+            <div class="quote">
+                "Those of you lucky enough to have your lives, take them with you. However, leave the limbs you've lost. They belong to me now."
+            </div>
+        </main>
+    </div>
+
+    <!-- ═══════════ JavaScript: Sidebar Active State ═══════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        // Active sidebar link on scroll
+        const sidebarLinks = document.querySelectorAll('.sidebar a[href^="#"]');
+        const sections = [];
+
+        sidebarLinks.forEach(function(link) {
+            const id = link.getAttribute('href').slice(1);
+            const el = document.getElementById(id);
+            if (el) sections.push({ id: id, el: el, link: link });
+        });
+
+        function updateActive() {
+            let current = '';
+            const scrollY = window.scrollY + 120;
+
+            for (let i = sections.length - 1; i >= 0; i--) {
+                if (sections[i].el.offsetTop <= scrollY) {
+                    current = sections[i].id;
+                    break;
+                }
+            }
+
+            sidebarLinks.forEach(function(link) {
+                link.classList.remove('active');
+            });
+
+            if (current) {
+                const activeLink = document.querySelector('.sidebar a[href="#' + current + '"]');
+                if (activeLink) activeLink.classList.add('active');
+            }
+        }
+
+        let ticking = false;
+        window.addEventListener('scroll', function() {
+            if (!ticking) {
+                window.requestAnimationFrame(function() {
+                    updateActive();
+                    ticking = false;
+                });
+                ticking = true;
+            }
+        });
+
+        updateActive();
+
+        // Open-one-at-a-time for details in same section (optional UX)
+        document.querySelectorAll('section').forEach(function(section) {
+            const detailsList = section.querySelectorAll('details');
+            if (detailsList.length < 2) return;
+
+            detailsList.forEach(function(detail) {
+                detail.addEventListener('toggle', function() {
+                    if (this.open) {
+                        detailsList.forEach(function(other) {
+                            if (other !== detail && other.open) {
+                                other.removeAttribute('open');
+                            }
+                        });
+                    }
+                });
+            });
+        });
+    })();
+    </script>
+
+</body>
+</html>
