@@ -143,6 +143,12 @@ PLACEHOLDER_VALUES = {
     "your-api-key", "your_api_key", "xxx", "TODO", "CHANGEME",
     "replace-me", "insert-here", "your-token", "put-your-key-here",
     "12345678", "abcdefgh", "qwerty", "password123",
+    # Common dev/example passwords that pass entropy checks
+    "passw0rd", "p@ssw0rd", "p@ssword", "p@ssword1", "password1",
+    "devpasswd", "rootpassword", "mysecretpassword", "letmein",
+    "some_random_secret_key", "some-random-secret-key",
+    "my-secret-key", "my_secret_key", "secretkey", "secret_key",
+    "testpassword", "development", "production",
 }
 
 # Common CI/test default credentials — always false positives
@@ -152,6 +158,24 @@ CI_TEST_CREDENTIALS = {
     "testuser", "testpass", "testpassword", "test123",
     "sa", "localdb", "devpassword", "devuser",
     "db_password", "db_user", "database",
+    "passw0rd", "p@ssw0rd", "password1", "admin123",
+}
+
+# Docker/container service hostnames — connection strings to these are local dev only
+DOCKER_SERVICE_HOSTS = {
+    "mysql", "postgres", "postgresql", "redis", "mongo", "mongodb",
+    "elasticsearch", "rabbitmq", "memcached", "mariadb", "mssql",
+    "db", "database", "cache", "queue", "broker",
+    "localhost", "127.0.0.1", "0.0.0.0", "::1",
+    "host.docker.internal", "docker.internal",
+}
+
+# File paths that indicate example/demo/template context (always FP for secrets)
+EXAMPLE_CONFIG_PATHS = {
+    "example", "sample", "template", "demo", "quickstart",
+    "bundled", "skeleton", "boilerplate", "starter",
+    "getting-started", "getting_started", "tutorial",
+    "containers/", "docker/", "docker-compose",
 }
 
 # File paths that indicate CI/test context (findings here are almost always FP)
@@ -600,6 +624,10 @@ class GitHubRecon(BaseScanner):
                     if self._is_ci_test_credential(value, file_path):
                         continue
 
+                    # Skip Docker/container dev secrets (local-only, not exploitable)
+                    if self._is_docker_dev_secret(value, file_path):
+                        continue
+
                     findings.append(SecretFinding(
                         repo_name=repo_name,
                         file_path=file_path,
@@ -644,6 +672,25 @@ class GitHubRecon(BaseScanner):
         if re.match(r'^[A-Z][A-Z0-9_]{3,}$', v) and '_' in v:
             return True
 
+        # Variable/identifier names: env_access_token, my_api_key, authToken, etc.
+        # Real secrets don't contain underscores separating English words
+        if re.match(r'^[a-z][a-z0-9]*(?:_[a-z][a-z0-9]*){2,}$', v):
+            return True
+
+        # camelCase identifiers: accessToken, authBearerToken, responseToken
+        if re.match(r'^[a-z]+(?:[A-Z][a-z0-9]+){2,}$', v):
+            return True
+
+        # English words joined by underscores/hyphens — not secrets
+        # e.g., "transaction_count", "manually_redirected", "internal_failure"
+        words = re.split(r'[_\-]', v.lower())
+        if len(words) >= 2 and all(w.isalpha() and len(w) >= 3 for w in words):
+            return True
+
+        # Test fixture tokens: test-access-token-1, mock-bearer-token, etc.
+        if re.match(r'^(?:test|mock|fake|stub|dummy)[_\-]', v, re.I):
+            return True
+
         return False
 
     def _is_ci_test_credential(self, value: str, file_path: str = "") -> bool:
@@ -657,6 +704,41 @@ class GitHubRecon(BaseScanner):
         # Check if the file is in a CI/test path
         fp = file_path.lower()
         if any(ci_path in fp for ci_path in CI_TEST_PATHS):
+            return True
+
+        return False
+
+    def _is_docker_dev_secret(self, value: str, file_path: str = "") -> bool:
+        """Check if a connection string or secret points to a Docker/local dev environment."""
+        v = value.lower().strip().strip('"\'')
+        fp = file_path.lower()
+
+        # Connection string analysis: extract hostname from URI patterns
+        # mysql+pymysql://user:pass@hostname:port/db, redis://x:pass@hostname, etc.
+        conn_match = re.match(
+            r'(?:mysql|postgres|postgresql|redis|mongo|mongodb|amqp|mssql)'
+            r'(?:\+[a-z]+)?://[^@]*@([^:/\s]+)',
+            v,
+        )
+        if conn_match:
+            host = conn_match.group(1)
+            if host in DOCKER_SERVICE_HOSTS:
+                return True
+
+        # File path indicates container/docker example context
+        if any(ctx in fp for ctx in EXAMPLE_CONFIG_PATHS):
+            # For connection strings in example configs, always FP
+            if any(proto in v for proto in ('://', 'conn', 'connection')):
+                return True
+            # For other secrets in example configs with dev-looking values
+            if any(dev_val in v for dev_val in (
+                'passw0rd', 'password', 'secret', 'test', 'changeme',
+                'some_random', 'some-random', 'my_secret', 'my-secret',
+            )):
+                return True
+
+        # FLASK_SECRET_KEY, DJANGO_SECRET_KEY with obviously fake values
+        if any(kw in v for kw in ('some_random_secret', 'change_me', 'replace_this')):
             return True
 
         return False
@@ -815,6 +897,20 @@ class GitHubRecon(BaseScanner):
                         # Check if the ADDED line has a different (sanitized) value
                         # This is the key insight: if the same key was changed from
                         # a real value to a placeholder, it WAS a real secret
+                        # Skip Docker/container dev secrets in history too
+                        if self._is_docker_dev_secret(value, current_file or ""):
+                            continue
+
+                        # Skip code patterns in diffs (variable names, UI tokens)
+                        if self._is_code_pattern(value):
+                            continue
+
+                        # Entropy filter for generic patterns in diffs
+                        if secret_type in ENTROPY_REQUIRED_TYPES:
+                            entropy = _shannon_entropy(value)
+                            if entropy < MIN_SECRET_ENTROPY:
+                                continue
+
                         finding = SecretFinding(
                             repo_name=repo_name,
                             file_path=current_file or "unknown",
