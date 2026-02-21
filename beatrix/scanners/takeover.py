@@ -441,7 +441,7 @@ class SubdomainTakeoverScanner(BaseScanner):
                 # Check if the service is actually unclaimed
                 if 'NXDOMAIN' in service_info['fingerprint']:
                     if self._check_nxdomain(cname):
-                        return Finding(
+                        return self.create_finding(
                             title=f"Subdomain Takeover: {subdomain}",
                             description=f"""
 ## Subdomain Takeover Vulnerability
@@ -488,7 +488,7 @@ malicious content under your domain, enabling:
                 )
 
                 if is_vulnerable:
-                    return Finding(
+                    return self.create_finding(
                         title=f"Subdomain Takeover: {subdomain}",
                         description=f"""
 ## Subdomain Takeover Vulnerability

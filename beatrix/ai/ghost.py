@@ -54,6 +54,7 @@ class GhostFinding:
     description: str = ""
     evidence: str = ""
     remediation: str = ""
+    url: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     def to_beatrix_finding(self) -> BeatrixFinding:
@@ -72,6 +73,7 @@ class GhostFinding:
             description=self.description,
             evidence=self.evidence,
             remediation=self.remediation,
+            url=self.url,
             scanner_module="ghost",
         )
 
@@ -1000,6 +1002,7 @@ Start now - analyze and test.
             description=description,
             evidence=evidence,
             remediation=remediation,
+            url=params.get("url", self.base_url or ""),
         )
         self.findings[title] = finding
         self.callback.on_finding(finding)

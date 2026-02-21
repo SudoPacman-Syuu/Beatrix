@@ -382,7 +382,7 @@ class SSRFScanner(BaseScanner):
             )
 
             if indicators:
-                return Finding(
+                finding = self.create_finding(
                     title=f"Potential SSRF: {payload.description}",
                     description=self._build_ssrf_description(
                         candidate, payload, indicators, response
@@ -397,21 +397,22 @@ class SSRFScanner(BaseScanner):
                         "response_code": response.status_code,
                         "response_size": len(response.content),
                     },
-                    reproduction_steps=[
-                        f"1. Send request to: {test_url}",
-                        f"2. Parameter '{candidate.param_name}' contains SSRF payload",
-                        f"3. Payload used: {payload.value}",
-                        f"4. Indicators found: {', '.join(indicators)}",
-                    ],
                     remediation="Implement allowlist of permitted URLs/hosts. "
                                "Block requests to internal IPs and cloud metadata. "
                                "Use DNS resolution checks to prevent rebinding."
                 )
+                finding.reproduction_steps = [
+                    f"1. Send request to: {test_url}",
+                    f"2. Parameter '{candidate.param_name}' contains SSRF payload",
+                    f"3. Payload used: {payload.value}",
+                    f"4. Indicators found: {', '.join(indicators)}",
+                ]
+                return finding
 
         except httpx.TimeoutException:
             # Timeout could indicate internal network access
             if payload.target_type in ["internal", "localhost"]:
-                return Finding(
+                return self.create_finding(
                     title=f"Potential SSRF (Timeout): {payload.description}",
                     description=f"Request to internal target timed out, which may indicate "
                                f"the server is attempting to connect to {payload.value}",
