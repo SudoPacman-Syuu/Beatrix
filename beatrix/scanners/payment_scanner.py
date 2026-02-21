@@ -419,6 +419,7 @@ class PaymentScanner(BaseScanner):
         headers: Optional[Dict[str, str]] = None,
         json_body: Optional[Dict[str, Any]] = None,
         cookies: Optional[Dict[str, str]] = None,
+        content: Optional[str] = None,
         allow_redirects: bool = False,
     ) -> Optional[httpx.Response]:
         """
@@ -458,14 +459,20 @@ class PaymentScanner(BaseScanner):
         self.state.last_request_time = time.time()
 
         try:
-            resp = await self.client.request(
-                method=method,
-                url=url,
-                headers=req_headers,
-                json=json_body,
-                cookies=req_cookies if req_cookies else None,
-                follow_redirects=allow_redirects,
-            )
+            # Build request kwargs — use content (raw body) if provided, else json
+            req_kwargs = {
+                "method": method,
+                "url": url,
+                "headers": req_headers,
+                "cookies": req_cookies if req_cookies else None,
+                "follow_redirects": allow_redirects,
+            }
+            if content is not None:
+                req_kwargs["content"] = content
+            else:
+                req_kwargs["json"] = json_body
+
+            resp = await self.client.request(**req_kwargs)
 
             # Check for WAF block
             if resp.status_code == 403:
@@ -1390,6 +1397,12 @@ class PaymentScanner(BaseScanner):
         9. Subscription Tricks — discount persistence
         10. Payment Method Bypass — fake payment methods
         """
+        # Derive base_url from scan context if not pre-configured
+        if not self.checkout_config.base_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(context.url)
+            self.checkout_config.base_url = f"{parsed.scheme}://{parsed.netloc}"
+
         self.log("=" * 60)
         self.log("BEATRIX Payment Scanner v1.0")
         self.log(f"Target: {self.checkout_config.base_url}")

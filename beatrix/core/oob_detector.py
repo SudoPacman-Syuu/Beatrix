@@ -294,6 +294,28 @@ class InteractshClient:
         if self._client:
             await self._client.aclose()
 
+    @property
+    def detector(self) -> Optional["OOBDetector"]:
+        """Public access to the OOB detector instance."""
+        return self._detector
+
+    @property
+    def session_id(self) -> Optional[str]:
+        """Public access to the session identifier."""
+        return self._session_id
+
+    @property
+    def server(self) -> str:
+        """Public access to the interact.sh server domain."""
+        return self._server
+
+    @property
+    def oob_domain(self) -> str:
+        """Full OOB canary domain (session_id.server)."""
+        if self._session_id:
+            return f"{self._session_id}.{self._server}"
+        return self._server
+
     def create_payload(self, **kwargs) -> OOBPayload:
         """Create an OOB payload."""
         if not self._detector:

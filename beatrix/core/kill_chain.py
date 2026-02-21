@@ -851,8 +851,8 @@ class KillChainExecutor:
                 interactsh = InteractshClient()
                 await interactsh.__aenter__()
                 context["interactsh_client"] = interactsh
-                context["oob_detector"] = interactsh._detector
-                context["oob_domain"] = f"{interactsh._session_id}.{interactsh._server}"
+                context["oob_detector"] = interactsh.detector
+                context["oob_domain"] = interactsh.oob_domain
                 context["oob_available"] = True
                 self._emit("info", message=f"OOB detector initialized via interact.sh (domain: {context['oob_domain']})")
             except Exception:
@@ -1165,7 +1165,7 @@ class KillChainExecutor:
                 interactsh = InteractshClient()
                 await interactsh.__aenter__()
                 context["interactsh_client"] = interactsh
-                context["oob_detector"] = interactsh._detector
+                context["oob_detector"] = interactsh.detector
                 context["oob_available"] = True
                 self._emit("info", message="OOB detector initialized (late — Phase 4 was skipped)")
             except Exception:
@@ -1224,15 +1224,7 @@ class KillChainExecutor:
 
             # Collect leaked credentials from prior phase findings
             cred_tests = []
-            all_phase_findings = []
-            for result in context.get("_phase_findings", {}).values():
-                if isinstance(result, list):
-                    all_phase_findings.extend(result)
-
-            # Also scan current state's phase_results through the context
-            # The findings are already collected by the engine — scan evidence for cred patterns
-            for phase_result in context.get("phase_results_findings", []):
-                all_phase_findings.append(phase_result)
+            all_phase_findings = context.get("all_findings", [])
 
             # Check all findings for credential-like evidence
             for finding in all_phase_findings:
@@ -1325,16 +1317,10 @@ class KillChainExecutor:
 
                 # Collect all critical/high findings from all phases
                 critical_findings = []
-                for phase_result in self.engine.kill_chain.phase_handlers:
-                    pass  # Findings are collected by the engine, not here
-
-                # The engine collects findings via state.all_findings — but we can
-                # check context for findings from prior phases
-                for r in results:
-                    for finding in r.get("findings", []):
-                        sev = getattr(finding, "severity", None)
-                        if sev in (Severity.CRITICAL, Severity.HIGH):
-                            critical_findings.append(finding)
+                for finding in context.get("all_findings", []):
+                    sev = getattr(finding, "severity", None)
+                    if sev in (Severity.CRITICAL, Severity.HIGH):
+                        critical_findings.append(finding)
 
                 # Also check if any exploitation findings warrant Metasploit PoCs
                 # This is available after the scan completes — for now emit guidance
@@ -1398,6 +1384,12 @@ class KillChainExecutor:
                     await asyncio.sleep(0.5)
 
                 state.current_phase = phase
+
+                # Before Phase 7, inject all accumulated findings into context
+                # so _handle_actions can access them for credential validation
+                if phase == KillChainPhase.ACTIONS_ON_OBJECTIVES:
+                    state.context["all_findings"] = state.all_findings
+
                 result = await self._execute_phase(phase, state)
                 state.phase_results[phase] = result
 

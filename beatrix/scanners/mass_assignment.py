@@ -309,7 +309,8 @@ class MassAssignmentScanner(BaseScanner):
 
         # Determine content type
         content_type = context.headers.get("Content-Type", "").lower()
-        is_json = "json" in content_type or context.request.body.strip().startswith("{")
+        body = context.request.body or ""
+        is_json = "json" in content_type or (isinstance(body, str) and body.strip().startswith("{"))
 
         if not is_json and context.request.method == "GET":
             # For GET requests, test via query parameters
@@ -400,8 +401,8 @@ class MassAssignmentScanner(BaseScanner):
         4. Check if the field was accepted (appears in response, different status, etc.)
         """
         try:
-            original_body = json.loads(context.request.body)
-        except (json.JSONDecodeError, TypeError):
+            original_body = json.loads(context.request.body or "")
+        except (json.JSONDecodeError, TypeError, ValueError):
             self.log("  Cannot parse request body as JSON")
             return
 
