@@ -331,7 +331,8 @@ class MultiScanner:
                 })
 
         if responses:
-            analysis = self.haiku.analyze_responses(responses)
+            loop = asyncio.get_running_loop()
+            analysis = await loop.run_in_executor(None, self.haiku.analyze_responses, responses)
             summary['ai_analysis'] = analysis
 
         return summary

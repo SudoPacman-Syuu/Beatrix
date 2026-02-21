@@ -606,6 +606,7 @@ class PaymentScanner(BaseScanner):
             "POST",
             form_url,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
+            content=f"username={username}&password={password}",
             allow_redirects=False,
         )
         if not login_resp:

@@ -356,7 +356,7 @@ class AuthenticatedIDORScanner:
                          'customerId', 'customer_id', 'accountId', 'account_id',
                          'name', 'firstName', 'first_name', 'lastName', 'last_name']
 
-        json.dumps(baseline_data).lower()
+        baseline_str = json.dumps(baseline_data).lower()
         tampered_str = json.dumps(tampered_data).lower()
 
         # Extract identity values from both responses
@@ -422,8 +422,6 @@ class AuthenticatedIDORScanner:
             for item in data:
                 results.extend(self._extract_values(item, key_pattern))
         return results
-
-        return (False, '', '')
 
     def get_report(self) -> Dict:
         """Generate a report of findings"""

@@ -393,7 +393,7 @@ class OpenRedirectScanner(BaseScanner):
         """Check for meta refresh redirect to payload — validate destination HOST"""
         import re
 
-        meta_pattern = r'<meta[^>]*http-equiv=["\']?refresh["\']?[^>]*content=["\'][^"\']\*url=([^"\'>\s]+)'
+        meta_pattern = r'<meta[^>]*http-equiv=["\']?refresh["\']?[^>]*content=["\'][^"\']*url=([^"\'\>\s]+)'
         matches = re.findall(meta_pattern, body, re.IGNORECASE)
 
         for match in matches:

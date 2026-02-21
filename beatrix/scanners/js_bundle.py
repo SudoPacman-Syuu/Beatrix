@@ -410,7 +410,7 @@ class JSBundleAnalyzer(BaseScanner):
         unique_secrets = list({v: k for k, v in intel.potential_secrets}.items())
         unique_storage = sorted(set(intel.storage_keys))
         unique_ws = sorted(set(intel.websocket_urls))
-        sorted(set(intel.env_vars))
+        unique_env = sorted(set(intel.env_vars))
 
         # --- Internal hosts discovered ---
         if unique_hosts:

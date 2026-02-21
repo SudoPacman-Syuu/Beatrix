@@ -224,7 +224,7 @@ class NetworkScanner:
         arguments: str, scan_name: str, sudo: bool = False,
     ) -> ScanResult:
         """Run nmap in a thread to keep async."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._scan_sync, target, ports, arguments, scan_name, sudo,
         )

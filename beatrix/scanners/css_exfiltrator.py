@@ -187,7 +187,7 @@ class InteractshClient:
     async def poll_interactions(self, timeout: float = 30) -> List[Dict]:
         """Poll for DNS/HTTP interactions"""
         interactions = []
-        time.time()
+        start_time = time.time()
 
         try:
             # Try binary polling first
@@ -640,7 +640,7 @@ class CSSExfiltrator(BaseModule):
                             attr_match = re.search(r'\[(\w+)([*^$~|]?)="?([^"]*)"?\]', selector)
                             if attr_match:
                                 attr_name = attr_match.group(1)
-                                attr_match.group(2) or '='
+                                operator = attr_match.group(2) or '='
                                 match_value = attr_match.group(3)
 
                                 # Search for matching elements in HTML

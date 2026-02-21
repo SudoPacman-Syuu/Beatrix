@@ -161,7 +161,7 @@ class SSHAuditor:
         self, target: str, port: int = 22,
     ) -> SSHFingerprint:
         """Full SSH server fingerprint."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._fingerprint_sync, target, port,
         )
@@ -293,7 +293,7 @@ class SSHAuditor:
         self, target: str, username: str = "root", port: int = 22,
     ) -> List[AuthMethod]:
         """Enumerate supported authentication methods for a user."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._enum_auth_sync, target, username, port,
         )
@@ -329,7 +329,7 @@ class SSHAuditor:
         port: int = 22,
     ) -> CredentialResult:
         """Try a single username/password combo."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._check_cred_sync, target, username, password, port,
         )
@@ -404,7 +404,7 @@ class SSHAuditor:
         command: str, port: int = 22,
     ) -> CommandResult:
         """Execute a command over SSH."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._exec_sync, target, username, password, command, port,
         )
@@ -437,7 +437,7 @@ class SSHAuditor:
         path: str = "/", port: int = 22,
     ) -> List[Dict[str, Any]]:
         """List files via SFTP."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._sftp_list_sync, target, username, password, path, port,
         )

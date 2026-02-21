@@ -121,7 +121,7 @@ class PacketCrafter:
 
     async def ping(self, target: str, count: int = 1) -> bool:
         """Simple ICMP echo — returns True if host responds."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._ping_sync, target, count)
 
     def _ping_sync(self, target: str, count: int) -> bool:
@@ -134,7 +134,7 @@ class PacketCrafter:
 
     async def icmp_probe(self, target: str) -> Dict[str, Any]:
         """ICMP echo with full response details."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._icmp_probe_sync, target)
 
     def _icmp_probe_sync(self, target: str) -> Dict[str, Any]:
@@ -161,32 +161,32 @@ class PacketCrafter:
 
     async def syn_probe(self, target: str, port: int) -> ProbeResult:
         """SYN probe — infer open/closed/filtered from response."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._tcp_probe_sync, target, port, "S", ProbeType.SYN)
 
     async def fin_probe(self, target: str, port: int) -> ProbeResult:
         """FIN probe — firewall evasion."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._tcp_probe_sync, target, port, "F", ProbeType.FIN)
 
     async def null_probe(self, target: str, port: int) -> ProbeResult:
         """NULL probe (no flags) — firewall evasion."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._tcp_probe_sync, target, port, "", ProbeType.NULL)
 
     async def xmas_probe(self, target: str, port: int) -> ProbeResult:
         """XMAS probe (FIN+PSH+URG) — firewall evasion."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._tcp_probe_sync, target, port, "FPU", ProbeType.XMAS)
 
     async def ack_probe(self, target: str, port: int) -> ProbeResult:
         """ACK probe — detect stateful vs stateless firewall."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._tcp_probe_sync, target, port, "A", ProbeType.ACK)
 
     async def window_probe(self, target: str, port: int) -> ProbeResult:
         """Window scan — ACK with window size analysis."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._tcp_probe_sync, target, port, "A", ProbeType.WINDOW)
 
     def _tcp_probe_sync(self, target: str, port: int, flags: str, probe_type: ProbeType) -> ProbeResult:
@@ -265,7 +265,7 @@ class PacketCrafter:
         nameserver: str = "8.8.8.8",
     ) -> List[DNSRecord]:
         """Query DNS records."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._dns_query_sync, domain, qtype, nameserver,
         )
@@ -326,7 +326,7 @@ class PacketCrafter:
         dport: int = 80,
     ) -> List[TraceHop]:
         """TCP traceroute."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._traceroute_sync, target, max_hops, dport,
         )
@@ -373,7 +373,7 @@ class PacketCrafter:
 
     async def arp_scan(self, network: str = "192.168.1.0/24") -> List[Dict[str, str]]:
         """ARP scan on local network."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._arp_scan_sync, network)
 
     def _arp_scan_sync(self, network: str) -> List[Dict[str, str]]:
@@ -433,7 +433,7 @@ class PacketCrafter:
 
     async def tls_probe(self, target: str, port: int = 443) -> Dict[str, Any]:
         """Quick TLS handshake probe — returns certificate and protocol info."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._tls_probe_sync, target, port)
 
     def _tls_probe_sync(self, target: str, port: int) -> Dict[str, Any]:

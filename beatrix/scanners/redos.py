@@ -534,9 +534,9 @@ class ReDoSScanner(BaseScanner):
                 if payload_set.ptype == ReDoSPayloadType.EMAIL and "email" not in param_name.lower():
                     continue
                 if payload_set.ptype == ReDoSPayloadType.URL and "url" not in param_name.lower():
-                    # Generic payloads test all fields
-                    if payload_set.ptype != ReDoSPayloadType.GENERIC_REPEAT:
-                        continue
+                    continue
+                if payload_set.ptype == ReDoSPayloadType.GENERIC_REPEAT:
+                    pass  # Generic payloads test all fields
 
                 async for finding in self._test_input_field(context, param_name, delivery, payload_set):
                     yield finding

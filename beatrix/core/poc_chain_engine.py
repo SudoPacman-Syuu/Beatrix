@@ -1370,15 +1370,25 @@ class PoCChainEngine:
                 # Fallback: dynamically search Metasploit modules if no
                 # hardcoded mapping matched and msfconsole is available
                 if not rc_content and msf.available:
-                    import asyncio
+                    import subprocess
                     # Extract a useful search keyword from the chain name
                     search_terms = [w for w in chain_lower.replace("-", " ").replace("_", " ").split()
                                     if len(w) > 3 and w not in ("the", "for", "with", "from", "that", "this")]
                     for term in search_terms[:2]:
                         try:
-                            modules = asyncio.get_event_loop().run_until_complete(
-                                msf.search_modules(term)
-                            ) if not asyncio.get_event_loop().is_running() else []
+                            # Sync subprocess fallback — export_all_scripts is not async
+                            result = subprocess.run(
+                                [msf.path, "-q", "-x", f"search {term}; exit"],
+                                capture_output=True, text=True, timeout=30,
+                            )
+                            modules = []
+                            if result.returncode == 0 and result.stdout:
+                                for line in result.stdout.splitlines():
+                                    line = line.strip()
+                                    if line.startswith(("exploit/", "auxiliary/")):
+                                        parts = line.split()
+                                        if parts:
+                                            modules.append(parts[0])
                             if modules:
                                 from urllib.parse import urlparse as _urlparse
                                 _parsed = _urlparse(chain.steps[0].url if "://" in chain.steps[0].url

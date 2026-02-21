@@ -336,15 +336,17 @@ class SmartFuzzer:
         if not self.ffuf:
             return []
 
-        # Run ffuf scan
+        loop = asyncio.get_running_loop()
+
+        # Run ffuf scan (blocking subprocess) in executor to avoid freezing event loop
         if vuln_type == VulnType.XSS:
-            raw_findings = self.ffuf.fuzz_xss(url, exhaustive=True)
+            raw_findings = await loop.run_in_executor(None, lambda: self.ffuf.fuzz_xss(url, exhaustive=True))
         elif vuln_type == VulnType.SQLI:
-            raw_findings = self.ffuf.fuzz_sqli(url, exhaustive=True)
+            raw_findings = await loop.run_in_executor(None, lambda: self.ffuf.fuzz_sqli(url, exhaustive=True))
         elif vuln_type == VulnType.LFI:
-            raw_findings = self.ffuf.fuzz_lfi(url, exhaustive=True)
+            raw_findings = await loop.run_in_executor(None, lambda: self.ffuf.fuzz_lfi(url, exhaustive=True))
         elif vuln_type == VulnType.RCE:
-            raw_findings = self.ffuf.fuzz_rce(url, exhaustive=True)
+            raw_findings = await loop.run_in_executor(None, lambda: self.ffuf.fuzz_rce(url, exhaustive=True))
         else:
             return []
 

@@ -210,7 +210,7 @@ class BedrockBackend(AIBackend):
             body["system"] = system
 
         # Run in executor to not block
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None,
             lambda: self.client.invoke_model(

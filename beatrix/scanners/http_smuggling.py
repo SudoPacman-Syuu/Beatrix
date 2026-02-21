@@ -285,8 +285,8 @@ class HTTPSmugglingScanner(BaseScanner):
         smuggled_prefix = f"GET {smuggled_path} HTTP/1.1\r\nX-Smuggled: true\r\n\r\n"
 
         # Chunked body containing the smuggled prefix
-        hex(len(smuggled_prefix))[2:]
-        body = f"0\r\n\r\n{smuggled_prefix}"
+        hex_len = hex(len(smuggled_prefix))[2:]
+        body = f"{hex_len}\r\n{smuggled_prefix}\r\n0\r\n\r\n"
 
         return SmugglePayload(
             name="CL.TE Socket Poison",

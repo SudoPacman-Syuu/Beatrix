@@ -163,7 +163,7 @@ class AsyncCloudflareSession:
                 async with session.get(url, **kwargs) as resp:
                     return resp.status, await resp.text(), dict(resp.headers)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None,
             lambda: self.scraper.get(url, **kwargs)
@@ -177,7 +177,7 @@ class AsyncCloudflareSession:
                 async with session.post(url, **kwargs) as resp:
                     return resp.status, await resp.text(), dict(resp.headers)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None,
             lambda: self.scraper.post(url, **kwargs)

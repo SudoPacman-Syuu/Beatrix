@@ -414,9 +414,9 @@ class EndpointProber(BaseScanner):
         url = urljoin(base_url, path)
 
         try:
-            start = asyncio.get_event_loop().time()
+            start = asyncio.get_running_loop().time()
             response = await self.get(url)
-            elapsed = (asyncio.get_event_loop().time() - start) * 1000
+            elapsed = (asyncio.get_running_loop().time() - start) * 1000
 
             # Compute structure hash on FULL body before truncating
             full_text = response.text

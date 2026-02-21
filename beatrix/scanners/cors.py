@@ -407,17 +407,7 @@ This allows cross-origin write requests (PUT/PATCH/DELETE) from attacker-control
             elif severity == Severity.HIGH:
                 severity = Severity.CRITICAL
 
-        evidence = f"""CORS Misconfiguration Detected!
-
-Request Origin: {origin}
-Response Headers:
-  Access-Control-Allow-Origin: {acao}
-  Access-Control-Allow-Credentials: {acac}
-
-Bypass Type: {test['description']}
-"""
-
-        f"""<!-- CORS PoC - {test['name']} -->
+        poc_html = f"""<!-- CORS PoC - {test['name']} -->
 <html>
 <body>
 <script>
@@ -435,6 +425,19 @@ xhr.send();
 </script>
 </body>
 </html>"""
+
+        evidence = f"""CORS Misconfiguration Detected!
+
+Request Origin: {origin}
+Response Headers:
+  Access-Control-Allow-Origin: {acao}
+  Access-Control-Allow-Credentials: {acac}
+
+Bypass Type: {test['description']}
+
+Proof-of-Concept HTML:
+{poc_html}
+"""
 
         remediation = """1. Implement a strict allowlist of trusted origins
 2. Never reflect the Origin header without validation

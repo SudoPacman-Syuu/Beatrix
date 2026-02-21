@@ -776,7 +776,7 @@ class GraphQLScanner(BaseScanner):
             return
 
         body = context.response.body if hasattr(context.response, 'body') else ""
-        context.response.headers if hasattr(context.response, 'headers') else {}
+        headers = context.response.headers if hasattr(context.response, 'headers') else {}
 
         # Detect GraphQL endpoints from response content
         gql_indicators = [

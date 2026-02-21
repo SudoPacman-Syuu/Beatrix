@@ -44,7 +44,7 @@ class HaikuAnalyzer:
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         })
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None,
             lambda: self.client.invoke_model(modelId=self.model_id, body=body),

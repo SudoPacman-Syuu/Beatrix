@@ -254,12 +254,12 @@ class GitHubRecon(BaseScanner):
             return
 
         # Use a deadline to enforce scanner timeout on async generator
-        deadline = asyncio.get_event_loop().time() + self.SCANNER_TIMEOUT
+        deadline = asyncio.get_running_loop().time() + self.SCANNER_TIMEOUT
         timed_out = False
 
         async for finding in self.full_recon():
             yield finding
-            if asyncio.get_event_loop().time() >= deadline:
+            if asyncio.get_running_loop().time() >= deadline:
                 self.log(f"GitHub recon timed out after {self.SCANNER_TIMEOUT}s — returning partial results")
                 timed_out = True
                 break
