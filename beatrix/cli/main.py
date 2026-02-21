@@ -1212,9 +1212,12 @@ def hunt(ctx, target, preset, ai, modules, output):
         elif event == "info":
             progress_state["log"].append(f"  ℹ  {data.get('message', '')}")
 
-        # Keep log to last 50 entries
+        # Keep log to last 50 entries (truncate in-place to avoid rebinding
+        # the list while the printer thread indexes into it)
         if len(progress_state["log"]) > 50:
-            progress_state["log"] = progress_state["log"][-50:]
+            excess = len(progress_state["log"]) - 50
+            del progress_state["log"][:excess]
+            _printed_count[0] = max(_printed_count[0] - excess, 0)
 
     engine = BeatrixEngine(on_event=_on_event)
 
@@ -1263,17 +1266,16 @@ def hunt(ctx, target, preset, ai, modules, output):
         hunt_id = None
         try:
             from beatrix.core.findings_db import FindingsDB
-            db = FindingsDB()
-            hunt_id = db.save_hunt(
-                target=target,
-                preset=preset,
-                findings=engine.findings,
-                duration=duration,
-                modules_run=sorted(modules_run),
-                ai_enabled=ai,
-                started_at=state.started_at,
-            )
-            db.close()
+            with FindingsDB() as db:
+                hunt_id = db.save_hunt(
+                    target=target,
+                    preset=preset,
+                    findings=engine.findings,
+                    duration=duration,
+                    modules_run=sorted(modules_run),
+                    ai_enabled=ai,
+                    started_at=state.started_at,
+                )
         except Exception:
             pass  # DB save is best-effort
 
@@ -1636,20 +1638,20 @@ def findings(ctx, hunt_id, severity, module, target, search, limit):
         console.print(f"[red]Database error: {e}[/red]")
         sys.exit(1)
 
-    results = db.get_findings(
-        hunt_id=hunt_id,
-        severity=severity,
-        module=module,
-        target=target,
-        search=search,
-        limit=limit,
-    )
+    with db:
+        results = db.get_findings(
+            hunt_id=hunt_id,
+            severity=severity,
+            module=module,
+            target=target,
+            search=search,
+            limit=limit,
+        )
 
     if not results:
         console.print("[dim]No findings match your query.[/dim]")
         if not hunt_id:
             console.print("[dim]Run a hunt first: beatrix hunt example.com[/dim]")
-        db.close()
         return
 
     # Group header
@@ -1706,8 +1708,6 @@ def findings(ctx, hunt_id, severity, module, target, search, limit):
     console.print(table)
     console.print("\n[dim]Tip: beatrix findings show <ID> for full detail[/dim]")
 
-    db.close()
-
 
 @findings.command("show")
 @click.argument("finding_id", type=int)
@@ -1722,9 +1722,8 @@ def findings_show(finding_id):
     """
     from beatrix.core.findings_db import FindingsDB
 
-    db = FindingsDB()
-    f = db.get_finding_detail(finding_id)
-    db.close()
+    with FindingsDB() as db:
+        f = db.get_finding_detail(finding_id)
 
     if not f:
         console.print(f"[red]Finding #{finding_id} not found.[/red]")
@@ -1747,9 +1746,8 @@ def findings_hunts(target, limit):
     """
     from beatrix.core.findings_db import FindingsDB
 
-    db = FindingsDB()
-    hunts = db.list_hunts(target=target, limit=limit)
-    db.close()
+    with FindingsDB() as db:
+        hunts = db.list_hunts(target=target, limit=limit)
 
     if not hunts:
         console.print("[dim]No hunts recorded yet. Run: beatrix hunt example.com[/dim]")
@@ -1805,15 +1803,14 @@ def findings_export(hunt_id, severity, module, target, output, fmt):
     """
     from beatrix.core.findings_db import FindingsDB
 
-    db = FindingsDB()
-    results = db.get_findings(
-        hunt_id=hunt_id,
-        severity=severity,
-        module=module,
-        target=target,
-        limit=10000,
-    )
-    db.close()
+    with FindingsDB() as db:
+        results = db.get_findings(
+            hunt_id=hunt_id,
+            severity=severity,
+            module=module,
+            target=target,
+            limit=10000,
+        )
 
     if not results:
         console.print("[dim]No findings match your query.[/dim]", err=True)
@@ -1866,19 +1863,16 @@ def findings_diff(hunt_a, hunt_b):
     """
     from beatrix.core.findings_db import FindingsDB
 
-    db = FindingsDB()
+    with FindingsDB() as db:
+        ha = db.get_hunt(hunt_a)
+        hb = db.get_hunt(hunt_b)
+        if not ha or not hb:
+            missing = hunt_a if not ha else hunt_b
+            console.print(f"[red]Hunt #{missing} not found.[/red]")
+            sys.exit(1)
 
-    ha = db.get_hunt(hunt_a)
-    hb = db.get_hunt(hunt_b)
-    if not ha or not hb:
-        missing = hunt_a if not ha else hunt_b
-        console.print(f"[red]Hunt #{missing} not found.[/red]")
-        db.close()
-        sys.exit(1)
-
-    fa = db.get_findings(hunt_id=hunt_a, limit=10000)
-    fb = db.get_findings(hunt_id=hunt_b, limit=10000)
-    db.close()
+        fa = db.get_findings(hunt_id=hunt_a, limit=10000)
+        fb = db.get_findings(hunt_id=hunt_b, limit=10000)
 
     # Fingerprint findings by title+url+module for comparison
     def fingerprint(f):
@@ -1928,15 +1922,13 @@ def findings_delete(hunt_id):
     """Delete a hunt and all its findings."""
     from beatrix.core.findings_db import FindingsDB
 
-    db = FindingsDB()
-    hunt = db.get_hunt(hunt_id)
-    if not hunt:
-        console.print(f"[red]Hunt #{hunt_id} not found.[/red]")
-        db.close()
-        sys.exit(1)
+    with FindingsDB() as db:
+        hunt = db.get_hunt(hunt_id)
+        if not hunt:
+            console.print(f"[red]Hunt #{hunt_id} not found.[/red]")
+            sys.exit(1)
 
-    db.delete_hunt(hunt_id)
-    db.close()
+        db.delete_hunt(hunt_id)
     console.print(f"[green]Deleted hunt #{hunt_id} ({hunt['target']}, {hunt.get('total_findings', 0)} findings)[/green]")
 
 
@@ -1952,9 +1944,8 @@ def findings_summary(hunt_id):
     """
     from beatrix.core.findings_db import FindingsDB
 
-    db = FindingsDB()
-    summary = db.get_hunt_summary(hunt_id)
-    db.close()
+    with FindingsDB() as db:
+        summary = db.get_hunt_summary(hunt_id)
 
     if not summary:
         console.print(f"[red]Hunt #{hunt_id} not found.[/red]")
@@ -2635,6 +2626,9 @@ def bounty_hunt(ctx, target, header, urls, jwt, output, verbose):
 
     _spec = importlib.util.spec_from_file_location(
         "bounty_hunter", str(Path(__file__).parent.parent.parent / "bounty_hunter.py"))
+    if _spec is None or _spec.loader is None:
+        console.print("[red]bounty_hunter.py not found — run from the Beatrix project root[/red]")
+        sys.exit(1)
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
     BountyHunter = _mod.BountyHunter

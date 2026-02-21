@@ -357,9 +357,9 @@ class FindingsDB:
 
     def delete_hunt(self, hunt_id: int) -> bool:
         """Delete a hunt and all its findings."""
-        self.conn.execute("DELETE FROM hunts WHERE id = ?", (hunt_id,))
+        cursor = self.conn.execute("DELETE FROM hunts WHERE id = ?", (hunt_id,))
         self.conn.commit()
-        return self.conn.total_changes > 0
+        return cursor.rowcount > 0
 
     def close(self):
         """Close the database connection."""

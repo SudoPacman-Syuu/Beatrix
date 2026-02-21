@@ -1088,19 +1088,21 @@ class EventCorrelationEngine:
         """Check if two URLs are on the same domain"""
         from urllib.parse import urlparse
 
+        # Multi-part TLDs where the second-to-last segment is part of the TLD
+        _MP_TLDS = {'co', 'com', 'org', 'net', 'edu', 'gov', 'ac', 'or', 'ne'}
+
+        def _base_domain(netloc: str) -> str:
+            # Strip port
+            host = netloc.split(':')[0]
+            parts = host.split('.')
+            if len(parts) >= 3 and parts[-2] in _MP_TLDS:
+                return '.'.join(parts[-3:])
+            return '.'.join(parts[-2:]) if len(parts) >= 2 else host
+
         try:
             domain1 = urlparse(url1).netloc
             domain2 = urlparse(url2).netloc
-
-            # Handle subdomain matching
-            parts1 = domain1.split('.')
-            parts2 = domain2.split('.')
-
-            # Get base domain (last 2 parts)
-            base1 = '.'.join(parts1[-2:]) if len(parts1) >= 2 else domain1
-            base2 = '.'.join(parts2[-2:]) if len(parts2) >= 2 else domain2
-
-            return base1 == base2
+            return _base_domain(domain1) == _base_domain(domain2)
         except Exception:
             return False
 

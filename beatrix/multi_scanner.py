@@ -208,6 +208,7 @@ class MultiScanner:
         async with httpx.AsyncClient(
             timeout=10.0,
             follow_redirects=True,
+            verify=False,
             headers=target.headers or {'User-Agent': 'BEATRIX Security Scanner'}
         ) as client:
 

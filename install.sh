@@ -220,7 +220,12 @@ ensure_go() {
     info "Installing Go toolchain..."
     local GO_VERSION="1.22.5"
     local ARCH
-    ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+    case "$(uname -m)" in
+        x86_64)  ARCH="amd64" ;;
+        aarch64) ARCH="arm64" ;;
+        armv7l)  ARCH="armv6l" ;;
+        *)       ARCH="amd64" ;;
+    esac
     local GO_TAR="go${GO_VERSION}.linux-${ARCH}.tar.gz"
 
     curl -sSL "https://go.dev/dl/${GO_TAR}" -o "/tmp/${GO_TAR}" || { warn "Failed to download Go"; return 1; }
