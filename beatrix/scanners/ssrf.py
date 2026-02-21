@@ -301,11 +301,19 @@ class SSRFScanner(BaseScanner):
         findings = []
         headers = headers or {}
 
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            follow_redirects=False,
-            verify=False
-        ) as client:
+        # Use BaseScanner's rate-limited client when available (inside scan()),
+        # fall back to a standalone client for direct calls.
+        client = self.client
+        own_client = False
+        if client is None:
+            client = httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=False,
+                verify=False
+            )
+            own_client = True
+
+        try:
             # Get baseline response
             try:
                 baseline = await client.get(candidate.url, headers=headers)
@@ -326,6 +334,9 @@ class SSRFScanner(BaseScanner):
                     # If we find cloud metadata access, this is CRITICAL
                     if payload.target_type == "cloud":
                         break  # One critical finding is enough
+        finally:
+            if own_client:
+                await client.aclose()
 
         return findings
 

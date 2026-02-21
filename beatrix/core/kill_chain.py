@@ -70,29 +70,27 @@ class KillChainPhase(Enum):
 
     @property
     def modules(self) -> List[str]:
-        """Default modules for this phase"""
+        """Default modules for this phase — maps to actual engine module keys."""
         return {
             KillChainPhase.RECONNAISSANCE: [
-                "subdomain", "portscan", "probe", "crawl", "js_analysis"
+                "crawl", "endpoint_prober", "js_analysis", "headers", "github_recon"
             ],
             KillChainPhase.WEAPONIZATION: [
-                "waf_detect", "payload_gen", "fingerprint"
+                "takeover", "error_disclosure", "cache_poisoning", "prototype_pollution"
             ],
             KillChainPhase.DELIVERY: [
-                "fuzz", "param_discovery", "endpoint_enum"
+                "cors", "redirect", "oauth_redirect", "http_smuggling", "websocket"
             ],
             KillChainPhase.EXPLOITATION: [
-                "injection", "auth_bypass", "idor", "bac", "cors", "ssrf"
+                "injection", "ssrf", "idor", "bac", "auth", "ssti", "xxe",
+                "deserialization", "graphql", "mass_assignment", "business_logic",
+                "redos", "payment", "nuclei"
             ],
             KillChainPhase.INSTALLATION: [
-                "file_upload", "webshell", "persistence"
+                "file_upload"
             ],
-            KillChainPhase.COMMAND_CONTROL: [
-                "exfil", "oob", "callback"
-            ],
-            KillChainPhase.ACTIONS_ON_OBJECTIVES: [
-                "poc_gen", "report", "validate"
-            ],
+            KillChainPhase.COMMAND_CONTROL: [],
+            KillChainPhase.ACTIONS_ON_OBJECTIVES: [],
         }[self]
 
 
@@ -321,20 +319,28 @@ class KillChainExecutor:
         self._emit("scanner_start", scanner=scanner_name, target=f"{len(urls)} URLs")
 
         try:
-            async with scanner:
-                for i, url in enumerate(urls):
-                    try:
-                        ctx = ScanContext.from_url(url)
-                        ctx.extra = context.get("crawl_extra", {})
+            async def _collect_multi():
+                async with scanner:
+                    for i, url in enumerate(urls):
+                        try:
+                            ctx = ScanContext.from_url(url)
+                            ctx.extra = context.get("crawl_extra", {})
 
-                        async for finding in scanner.scan(ctx):
-                            # Stamp module attribution if scanner didn't set it
-                            if not finding.scanner_module:
-                                finding.scanner_module = scanner_name
-                            result["findings"].append(finding)
-                            self._emit("finding", scanner=scanner_name, finding=finding)
-                    except Exception:
-                        continue
+                            async for finding in scanner.scan(ctx):
+                                # Stamp module attribution if scanner didn't set it
+                                if not finding.scanner_module:
+                                    finding.scanner_module = scanner_name
+                                result["findings"].append(finding)
+                                self._emit("finding", scanner=scanner_name, finding=finding)
+                        except Exception as e:
+                            self._emit("scanner_error", scanner=scanner_name,
+                                       error=f"Error on URL {i+1}/{len(urls)} ({url}): {e}")
+                            continue
+
+            await asyncio.wait_for(_collect_multi(), timeout=self.SCANNER_TIMEOUT)
+        except asyncio.TimeoutError:
+            self._emit("scanner_error", scanner=scanner_name,
+                       error=f"Timed out after {self.SCANNER_TIMEOUT}s scanning {len(urls)} URLs (partial results: {len(result['findings'])} findings)")
         except Exception as e:
             self._emit("scanner_error", scanner=scanner_name, error=str(e))
 
@@ -758,6 +764,17 @@ class KillChainExecutor:
         """
         url = context.get("resolved_url", target if "://" in target else f"https://{target}")
 
+        # ── Initialize OOB detector early so SSRF/XXE scanners can verify callbacks ──
+        if not context.get("oob_available"):
+            try:
+                from beatrix.core.oob_detector import OOBDetector
+                oob = OOBDetector()
+                context["oob_detector"] = oob
+                context["oob_available"] = True
+                self._emit("info", message="OOB detector initialized for SSRF/XXE callback verification")
+            except Exception:
+                context["oob_available"] = False
+
         results = []
         urls_with_params = context.get("urls_with_params", [])
 
@@ -823,9 +840,8 @@ class KillChainExecutor:
         # ── Deep exploitation — sqlmap, dalfox, commix on confirmed vulns ─────
         # Only run when tools are available AND internal scanners found issues
         try:
-            if not toolkit:
-                from beatrix.core.external_tools import ExternalToolkit
-                toolkit = ExternalToolkit()
+            from beatrix.core.external_tools import ExternalToolkit
+            toolkit = ExternalToolkit()
 
             # Collect confirmed vulnerabilities from internal scanner results
             all_findings = []
@@ -1036,23 +1052,29 @@ class KillChainExecutor:
         """Phase 6 — C2: OOB detection, exfiltration testing."""
         results = []
 
-        # OOB detection via interact.sh (enrichment for SSRF/XXE findings)
-        try:
-            from beatrix.core.oob_detector import OOBDetector
-            oob = OOBDetector()
-            # Store OOB detector in context so scanners can optionally use it
-            context["oob_detector"] = oob
-            context["oob_available"] = True
-            self._emit("info", message="OOB detector initialized — available for callback verification")
-        except Exception:
-            context["oob_available"] = False
+        # OOB detector should already be initialized in Phase 4 (_handle_exploitation).
+        # If it wasn't (e.g., Phase 4 was skipped), initialize it now.
+        if not context.get("oob_available"):
+            try:
+                from beatrix.core.oob_detector import OOBDetector
+                oob = OOBDetector()
+                context["oob_detector"] = oob
+                context["oob_available"] = True
+                self._emit("info", message="OOB detector initialized (late — Phase 4 was skipped)")
+            except Exception:
+                context["oob_available"] = False
 
         return await self._merge_scanner_results(results)
 
     async def _handle_actions(self, target: str, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 7 — Actions on Objectives: validate and report findings."""
-        # Validation happens at engine level, this phase aggregates final results
-        return {"findings": context.get("findings", []), "assets": [], "context": {}, "modules": ["validate"], "requests": 0}
+        """Phase 7 — Actions on Objectives: validate and report findings.
+
+        This phase is an aggregation/reporting phase, not a scanning phase.
+        All actual findings are collected by KillChainState.all_findings from
+        PhaseResult objects set by _execute_phase. This handler returns an
+        empty result — the engine collects findings from phase_results.
+        """
+        return {"findings": [], "assets": [], "context": {}, "modules": ["validate"], "requests": 0}
 
     def register_handler(
         self,
