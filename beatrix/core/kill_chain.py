@@ -15,6 +15,7 @@ Kill Chain Phases:
 """
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -699,10 +700,76 @@ class KillChainExecutor:
             else:
                 results.append(r)
 
+        # ── Step 7: Extract JS-discovered endpoints and feed them back ────
+        # JS bundle scanner and endpoint_prober store discovered URLs only
+        # inside Finding objects. Without this extraction, exploitation
+        # scanners starve on SPAs (0 URLs with params).
+        discovered_urls = set(context.get("discovered_urls", []))
+        urls_with_params = set(context.get("urls_with_params", []))
+        base_url = url.rstrip("/")
+
+        for r in results:
+            for finding in r.get("findings", []):
+                scanner = getattr(finding, "scanner_module", "") if hasattr(finding, "scanner_module") else ""
+
+                # --- JS bundle: extract API routes from evidence JSON ---
+                if scanner == "js_analysis" and "API Routes Disclosed" in (getattr(finding, "title", "") or ""):
+                    try:
+                        evidence = getattr(finding, "evidence", None)
+                        if evidence and isinstance(evidence, str):
+                            endpoints = json.loads(evidence)
+                            if isinstance(endpoints, list):
+                                for ep in endpoints:
+                                    if not ep or not isinstance(ep, str):
+                                        continue
+                                    # Resolve relative paths to full URLs
+                                    if ep.startswith(("http://", "https://")):
+                                        full = ep
+                                    elif ep.startswith("/"):
+                                        full = f"{base_url}{ep}"
+                                    else:
+                                        full = f"{base_url}/{ep}"
+                                    discovered_urls.add(full)
+                                    if "?" in full or "=" in full:
+                                        urls_with_params.add(full)
+                                self._emit("info", message=f"Extracted {len(endpoints)} API endpoints from JS bundle analysis into attack surface")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # --- Endpoint prober: extract live endpoints ---
+                if scanner == "endpoint_prober":
+                    ep_url = getattr(finding, "url", "")
+                    if ep_url and ep_url.startswith(("http://", "https://")):
+                        discovered_urls.add(ep_url)
+                        if "?" in ep_url or "=" in ep_url:
+                            urls_with_params.add(ep_url)
+
+                # --- Internal hosts from JS (may reveal additional targets) ---
+                if scanner == "js_analysis" and "Internal Hostnames" in (getattr(finding, "title", "") or ""):
+                    try:
+                        evidence = getattr(finding, "evidence", None)
+                        if evidence and isinstance(evidence, str):
+                            hosts = json.loads(evidence)
+                            if isinstance(hosts, list):
+                                context.setdefault("internal_hosts", []).extend(hosts)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+        # Update context with the enriched URL sets
+        prev_url_count = len(context.get("discovered_urls", []))
+        prev_param_count = len(context.get("urls_with_params", []))
+        context["discovered_urls"] = sorted(discovered_urls)
+        context["urls_with_params"] = sorted(urls_with_params)
+        self._emit("info", message=(
+            f"Attack surface after recon: {len(discovered_urls)} URLs "
+            f"(+{len(discovered_urls) - prev_url_count} from JS/endpoint analysis), "
+            f"{len(urls_with_params)} with params (+{len(urls_with_params) - prev_param_count})"
+        ))
+
         merged = await self._merge_scanner_results(results)
 
         # Add discovered assets to the merged result
-        all_discovered = sorted(set(context.get("discovered_urls", [])))
+        all_discovered = sorted(discovered_urls)
         if crawl_result:
             all_discovered = sorted(set(all_discovered + list(crawl_result.urls)))
 
@@ -795,14 +862,25 @@ class KillChainExecutor:
         results = []
         urls_with_params = context.get("urls_with_params", [])
 
-        # ── Injection variants — need URLs with parameters ────────────────────
-        if urls_with_params:
-            self._emit("info", message=f"Testing {len(urls_with_params)} URLs with parameters for injection")
-            results.append(await self._run_scanner_on_urls("injection", urls_with_params, context))
-            results.append(await self._run_scanner_on_urls("ssti", urls_with_params, context))
-            results.append(await self._run_scanner_on_urls("ssrf", urls_with_params, context))
-            results.append(await self._run_scanner_on_urls("mass_assignment", urls_with_params, context))
-            results.append(await self._run_scanner_on_urls("redos", urls_with_params[:10], context))
+        # Build a combined target list: URLs with params PLUS JS-discovered API endpoints
+        # Many JS routes (e.g. /api/v1/users, /resource/feed) lack query params but
+        # still accept POST bodies, path params, and headers — they *must* be tested.
+        discovered = context.get("discovered_urls", [])
+        api_endpoints = [u for u in discovered
+                         if any(p in u for p in ("/api/", "/v1/", "/v2/", "/v3/", "/rest/", "/graphql", "/internal/", "/admin/"))]
+        # Merge: parameterized URLs first (higher priority), then API paths, deduped
+        injection_targets = list(dict.fromkeys(urls_with_params + api_endpoints))
+
+        # ── Injection variants — need URLs with parameters or API endpoints ───
+        if injection_targets:
+            # Cap at 50 to stay within timeout budget (300s per scanner)
+            capped = injection_targets[:50]
+            self._emit("info", message=f"Testing {len(capped)} URLs for injection ({len(urls_with_params)} with params + {len(api_endpoints)} API endpoints)")
+            results.append(await self._run_scanner_on_urls("injection", capped, context))
+            results.append(await self._run_scanner_on_urls("ssti", capped, context))
+            results.append(await self._run_scanner_on_urls("ssrf", capped, context))
+            results.append(await self._run_scanner_on_urls("mass_assignment", capped[:30], context))
+            results.append(await self._run_scanner_on_urls("redos", capped[:10], context))
         else:
             results.append(await self._run_scanner("injection", url, context))
             results.append(await self._run_scanner("ssti", url, context))
@@ -811,14 +889,20 @@ class KillChainExecutor:
             results.append(await self._run_scanner("redos", url, context))
 
         # ── XXE — targets XML-accepting endpoints ─────────────────────────────
-        results.append(await self._run_scanner("xxe", url, context))
+        # Also test discovered API endpoints that might accept XML
+        xxe_targets = list(dict.fromkeys([url] + api_endpoints[:15]))
+        results.append(await self._run_scanner_on_urls("xxe", xxe_targets, context))
 
         # ── Deserialization — tests for insecure deserialization ───────────────
-        results.append(await self._run_scanner("deserialization", url, context))
+        results.append(await self._run_scanner_on_urls("deserialization", xxe_targets, context))
 
-        # ── IDOR/BAC — runs on base URL checking for ID patterns ──────────────
-        results.append(await self._run_scanner("idor", url, context))
-        results.append(await self._run_scanner("bac", url, context))
+        # ── IDOR/BAC — test base URL and discovered API endpoints ─────────
+        # JS-discovered API routes are prime IDOR/BAC targets
+        discovered = context.get("discovered_urls", [])
+        api_urls = [u for u in discovered if "/api/" in u or "/v1/" in u or "/v2/" in u or "/v3/" in u or "/graphql" in u or "/rest/" in u]
+        idor_targets = list(set([url] + api_urls[:30]))  # Base URL + API endpoints
+        results.append(await self._run_scanner_on_urls("idor", idor_targets, context))
+        results.append(await self._run_scanner_on_urls("bac", idor_targets, context))
 
         # ── Auth — runs on base URL checking for auth issues ──────────────────
         results.append(await self._run_scanner("auth", url, context))

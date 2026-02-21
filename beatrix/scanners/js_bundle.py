@@ -444,8 +444,10 @@ class JSBundleAnalyzer(BaseScanner):
                     f"API endpoints. These can be probed for IDOR, auth bypass, "
                     f"and injection vulnerabilities:\n\n"
                     + "\n".join(f"- `{e}`" for e in unique_endpoints[:30])
+                    + (f"\n\n... and {len(unique_endpoints) - 30} more" if len(unique_endpoints) > 30 else "")
                 ),
-                evidence=json.dumps(unique_endpoints[:30], indent=2),
+                # Store ALL endpoints — kill chain extracts these for downstream scanners
+                evidence=json.dumps(unique_endpoints),
                 remediation="This is expected behavior for SPAs but review endpoints for sensitive operations.",
             )
 

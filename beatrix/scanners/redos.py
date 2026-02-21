@@ -276,7 +276,7 @@ class ReDoSScanner(BaseScanner):
         elapsed_ms = (time.monotonic() - start) * 1000
 
         return TimingResult(
-            payload=payload[:50],  # Truncate for storage
+            payload=payload,  # Store FULL payload for reproduction
             length=len(payload),
             response_time_ms=elapsed_ms,
             status_code=status,
@@ -360,7 +360,119 @@ class ReDoSScanner(BaseScanner):
                 for r in results
             )
 
-            yield self.create_finding(
+            # Find the slowest payload for reproduction
+            slowest = max(results, key=lambda r: r.response_time_ms)
+            evil_payload = slowest.payload
+
+            # Build curl PoC
+            from urllib.parse import quote
+            if delivery == "query":
+                poc_curl = (
+                    f"# ReDoS PoC — {param_name} parameter\n"
+                    f"# Expected: response time >{slowest.response_time_ms:.0f}ms "
+                    f"(baseline: {baseline_ms:.0f}ms)\n"
+                    f"time curl -s -o /dev/null -w '%{{time_total}}' "
+                    f"'{context.url}?{param_name}={quote(evil_payload)}'"
+                )
+            elif delivery == "body_form":
+                poc_curl = (
+                    f"# ReDoS PoC — {param_name} parameter (POST form)\n"
+                    f"# Expected: response time >{slowest.response_time_ms:.0f}ms\n"
+                    f"time curl -s -o /dev/null -w '%{{time_total}}' "
+                    f"-X POST -d '{param_name}={quote(evil_payload)}' "
+                    f"'{context.url}'"
+                )
+            elif delivery == "body_json":
+                import json as _json
+                poc_curl = (
+                    f"# ReDoS PoC — {param_name} parameter (POST JSON)\n"
+                    f"# Expected: response time >{slowest.response_time_ms:.0f}ms\n"
+                    f"time curl -s -o /dev/null -w '%{{time_total}}' "
+                    f"-X POST -H 'Content-Type: application/json' "
+                    f"-d '{_json.dumps({{param_name: evil_payload}})!s}' "
+                    f"'{context.url}'"
+                )
+            else:
+                poc_curl = (
+                    f"# ReDoS PoC — {param_name} header\n"
+                    f"time curl -s -o /dev/null -w '%{{time_total}}' "
+                    f"-H '{param_name}: {evil_payload}' '{context.url}'"
+                )
+
+            # Build Python PoC
+            poc_python = (
+                f"#!/usr/bin/env python3\n"
+                f"\"\"\"ReDoS PoC: {param_name} on {context.url}\"\"\"\n"
+                f"import time, httpx\n\n"
+                f"url = \"{context.url}\"\n"
+                f"param = \"{param_name}\"\n"
+                f"payloads = {[r.payload for r in results]!r}\n\n"
+                f"print(f\"Baseline (normal input):\")\n"
+                f"start = time.monotonic()\n"
+                f"httpx.get(url, params={{param: 'normalinput123'}})\n"
+                f"print(f\"  {{(time.monotonic()-start)*1000:.0f}}ms\")\n\n"
+                f"for p in payloads:\n"
+                f"    start = time.monotonic()\n"
+            )
+            if delivery == "query":
+                poc_python += f"    httpx.get(url, params={{param: p}}, timeout=30)\n"
+            elif delivery == "body_form":
+                poc_python += f"    httpx.post(url, data={{param: p}}, timeout=30)\n"
+            elif delivery == "body_json":
+                poc_python += f"    httpx.post(url, json={{param: p}}, timeout=30)\n"
+            else:
+                poc_python += f"    httpx.get(url, headers={{param: p}}, timeout=30)\n"
+            poc_python += (
+                f"    elapsed = (time.monotonic()-start)*1000\n"
+                f"    print(f\"  len={{len(p):3d}}: {{elapsed:.0f}}ms\")\n"
+            )
+
+            # Build reproduction steps
+            repro_steps = [
+                f"1. Send a baseline request to {context.url} with "
+                f"'{param_name}=normalinput123' — note the response time (~{baseline_ms:.0f}ms)",
+                f"2. Send the same request with '{param_name}' set to progressively "
+                f"longer payloads of pattern: {payload_set.description}",
+            ]
+            for r in results:
+                repro_steps.append(
+                    f"   - Length {r.length}: '{r.payload[:40]}{'...' if len(r.payload)>40 else ''}' "
+                    f"→ {r.response_time_ms:.0f}ms"
+                    + (" [TIMEOUT]" if r.timed_out else "")
+                )
+            repro_steps.append(
+                f"3. Observe super-linear growth: {growth_analysis}"
+            )
+            repro_steps.append(
+                f"4. The slowest payload ({slowest.length} chars) took "
+                f"{slowest.response_time_ms:.0f}ms vs baseline {baseline_ms:.0f}ms "
+                f"({slowest.response_time_ms/baseline_ms:.1f}x slower)"
+            )
+
+            # Build request string
+            if delivery == "query":
+                request_str = (
+                    f"GET {context.url}?{param_name}={quote(evil_payload)} HTTP/1.1\n"
+                    f"Host: {context.url.split('://')[1].split('/')[0]}\n"
+                    f"User-Agent: Beatrix/1.0\n"
+                )
+            elif delivery in ("body_form", "body_json"):
+                ct = "application/x-www-form-urlencoded" if delivery == "body_form" else "application/json"
+                request_str = (
+                    f"POST {context.url} HTTP/1.1\n"
+                    f"Host: {context.url.split('://')[1].split('/')[0]}\n"
+                    f"Content-Type: {ct}\n"
+                    f"User-Agent: Beatrix/1.0\n\n"
+                    f"{param_name}={evil_payload}"
+                )
+            else:
+                request_str = (
+                    f"GET {context.url} HTTP/1.1\n"
+                    f"Host: {context.url.split('://')[1].split('/')[0]}\n"
+                    f"{param_name}: {evil_payload}\n"
+                )
+
+            finding = self.create_finding(
                 title=f"ReDoS: {payload_set.name} in '{param_name}' ({delivery})",
                 severity=severity,
                 confidence=Confidence.FIRM if max_time > 3000 else Confidence.TENTATIVE,
@@ -389,6 +501,15 @@ class ReDoSScanner(BaseScanner):
                     "https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS",
                 ],
             )
+
+            # Attach reproduction artifacts
+            finding.payload = evil_payload
+            finding.request = request_str
+            finding.poc_curl = poc_curl
+            finding.poc_python = poc_python
+            finding.reproduction_steps = repro_steps
+
+            yield finding
 
     # Minimum absolute response time to consider suspicious (filters network jitter)
     TIMING_MIN_SUSPICIOUS_MS = 500

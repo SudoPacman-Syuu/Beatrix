@@ -481,10 +481,22 @@ class MassAssignmentScanner(BaseScanner):
         Some frameworks bind query parameters to model attributes,
         even for GET requests.
 
-        IMPORTANT: We must distinguish between the field name appearing
-        in the URL-echoed current_url JSON value (SSR state) vs the
-        field actually being processed by the server. We use a unique
-        canary VALUE and check that it's reflected outside URL contexts.
+        FALSE POSITIVE PREVENTION:
+        Modern SPAs (React, Next.js, Angular, Vue) serialize the entire
+        request URL — including ALL query params — into client-side
+        hydration state (__PWS_DATA__, __NEXT_DATA__, window.__STATE__,
+        etc.). This means ANY canary value we inject into a query param
+        WILL appear in the HTML response body. This is NOT evidence of
+        mass assignment.
+
+        Strategy:
+        1. Get baseline response WITHOUT injected params
+        2. Inject canary param
+        3. The canary MUST appear as a standalone value in a JSON field
+           (like "role": "BTRXMAxxxxxx") NOT inside a URL string.
+        4. Even better: compare baseline vs modified response — the
+           response body (minus URL echo sections) must actually differ
+           in a meaningful way.
         """
         # Only test a subset of payloads via query params
         critical_payloads = [p for p in MASS_ASSIGN_PAYLOADS
@@ -492,79 +504,152 @@ class MassAssignmentScanner(BaseScanner):
 
         # Get a baseline response WITHOUT any injected params
         try:
-            await self.get(context.url, params=context.parameters)
+            baseline_response = await self.get(context.url, params=context.parameters)
         except Exception:
             return
+
+        baseline_body = baseline_response.text if baseline_response.status_code == 200 else ""
 
         for payload in critical_payloads[:10]:  # Limit for GET requests
             params = dict(context.parameters)
 
-            # Use a UNIQUE canary value instead of the actual payload value.
-            # This prevents false positives from common words like "admin",
-            # "True", "1" appearing naturally in the page.
+            # Use a UNIQUE canary value that won't appear naturally
             canary_value = "BTRXMA" + "".join(random.choices(string.ascii_lowercase, k=8))
             params[payload.field_name] = canary_value
 
             try:
                 response = await self.get(context.url, params=params)
 
-                if response.status_code == 200:
-                    # Check if our UNIQUE canary value appears in the response
-                    # This is much more reliable than checking for field_name
-                    if canary_value in response.text:
-                        # BUT: SSR apps echo the full URL in JSON state objects
-                        # (e.g., "current_url": "https://...?isAdmin=BTRXMAxxxxxx")
-                        # We need to verify the canary appears OUTSIDE the URL echo.
+                if response.status_code == 200 and canary_value in response.text:
+                    # The canary is in the response. Now we must prove it's
+                    # NOT just URL/state serialization.
 
-                        # Count occurrences — if canary only appears in URL-like
-                        # contexts, it's not real reflection
-                        body = response.text
-                        occurrences = [m.start() for m in re.finditer(re.escape(canary_value), body)]
+                    body = response.text
 
-                        real_reflection = False
-                        for idx in occurrences:
-                            # Get surrounding context
-                            ctx_start = max(0, idx - 120)
-                            ctx_end = min(len(body), idx + len(canary_value) + 120)
-                            context_str = body[ctx_start:ctx_end]
+                    # STEP 1: Strip ALL URL-like contexts containing the canary.
+                    # This removes the canary from serialized URLs, hrefs,
+                    # router state, canonical tags, og:url, etc.
+                    stripped = self._strip_url_contexts(body, canary_value, payload.field_name)
 
-                            # Skip if this is inside a URL/href context
-                            url_echo_patterns = [
-                                r'["\']https?://[^"\']*' + re.escape(canary_value),
-                                r'current_url["\s:]*["\'][^"\']*' + re.escape(canary_value),
-                                r'canonical["\s_:]*["\'][^"\']*' + re.escape(canary_value),
-                                r'request_uri["\s:]*["\'][^"\']*' + re.escape(canary_value),
-                                r'href=["\'"][^"\']*' + re.escape(canary_value),
-                                r'[\?&]' + re.escape(payload.field_name) + r'=' + re.escape(canary_value),
-                            ]
-                            is_url_echo = any(re.search(p, context_str, re.IGNORECASE) for p in url_echo_patterns)
+                    # STEP 2: Check if canary still exists after stripping
+                    if canary_value not in stripped:
+                        # Canary only appeared inside URL contexts → NOT real reflection
+                        await asyncio.sleep(0.3)
+                        continue
 
-                            if not is_url_echo:
-                                real_reflection = True
-                                break
+                    # STEP 3: Require canary as a standalone JSON value.
+                    # Real mass assignment: {"role": "BTRXMAxxxxxx"}
+                    # False positive:      "url": "...?role=BTRXMAxxxxxx"
+                    json_value_pattern = re.compile(
+                        r'["\']\s*:\s*["\']' + re.escape(canary_value) + r'["\']'
+                    )
+                    if not json_value_pattern.search(stripped):
+                        # Not a standalone JSON value → likely serialized state
+                        await asyncio.sleep(0.3)
+                        continue
 
-                        if real_reflection:
-                            yield self.create_finding(
-                                title=f"Mass Assignment via Query: {payload.field_name}",
-                                severity=payload.severity,
-                                confidence=Confidence.TENTATIVE,
-                                url=context.url,
-                                description=(
-                                    f"The query parameter '{payload.field_name}' was "
-                                    f"reflected in the response when added to a GET request.\n\n"
-                                    f"Category: {payload.category.name}\n"
-                                    f"Test value: {payload.field_value}\n\n"
-                                    f"**Manual verification required** — confirm the parameter "
-                                    f"actually modified the server-side object."
-                                ),
-                                evidence=f"?{payload.field_name}={canary_value} reflected outside URL context",
-                                references=["OWASP API3:2023", "CWE-915"],
-                            )
+                    # STEP 4: Compare with baseline — the NON-URL content must
+                    # actually differ. If the baseline already has the same
+                    # structure, it's just state echo.
+                    baseline_stripped = self._strip_url_contexts(
+                        baseline_body, canary_value, payload.field_name
+                    )
+                    # Normalize whitespace for comparison
+                    diff_ratio = self._content_diff_ratio(baseline_stripped, stripped)
+                    if diff_ratio < 0.01:  # Less than 1% difference
+                        await asyncio.sleep(0.3)
+                        continue
+
+                    yield self.create_finding(
+                        title=f"Mass Assignment via Query: {payload.field_name}",
+                        severity=payload.severity,
+                        confidence=Confidence.TENTATIVE,
+                        url=context.url,
+                        description=(
+                            f"The query parameter '{payload.field_name}' was "
+                            f"reflected as a standalone value in the response "
+                            f"(not just URL state echo).\n\n"
+                            f"Category: {payload.category.name}\n"
+                            f"Test value: {payload.field_value}\n\n"
+                            f"Content diff from baseline: {diff_ratio:.1%}\n\n"
+                            f"**Manual verification required** — confirm the parameter "
+                            f"actually modified the server-side object."
+                        ),
+                        evidence=f"?{payload.field_name}={canary_value} reflected as JSON value (not URL echo)",
+                        references=["OWASP API3:2023", "CWE-915"],
+                    )
 
                 await asyncio.sleep(0.3)
 
             except Exception:
                 continue
+
+    def _strip_url_contexts(self, body: str, canary: str, param_name: str) -> str:
+        """
+        Remove all URL-like contexts containing the canary from the body.
+
+        SPAs serialize the full URL (with injected query params) in many places:
+        - "current_url": "https://example.com/?isAdmin=BTRXMAxxxxxx"
+        - <link rel="canonical" href="...?isAdmin=BTRXMAxxxxxx">
+        - window.__INITIAL_STATE__ = {..., url: "..."}
+        - og:url, og:image, twitter:url meta tags
+        - JSON-LD @id fields
+        - Next.js __NEXT_DATA__, Pinterest __PWS_DATA__
+        """
+        result = body
+
+        # Pattern 1: Remove any quoted string containing both "http" and the canary
+        # Matches: "https://...?foo=BTRXMAxxxxxxx" and 'https://...?foo=BTRXMAxxxxxxx'
+        url_string_pattern = re.compile(
+            r'["\']https?://[^"\']*' + re.escape(canary) + r'[^"\']*["\']',
+            re.IGNORECASE
+        )
+        result = url_string_pattern.sub('"[URL_STRIPPED]"', result)
+
+        # Pattern 2: Remove any string that has param=canary or param%3D<canary>
+        param_eq_pattern = re.compile(
+            r'["\'][^"\']*[?&]' + re.escape(param_name) + r'[=]' + re.escape(canary) + r'[^"\']*["\']',
+            re.IGNORECASE
+        )
+        result = param_eq_pattern.sub('"[PARAM_STRIPPED]"', result)
+
+        # Pattern 3: URL-encoded variants
+        from urllib.parse import quote
+        encoded_canary = quote(canary, safe='')
+        result = result.replace(encoded_canary, '[ENCODED_STRIPPED]')
+
+        # Pattern 4: Remove href/src/action attributes containing the canary
+        attr_pattern = re.compile(
+            r'(href|src|action|content)\s*=\s*["\'][^"\']*' + re.escape(canary) + r'[^"\']*["\']',
+            re.IGNORECASE
+        )
+        result = attr_pattern.sub(r'\1="[ATTR_STRIPPED]"', result)
+
+        # Pattern 5: Remove any occurrence where canary follows a / or ? or & or =
+        # This catches URL path/query contexts we missed above
+        path_context = re.compile(
+            r'[/\\?&=]' + re.escape(param_name) + r'[=]' + re.escape(canary)
+        )
+        result = path_context.sub('[PATH_STRIPPED]', result)
+
+        return result
+
+    def _content_diff_ratio(self, baseline: str, modified: str) -> float:
+        """
+        Calculate the ratio of content difference between baseline and modified.
+        Returns 0.0 (identical) to 1.0 (completely different).
+        """
+        if not baseline and not modified:
+            return 0.0
+        if not baseline or not modified:
+            return 1.0
+
+        # Simple length-based diff ratio (fast approximation)
+        # A more thorough approach would use difflib, but this is fast enough
+        # for our false-positive filtering purpose
+        len_diff = abs(len(baseline) - len(modified))
+        max_len = max(len(baseline), len(modified))
+        return len_diff / max_len if max_len > 0 else 0.0
 
     # =========================================================================
     # RESPONSE ANALYSIS

@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote, quote_plus, urlencode, urlparse, urlun
 
 import httpx
 
-from beatrix.ai.assistant import AIAssistant, AIConfig, AIMessage
+from beatrix.ai.assistant import AIAssistant, AIConfig, AIMessage, AIProvider
 from beatrix.core.types import (
     Confidence,
     Severity,
@@ -248,6 +248,7 @@ class GhostAgent:
         # AI backend
         if config is None:
             config = AIConfig(
+                provider=AIProvider.BEDROCK,
                 model="claude-sonnet-4-20250514",
                 max_tokens=8192,
                 temperature=0.3,
@@ -622,6 +623,51 @@ Start now - analyze and test.
     # TOOL IMPLEMENTATIONS
     # =========================================================================
 
+    def _parse_headers(self, raw_headers: str) -> Dict[str, str]:
+        """Parse headers from various AI-produced formats.
+
+        The AI may send headers as:
+          - JSON dict:   {"Origin": "https://evil.com"}
+          - Python dict:  {'Origin': 'https://evil.com'}
+          - Key: Value lines separated by newlines
+        Handle all three gracefully.
+        """
+        if not raw_headers or raw_headers.strip() in ("{}", ""):
+            return {}
+
+        raw = raw_headers.strip()
+
+        # Try JSON first (handles both {"k":"v"} and {"k": "v"} formats)
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return {str(k): str(v) for k, v in parsed.items()}
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Try Python dict literal  e.g. {'Origin': 'https://evil.com'}
+        # Convert single quotes to double quotes and retry
+        if raw.startswith("{") and raw.endswith("}"):
+            try:
+                fixed = raw.replace("'", '"')
+                parsed = json.loads(fixed)
+                if isinstance(parsed, dict):
+                    return {str(k): str(v) for k, v in parsed.items()}
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # Fall back to Key: Value line parsing
+        headers = {}
+        for line in raw.split("\n"):
+            line = line.strip()
+            if ":" in line:
+                k, v = line.split(":", 1)
+                key = k.strip().strip("'\"{")
+                val = v.strip().strip("'\"}")
+                if key:
+                    headers[key] = val
+        return headers
+
     async def _tool_send_request(self, params: Dict[str, str]) -> str:
         """Send a custom HTTP request"""
         method = params.get("method", "GET")
@@ -629,14 +675,7 @@ Start now - analyze and test.
         raw_headers = params.get("headers", "")
         body = params.get("body", "")
 
-        # Parse header lines
-        extra_headers = {}
-        if raw_headers:
-            for line in raw_headers.split("\n"):
-                line = line.strip()
-                if ":" in line:
-                    k, v = line.split(":", 1)
-                    extra_headers[k.strip()] = v.strip()
+        extra_headers = self._parse_headers(raw_headers)
 
         stored = await self._send_http(method, url, extra_headers, body or None)
 
@@ -870,14 +909,16 @@ Start now - analyze and test.
         if not pattern:
             return "Error: pattern is required"
 
-        # Get content
-        if response_id:
+        # Get content — try specified ID, then most recent, then baseline
+        if response_id is not None and response_id != "":
             stored = self.response_cache.get(int(response_id))
             if not stored:
-                return "Error: Response not found"
+                return f"Error: Response #{response_id} not found. Available: {sorted(self.response_cache.keys())}"
             content = stored.body
-        elif 0 in self.response_cache:
-            content = self.response_cache[0].body
+        elif self.response_cache:
+            # Use the most recent response if none specified
+            latest_id = max(self.response_cache.keys())
+            content = self.response_cache[latest_id].body
         else:
             return "Error: No response to search"
 
@@ -915,14 +956,15 @@ Start now - analyze and test.
         extract_type = params.get("type", "urls")
         custom_pattern = params.get("pattern")
 
-        # Get content
-        if response_id:
+        # Get content — try specified ID, then most recent, then baseline
+        if response_id is not None and response_id != "":
             stored = self.response_cache.get(int(response_id))
             if not stored:
-                return "Error: Response not found"
+                return f"Error: Response #{response_id} not found. Available: {sorted(self.response_cache.keys())}"
             content = stored.body
-        elif 0 in self.response_cache:
-            content = self.response_cache[0].body
+        elif self.response_cache:
+            latest_id = max(self.response_cache.keys())
+            content = self.response_cache[latest_id].body
         else:
             return "Error: No response"
 
@@ -985,14 +1027,15 @@ Start now - analyze and test.
 
     async def _tool_record_finding(self, params: Dict[str, str]) -> str:
         """Record a discovered vulnerability"""
-        title = params.get("title")
-        vuln_type = params.get("type")
+        # Accept common parameter name variants the AI may use
+        title = params.get("title") or params.get("vulnerability_type") or params.get("name", "")
+        vuln_type = params.get("type") or params.get("vulnerability_type") or params.get("category", "")
         severity = params.get("severity", "MEDIUM")
-        description = params.get("description")
+        description = params.get("description") or params.get("details", "")
         evidence = params.get("evidence", "")
-        remediation = params.get("remediation", "")
+        remediation = params.get("remediation") or params.get("recommendation", "")
 
-        if not title or not vuln_type or not description:
+        if not title and not vuln_type and not description:
             return "Error: title, type, and description are required"
 
         finding = GhostFinding(

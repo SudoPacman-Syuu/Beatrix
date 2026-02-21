@@ -440,10 +440,26 @@ class SSRFScanner(BaseScanner):
 
         Returns indicators only when there's STRONG evidence of SSRF,
         not just timing/size deltas which are unreliable noise.
+
+        CRITICAL: We must strip the payload URL itself from the response
+        before checking for indicator patterns. SPAs (React, Next.js,
+        Angular) serialize the full request URL — including injected
+        params — into client-side hydration state. Matching our own
+        payload string is NOT evidence of SSRF.
         """
         strong_indicators = []
         weak_indicators = []
         content = response.text.lower()
+
+        # Strip our own payload from the response to avoid self-matching.
+        # SPAs echo "?next=http://169.254.169.254/..." in __PWS_DATA__,
+        # canonical URLs, router state, etc.
+        payload_lower = payload.value.lower()
+        content = content.replace(payload_lower, '')
+        # Also strip URL-encoded version
+        from urllib.parse import quote
+        content = content.replace(quote(payload.value, safe='').lower(), '')
+        content = content.replace(quote(payload.value, safe='/:%@').lower(), '')
 
         # Check for cloud metadata patterns (STRONG)
         if payload.target_type == "cloud":
@@ -507,14 +523,15 @@ class SSRFScanner(BaseScanner):
 
     def _calculate_confidence(self, indicators: List[str]) -> Confidence:
         """Calculate confidence based on indicators"""
-        if any('cloud_metadata' in i for i in indicators):
-            return Confidence.HIGH
-        if any('file_content' in i for i in indicators):
-            return Confidence.HIGH
+        strong_count = sum(1 for i in indicators
+                          if 'cloud_metadata' in i or 'file_content' in i
+                          or 'internal_indicator' in i)
+        if strong_count >= 2:
+            return Confidence.CERTAIN
+        if strong_count == 1:
+            return Confidence.FIRM
         if len(indicators) >= 3:
-            return Confidence.MEDIUM
-        if len(indicators) >= 1:
-            return Confidence.LOW
+            return Confidence.TENTATIVE
         return Confidence.LOW
 
     def _build_ssrf_description(self,

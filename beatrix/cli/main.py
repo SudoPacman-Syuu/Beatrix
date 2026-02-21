@@ -2751,7 +2751,7 @@ def validate_findings(ctx, findings_file):
 @click.option("--max-turns", "-t", type=int, default=30, help="Maximum investigation turns")
 @click.option("--model", default="claude-sonnet-4-20250514", help="Claude model to use")
 @click.option("--api-key", envvar="ANTHROPIC_API_KEY", help="Anthropic API key")
-@click.option("--bedrock", is_flag=True, help="Use AWS Bedrock instead of Anthropic API")
+@click.option("--bedrock/--no-bedrock", default=True, help="Use AWS Bedrock (default) or Anthropic API")
 @click.pass_context
 def ghost(ctx, target, objective, method, header, data, max_turns, model, api_key, bedrock):
     """

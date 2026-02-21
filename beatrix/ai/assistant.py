@@ -175,13 +175,32 @@ class BedrockBackend(AIBackend):
 
         self.client = boto3.client("bedrock-runtime", **client_kwargs)
 
-        # Map model names to Bedrock IDs
+        # Map model names to Bedrock inference profile IDs.
+        # Claude 4+ models REQUIRE inference profiles (on-demand model IDs
+        # are rejected with ValidationException).  Older models also have
+        # inference profiles and using them is the forward-compatible path.
         self.model_map = {
-            "claude-3-haiku-20240307": "anthropic.claude-3-haiku-20240307-v1:0",
-            "claude-3-sonnet-20240229": "anthropic.claude-3-sonnet-20240229-v1:0",
-            "claude-3-opus-20240229": "anthropic.claude-3-opus-20240229-v1:0",
-            "claude-3-5-sonnet-20241022": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-            "claude-3-5-haiku-20241022": "anthropic.claude-3-5-haiku-20241022-v1:0",
+            # Claude 3
+            "claude-3-haiku-20240307": "us.anthropic.claude-3-haiku-20240307-v1:0",
+            "claude-3-sonnet-20240229": "us.anthropic.claude-3-sonnet-20240229-v1:0",
+            "claude-3-opus-20240229": "us.anthropic.claude-3-opus-20240229-v1:0",
+            # Claude 3.5
+            "claude-3-5-sonnet-20240620": "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
+            "claude-3-5-sonnet-20241022": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "claude-3-5-haiku-20241022": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+            # Claude 3.7
+            "claude-3-7-sonnet-20250219": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+            # Claude 4
+            "claude-sonnet-4-20250514": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+            "claude-opus-4-20250514": "us.anthropic.claude-opus-4-20250514-v1:0",
+            "claude-opus-4-1-20250805": "us.anthropic.claude-opus-4-1-20250805-v1:0",
+            # Claude 4.5
+            "claude-haiku-4-5-20251001": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "claude-sonnet-4-5-20250929": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "claude-opus-4-5-20251101": "us.anthropic.claude-opus-4-5-20251101-v1:0",
+            # Claude 4.6
+            "claude-opus-4-6": "us.anthropic.claude-opus-4-6-v1",
+            "claude-sonnet-4-6": "us.anthropic.claude-sonnet-4-6",
         }
 
     async def complete(self,
