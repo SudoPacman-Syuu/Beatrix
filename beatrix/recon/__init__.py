@@ -28,6 +28,7 @@ class ReconResult:
     domain: str
     subdomains: Set[str] = field(default_factory=set)
     endpoints: Set[str] = field(default_factory=set)
+    form_urls: Set[str] = field(default_factory=set)
     js_files: Set[str] = field(default_factory=set)
     parameters: Set[str] = field(default_factory=set)
     technologies: Dict[str, str] = field(default_factory=dict)
@@ -42,6 +43,7 @@ class ReconResult:
             "domain": self.domain,
             "subdomains": sorted(self.subdomains),
             "endpoints": sorted(self.endpoints),
+            "form_urls": sorted(self.form_urls),
             "js_files": sorted(self.js_files),
             "parameters": sorted(self.parameters),
             "technologies": self.technologies,
@@ -357,7 +359,10 @@ class ReconRunner:
                         self.result.endpoints.add(u)
                     for js in katana_result.get("js_urls", []):
                         self.result.js_files.add(js)
-                    self.log(f"Katana found {len(katana_result.get('urls', []))} URLs", "SUCCESS")
+                    for fu in katana_result.get("form_urls", []):
+                        self.result.endpoints.add(fu)
+                        self.result.form_urls.add(fu)
+                    self.log(f"Katana found {len(katana_result.get('urls', []))} URLs, {len(katana_result.get('js_urls', []))} JS, {len(katana_result.get('form_urls', []))} forms", "SUCCESS")
                 except Exception:
                     pass
 
@@ -369,7 +374,12 @@ class ReconRunner:
                         self.result.endpoints.add(u)
                     for sub in spider_result.get("subdomains", []):
                         self.result.subdomains.add(sub)
-                    self.log(f"Gospider found {len(spider_result.get('urls', []))} URLs", "SUCCESS")
+                    for js in spider_result.get("js_files", []):
+                        self.result.js_files.add(js)
+                    for fu in spider_result.get("forms", []):
+                        self.result.endpoints.add(fu)
+                        self.result.form_urls.add(fu)
+                    self.log(f"Gospider found {len(spider_result.get('urls', []))} URLs, {len(spider_result.get('js_files', []))} JS, {len(spider_result.get('forms', []))} forms", "SUCCESS")
                 except Exception:
                     pass
 
@@ -402,15 +412,34 @@ class ReconRunner:
                 except Exception:
                     pass
 
-            # Dirsearch — directory brute-force
+            # Dirsearch — directory brute-force (adaptive extensions)
             if deep and toolkit.dirsearch.available:
                 try:
-                    ds_result = await toolkit.dirsearch.scan(base_url)
+                    techs_lower = " ".join(k.lower() for k in self.result.technologies)
+                    ext_parts = ["html", "js", "json", "txt", "xml", "env", "bak", "old"]
+                    if any(t in techs_lower for t in ("php", "wordpress", "drupal", "joomla", "laravel")):
+                        ext_parts.extend(["php", "phtml", "inc"])
+                    if any(t in techs_lower for t in ("asp", ".net", "iis")):
+                        ext_parts.extend(["asp", "aspx", "ashx", "config"])
+                    if any(t in techs_lower for t in ("java", "spring", "tomcat")):
+                        ext_parts.extend(["jsp", "jspa", "do", "action"])
+                    if any(t in techs_lower for t in ("python", "django", "flask")):
+                        ext_parts.extend(["py", "pyc"])
+                    extensions = ",".join(sorted(set(ext_parts)))
+                    ds_result = await toolkit.dirsearch.scan(base_url, extensions=extensions)
                     for entry in ds_result.get("found", []):
                         path = entry.get("path", "")
+                        status = entry.get("status", 0)
                         if path:
-                            self.result.endpoints.add(f"{base_url.rstrip('/')}{path}")
-                    self.log(f"Dirsearch found {ds_result.get('total_found', 0)} paths", "SUCCESS")
+                            full = f"{base_url.rstrip('/')}{path}"
+                            self.result.endpoints.add(full)
+                            # Flag sensitive discoveries
+                            path_lower = path.lower()
+                            if any(s in path_lower for s in (".env", ".git", ".bak", "backup", ".sql", "wp-config")):
+                                self.result.interesting_findings.append(f"SENSITIVE: {path} (HTTP {status})")
+                            elif any(s in path_lower for s in ("admin", "dashboard", "panel", "phpmyadmin")):
+                                self.result.interesting_findings.append(f"ADMIN PANEL: {path} (HTTP {status})")
+                    self.log(f"Dirsearch found {ds_result.get('total_found', 0)} paths (extensions: {extensions})", "SUCCESS")
                 except Exception:
                     pass
 
@@ -418,9 +447,10 @@ class ReconRunner:
             pass  # external_tools not available
 
         if deep and len(self.result.subdomains) <= 50:
-            tasks = [self._check_alive(sub) for sub in self.result.subdomains]
+            subs_list = sorted(self.result.subdomains)
+            tasks = [self._check_alive(sub) for sub in subs_list]
             results = await asyncio.gather(*tasks)
-            for sub, alive in zip(self.result.subdomains, results):
+            for sub, alive in zip(subs_list, results):
                 if alive:
                     self.result.alive_subdomains.add(sub)
 

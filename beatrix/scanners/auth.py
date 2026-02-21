@@ -334,13 +334,13 @@ JWTs are only base64-encoded, not encrypted - anyone can read the payload.
 
         for username in likely_real_usernames[:2]:
             try:
-                start = asyncio.get_event_loop().time()
+                start = asyncio.get_running_loop().time()
                 response = await self.client.post(
                     login_url,
                     data={"username": username, "password": "wrongpassword123"},
                     headers={"Content-Type": "application/x-www-form-urlencoded"}
                 )
-                elapsed = asyncio.get_event_loop().time() - start
+                elapsed = asyncio.get_running_loop().time() - start
                 real_responses.append({
                     'username': username, 'status': response.status_code,
                     'body': response.text[:500], 'time': elapsed,
@@ -351,13 +351,13 @@ JWTs are only base64-encoded, not encrypted - anyone can read the payload.
 
         for username in fake_usernames:
             try:
-                start = asyncio.get_event_loop().time()
+                start = asyncio.get_running_loop().time()
                 response = await self.client.post(
                     login_url,
                     data={"username": username, "password": "wrongpassword123"},
                     headers={"Content-Type": "application/x-www-form-urlencoded"}
                 )
-                elapsed = asyncio.get_event_loop().time() - start
+                elapsed = asyncio.get_running_loop().time() - start
                 fake_responses.append({
                     'username': username, 'status': response.status_code,
                     'body': response.text[:500], 'time': elapsed,
@@ -465,7 +465,7 @@ This suggests different code paths are executed based on username validity.
             return findings
 
         # Test email: use a definitely-not-registered email vs a likely-registered one
-        test_email = f"beatrix_enum_test_{int(asyncio.get_event_loop().time())}@nonexistent-domain-test.com"
+        test_email = f"beatrix_enum_test_{int(asyncio.get_running_loop().time())}@nonexistent-domain-test.com"
         likely_emails = ["admin@test.com", "test@test.com", "info@test.com"]
 
         # ---- Guest checkout enumeration (Zooplus pattern) ----
@@ -948,7 +948,7 @@ Found OpenID Connect configuration at {url}
 
             redirect_tests = [
                 # Path-based wildcard on TARGET domain (highest value — this is what worked on Zooplus)
-                (f"https://{target_domain}/beatrix-oauth-test-{int(asyncio.get_event_loop().time())}",
+                (f"https://{target_domain}/beatrix-oauth-test-{int(asyncio.get_running_loop().time())}",
                  "path_wildcard_target", Severity.HIGH),
                 # Completely different path on target
                 (f"https://{target_domain}/some/fake/path/that/does/not/exist",
@@ -1142,8 +1142,6 @@ This was the exact attack chain on Zooplus (Feb 2026).
                         },
                         headers={'Content-Type': 'application/x-www-form-urlencoded'},
                     )
-
-                    token_resp.text.lower()
 
                     # If we get "invalid_grant" (not "invalid_client" or "unauthorized_client"),
                     # the client accepts requests without client_secret = PUBLIC CLIENT
@@ -1543,14 +1541,42 @@ The 2FA verification may be bypassable using: {bypass_data}
                     try:
                         jwt_result = await jwt_tool.analyze(token)
                         if jwt_result and jwt_result.get("vulnerabilities"):
+                            # Enrich evidence with decoded header/payload
+                            base_evidence = {
+                                "token_prefix": token[:50],
+                                "header": jwt_result.get("header", {}),
+                                "payload": jwt_result.get("payload", {}),
+                            }
+
                             for vuln in jwt_result["vulnerabilities"]:
+                                vuln_evidence = {**base_evidence, "jwt_tool_result": vuln}
+                                desc_parts = [f"jwt_tool deep analysis found: {vuln.get('detail', 'Unknown vulnerability')}"]
+
+                                # Attempt role-escalation tamper PoC for exploitable vulns
+                                vtype = vuln.get("type", "").lower()
+                                if any(k in vtype for k in ("none", "confusion", "blank", "crack")):
+                                    try:
+                                        tampered = await jwt_tool.tamper(token, "role", "admin")
+                                        if tampered:
+                                            vuln_evidence["tampered_token"] = tampered
+                                            vuln_evidence["tamper_claim"] = "role → admin"
+                                            desc_parts.append(f"\nRole-escalation PoC: tampered 'role' claim to 'admin'")
+                                            desc_parts.append(f"Tampered token: {tampered[:80]}...")
+                                    except Exception:
+                                        pass
+
+                                if jwt_result.get("header"):
+                                    desc_parts.append(f"\nJWT Header: {jwt_result['header']}")
+                                if jwt_result.get("payload"):
+                                    desc_parts.append(f"JWT Payload claims: {list(jwt_result['payload'].keys()) if isinstance(jwt_result['payload'], dict) else jwt_result['payload']}")
+
                                 yield Finding(
                                     title=f"jwt_tool: {vuln.get('type', 'JWT Vulnerability')}",
-                                    description=f"jwt_tool deep analysis found: {vuln.get('detail', 'Unknown vulnerability')}",
+                                    description="\n".join(desc_parts),
                                     severity=Severity.HIGH,
                                     confidence=Confidence.FIRM,
                                     url=ctx.url,
-                                    evidence={"jwt_tool_result": vuln, "token_prefix": token[:50]},
+                                    evidence=vuln_evidence,
                                     cwe_id=345,
                                     owasp_category=self.owasp_category,
                                     scanner_module="jwt_tool",

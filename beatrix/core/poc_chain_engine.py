@@ -1336,7 +1336,7 @@ class PoCChainEngine:
             from beatrix.core.external_tools import MetasploitRunner
             msf = MetasploitRunner()
             msf_available = msf.available
-        except ImportError:
+        except Exception:
             msf = None
             msf_available = False
 
@@ -1359,14 +1359,44 @@ class PoCChainEngine:
                 if not finding_type and "injection" in chain_lower:
                     finding_type = "sqli" if "sql" in chain_lower else "rce"
 
+                rc_content = None
                 if finding_type:
                     rc_content = msf.generate_exploit_rc(
                         finding_type=finding_type,
                         target=chain.steps[0].url,
                         evidence={"chain": chain.name},
                     )
-                    if rc_content:
-                        scripts[f"{safe_name}.rc"] = rc_content
+
+                # Fallback: dynamically search Metasploit modules if no
+                # hardcoded mapping matched and msfconsole is available
+                if not rc_content and msf.available:
+                    import asyncio
+                    # Extract a useful search keyword from the chain name
+                    search_terms = [w for w in chain_lower.replace("-", " ").replace("_", " ").split()
+                                    if len(w) > 3 and w not in ("the", "for", "with", "from", "that", "this")]
+                    for term in search_terms[:2]:
+                        try:
+                            modules = asyncio.get_event_loop().run_until_complete(
+                                msf.search_modules(term)
+                            ) if not asyncio.get_event_loop().is_running() else []
+                            if modules:
+                                from urllib.parse import urlparse as _urlparse
+                                _parsed = _urlparse(chain.steps[0].url if "://" in chain.steps[0].url
+                                                    else f"https://{chain.steps[0].url}")
+                                _host = _parsed.hostname or chain.steps[0].url
+                                _port = _parsed.port or (443 if _parsed.scheme == "https" else 80)
+                                rc_content = msf.generate_resource_file(
+                                    exploit_module=modules[0],
+                                    target_host=_host,
+                                    target_port=_port,
+                                    use_ssl=_parsed.scheme == "https",
+                                )
+                                break
+                        except Exception:
+                            pass
+
+                if rc_content:
+                    scripts[f"{safe_name}.rc"] = rc_content
 
         return scripts
 
@@ -1756,7 +1786,7 @@ def generate_poc_chain_section_html(chains: List[PoCChain], validated_results: O
     total_chains = len(chains)
     validated_count = sum(1 for c in chains if validated_results.get(c.id, False))
     critical_count = sum(1 for c in chains if c.cvss_score >= 9)
-    sum(1 for c in chains if 7 <= c.cvss_score < 9)
+    high_count = sum(1 for c in chains if 7 <= c.cvss_score < 9)
     total_steps = sum(len(c.steps) for c in chains)
 
     # Generate summary stats HTML
@@ -1890,7 +1920,7 @@ def generate_poc_chain_section_html(chains: List[PoCChain], validated_results: O
                         <div class="poc-meta-item">
                             🔗 {len(chain.steps)} Steps
                         </div>
-                        {f'<div class="poc-meta-item">⏱️ CWE-{chain.cwe_ids[0]}</div>' if chain.cwe_ids else ''}
+                        {f'<div class="poc-meta-item">⏱️ {chain.cwe_ids[0]}</div>' if chain.cwe_ids else ''}
                     </div>
                 </div>
 

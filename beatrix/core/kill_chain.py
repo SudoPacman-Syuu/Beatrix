@@ -391,11 +391,11 @@ class KillChainExecutor:
             except Exception as e:
                 self._emit("scanner_error", scanner="subfinder", error=str(e))
 
-            # Amass — additional subdomain enumeration (passive)
+            # Amass — subdomain enumeration (active for deep scans, passive otherwise)
             try:
                 if toolkit.amass.available:
-                    self._emit("info", message=f"Running amass passive enum on {domain}")
-                    amass_subs = await toolkit.amass.enumerate(domain, passive=True)
+                    self._emit("info", message=f"Running amass enum on {domain}")
+                    amass_subs = await toolkit.amass.enumerate(domain, passive=False)
                     if amass_subs:
                         existing = set(context.get("subdomains", []))
                         new_subs = [s for s in amass_subs if s not in existing]
@@ -421,6 +421,9 @@ class KillChainExecutor:
                 context["js_files"] = list(crawl_result.js_files)
                 context["forms"] = crawl_result.forms
                 context["technologies"] = crawl_result.technologies
+                # Normalize to dict for consistent downstream use
+                if isinstance(context["technologies"], list):
+                    context["technologies"] = {t: "" for t in context["technologies"]}
                 context["discovered_paths"] = list(crawl_result.paths)
                 context["cookies"] = crawl_result.cookies
                 context["crawl_extra"] = {
@@ -474,10 +477,6 @@ class KillChainExecutor:
         # Feed discovered URLs back into the attack surface
         if run_deep_recon:
             try:
-                if not toolkit:
-                    from beatrix.core.external_tools import ExternalToolkit
-                    toolkit = ExternalToolkit()
-
                 discovered_urls = set(context.get("discovered_urls", []))
                 urls_with_params = set(context.get("urls_with_params", []))
 
@@ -507,7 +506,13 @@ class KillChainExecutor:
                         js_from_katana = katana_result.get("js_urls", [])
                         if js_from_katana:
                             context.setdefault("js_files", []).extend(js_from_katana)
-                        self._emit("info", message=f"Katana found {len(katana_result.get('urls', []))} URLs, {len(js_from_katana)} JS files")
+                        form_urls = katana_result.get("form_urls", [])
+                        if form_urls:
+                            for fu in form_urls:
+                                discovered_urls.add(fu)
+                                urls_with_params.add(fu)
+                            context.setdefault("form_urls", []).extend(form_urls)
+                        self._emit("info", message=f"Katana found {len(katana_result.get('urls', []))} URLs, {len(js_from_katana)} JS files, {len(form_urls)} forms")
                     except Exception as e:
                         self._emit("scanner_error", scanner="katana", error=str(e))
 
@@ -522,7 +527,17 @@ class KillChainExecutor:
                                 urls_with_params.add(u)
                         for sub in spider_result.get("subdomains", []):
                             context.setdefault("subdomains", []).append(sub)
-                        self._emit("info", message=f"Gospider found {len(spider_result.get('urls', []))} URLs")
+                        # Consume JS files and forms from gospider
+                        spider_js = spider_result.get("js_files", [])
+                        if spider_js:
+                            context.setdefault("js_files", []).extend(spider_js)
+                        spider_forms = spider_result.get("forms", [])
+                        if spider_forms:
+                            for fu in spider_forms:
+                                discovered_urls.add(fu)
+                                urls_with_params.add(fu)
+                            context.setdefault("form_urls", []).extend(spider_forms)
+                        self._emit("info", message=f"Gospider found {len(spider_result.get('urls', []))} URLs, {len(spider_js)} JS, {len(spider_forms)} forms")
                     except Exception as e:
                         self._emit("scanner_error", scanner="gospider", error=str(e))
 
@@ -549,11 +564,14 @@ class KillChainExecutor:
         # ── Step 4: Tech fingerprinting — whatweb + webanalyze ─────────────
         if run_deep_recon:
             try:
-                if not toolkit:
-                    from beatrix.core.external_tools import ExternalToolkit
-                    toolkit = ExternalToolkit()
-
-                combined_techs = dict(context.get("technologies", {})) if isinstance(context.get("technologies"), dict) else {}
+                combined_techs = {}
+                # Preserve existing technologies from crawler (List[str] → Dict[str, str])
+                existing = context.get("technologies", [])
+                if isinstance(existing, list):
+                    for tech in existing:
+                        combined_techs[tech] = ""
+                elif isinstance(existing, dict):
+                    combined_techs.update(existing)
 
                 # WhatWeb — deep tech fingerprinting (1800+ plugins)
                 if toolkit.whatweb.available:
@@ -586,23 +604,50 @@ class KillChainExecutor:
         # ── Step 5: Dirsearch — directory and file brute-force ─────────────
         if run_deep_recon:
             try:
-                if not toolkit:
-                    from beatrix.core.external_tools import ExternalToolkit
-                    toolkit = ExternalToolkit()
-
                 if toolkit.dirsearch.available:
-                    self._emit("info", message=f"Running dirsearch on {url} (directory brute-force)")
+                    # Adapt extensions based on detected technology stack
+                    techs_lower = " ".join(
+                        k.lower() for k in context.get("technologies", {})
+                    ) if isinstance(context.get("technologies"), dict) else ""
+                    ext_parts = ["html", "js", "json", "txt", "xml", "yml", "yaml", "env", "bak", "old"]
+                    if any(t in techs_lower for t in ("php", "wordpress", "drupal", "joomla", "laravel")):
+                        ext_parts.extend(["php", "phtml", "inc", "php.bak"])
+                    if any(t in techs_lower for t in ("asp", ".net", "iis")):
+                        ext_parts.extend(["asp", "aspx", "ashx", "asmx", "config"])
+                    if any(t in techs_lower for t in ("java", "spring", "tomcat", "struts")):
+                        ext_parts.extend(["jsp", "jspa", "do", "action", "java"])
+                    if any(t in techs_lower for t in ("python", "django", "flask", "fastapi")):
+                        ext_parts.extend(["py", "pyc"])
+                    if any(t in techs_lower for t in ("ruby", "rails")):
+                        ext_parts.extend(["rb", "erb"])
+                    if any(t in techs_lower for t in ("node", "express", "next")):
+                        ext_parts.extend(["mjs", "ts", "tsx", "jsx"])
+                    extensions = ",".join(sorted(set(ext_parts)))
+
+                    self._emit("info", message=f"Running dirsearch on {url} (extensions: {extensions})")
                     try:
-                        ds_result = await toolkit.dirsearch.scan(url)
+                        ds_result = await toolkit.dirsearch.scan(url, extensions=extensions)
                         ds_found = ds_result.get("found", [])
                         if ds_found:
                             base = url.rstrip("/")
+                            dirsearch_details = []
                             for entry in ds_found:
                                 path = entry.get("path", "")
+                                status = entry.get("status", 0)
+                                size = entry.get("size", 0)
+                                redirect = entry.get("redirect", "")
                                 if path:
                                     full_url = f"{base}{path}" if path.startswith("/") else f"{base}/{path}"
                                     context.setdefault("discovered_urls", []).append(full_url)
                                     context.setdefault("discovered_paths", []).append(path)
+                                    dirsearch_details.append({
+                                        "path": path,
+                                        "url": full_url,
+                                        "status": status,
+                                        "size": size,
+                                        "redirect": redirect,
+                                    })
+                            context["dirsearch_results"] = dirsearch_details
                             self._emit("info", message=f"Dirsearch found {len(ds_found)} paths")
                     except Exception as e:
                         self._emit("scanner_error", scanner="dirsearch", error=str(e))
@@ -778,8 +823,9 @@ class KillChainExecutor:
         # ── Deep exploitation — sqlmap, dalfox, commix on confirmed vulns ─────
         # Only run when tools are available AND internal scanners found issues
         try:
-            from beatrix.core.external_tools import ExternalToolkit
-            toolkit = ExternalToolkit()
+            if not toolkit:
+                from beatrix.core.external_tools import ExternalToolkit
+                toolkit = ExternalToolkit()
 
             # Collect confirmed vulnerabilities from internal scanner results
             all_findings = []
@@ -798,12 +844,30 @@ class KillChainExecutor:
                 finding_param = getattr(finding, "parameter", "") or ""
                 evidence = getattr(finding, "evidence", {}) or {}
 
+                # Extract HTTP method + POST data from finding's request string
+                request_str = getattr(finding, "request", "") or ""
+                finding_method = "GET"
+                finding_data = None
+                if request_str:
+                    first_line = request_str.split("\n", 1)[0].strip()
+                    if first_line.startswith("POST"):
+                        finding_method = "POST"
+                        # POST data often follows double-newline in request dump
+                        if "\n\n" in request_str:
+                            finding_data = request_str.split("\n\n", 1)[1].strip()
+
                 if "sql" in ftitle_lower or "sqli" in ftitle_lower:
-                    sqli_targets.append({"url": finding_url, "param": finding_param})
+                    sqli_targets.append({
+                        "url": finding_url, "param": finding_param,
+                        "method": finding_method, "data": finding_data,
+                    })
                 if "xss" in ftitle_lower or "cross-site scripting" in ftitle_lower:
                     xss_targets.append({"url": finding_url, "param": finding_param})
                 if "command" in ftitle_lower or "cmdi" in ftitle_lower or "os_command" in ftitle_lower:
-                    cmdi_targets.append({"url": finding_url, "param": finding_param})
+                    cmdi_targets.append({
+                        "url": finding_url, "param": finding_param,
+                        "data": finding_data,
+                    })
                 if "jwt" in ftitle_lower:
                     token = evidence.get("token", "") if isinstance(evidence, dict) else ""
                     if token:
@@ -817,6 +881,8 @@ class KillChainExecutor:
                         sqlmap_result = await toolkit.sqlmap.exploit(
                             url=target_info["url"],
                             param=target_info.get("param"),
+                            method=target_info.get("method", "GET"),
+                            data=target_info.get("data"),
                             level=3,
                             risk=2,
                         )
@@ -878,6 +944,7 @@ class KillChainExecutor:
                         commix_result = await toolkit.commix.exploit(
                             url=target_info["url"],
                             param=target_info.get("param"),
+                            data=target_info.get("data"),
                         )
                         if commix_result.get("vulnerable"):
                             from beatrix.core.types import Finding, Severity
@@ -906,15 +973,44 @@ class KillChainExecutor:
                         if jwt_result.get("vulnerabilities"):
                             from beatrix.core.types import Finding, Severity
                             vuln_types = [v["type"] for v in jwt_result["vulnerabilities"]]
+
+                            # Include decoded header/payload in evidence
+                            enriched_evidence = dict(jwt_result)
+                            enriched_evidence["token_prefix"] = token[:50]
+
+                            # Attempt role-escalation tamper PoC for algorithm/claim vulns
+                            tampered_token = None
+                            for vuln in jwt_result["vulnerabilities"]:
+                                vtype = vuln.get("type", "").lower()
+                                if any(k in vtype for k in ("none", "confusion", "blank", "crack")):
+                                    try:
+                                        tampered_token = await toolkit.jwt_tool.tamper(
+                                            token, "role", "admin"
+                                        )
+                                        if tampered_token:
+                                            enriched_evidence["tampered_token"] = tampered_token
+                                            enriched_evidence["tamper_claim"] = "role → admin"
+                                    except Exception:
+                                        pass
+                                    break
+
+                            desc_parts = [
+                                "jwt_tool discovered JWT vulnerabilities:",
+                                *[f"  - {v['type']}: {v['detail']}" for v in jwt_result["vulnerabilities"]],
+                            ]
+                            if jwt_result.get("header"):
+                                desc_parts.append(f"\nJWT Header: {jwt_result['header']}")
+                            if jwt_result.get("payload"):
+                                desc_parts.append(f"JWT Payload: {jwt_result['payload']}")
+                            if tampered_token:
+                                desc_parts.append(f"\nRole-escalation PoC token: {tampered_token[:80]}...")
+
                             results.append({"findings": [Finding(
                                 severity=Severity.HIGH,
                                 url=url,
                                 title=f"jwt_tool found JWT vulnerabilities: {', '.join(vuln_types)}",
-                                description=(
-                                    f"jwt_tool discovered JWT vulnerabilities:\n" +
-                                    "\n".join(f"  - {v['type']}: {v['detail']}" for v in jwt_result["vulnerabilities"])
-                                ),
-                                evidence=jwt_result,
+                                description="\n".join(desc_parts),
+                                evidence=enriched_evidence,
                                 scanner_module="jwt_tool",
                             )], "assets": [], "context": {}, "modules": ["jwt_tool"], "requests": 0})
                             self._emit("info", message=f"jwt_tool found {len(jwt_result['vulnerabilities'])} JWT vulnerabilities")

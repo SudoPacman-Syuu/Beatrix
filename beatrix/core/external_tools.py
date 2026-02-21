@@ -23,9 +23,8 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
-
 
 # =============================================================================
 # BASE CLASS
@@ -943,6 +942,7 @@ class MetasploitRunner(ExternalTool):
         exploit_module: str,
         target_host: str,
         target_port: int = 443,
+        use_ssl: bool = True,
         payload: str = "",
         options: Optional[Dict[str, str]] = None,
     ) -> str:
@@ -960,12 +960,12 @@ class MetasploitRunner(ExternalTool):
             Resource file content as string
         """
         lines = [
-            f"# Beatrix Auto-Generated Metasploit Resource File",
+            "# Beatrix Auto-Generated Metasploit Resource File",
             f"# Target: {target_host}:{target_port}",
             f"# Module: {exploit_module}",
-            f"#",
-            f"# Usage: msfconsole -r <this_file>.rc",
-            f"",
+            "#",
+            "# Usage: msfconsole -r <this_file>.rc",
+            "",
             f"use {exploit_module}",
             f"set RHOSTS {target_host}",
             f"set RPORT {target_port}",
@@ -978,8 +978,10 @@ class MetasploitRunner(ExternalTool):
             for key, value in options.items():
                 lines.append(f"set {key} {value}")
 
+        if use_ssl:
+            lines.append("set SSL true")
+
         lines.extend([
-            "set SSL true" if target_port == 443 else "",
             "",
             "# Validate settings",
             "show options",
@@ -990,7 +992,7 @@ class MetasploitRunner(ExternalTool):
             "",
         ])
 
-        return "\n".join(line for line in lines if line is not None)
+        return "\n".join(lines)
 
     def generate_exploit_rc(self, finding_type: str, target: str, evidence: Dict) -> Optional[str]:
         """
@@ -1009,6 +1011,7 @@ class MetasploitRunner(ExternalTool):
         parsed = urlparse(target if "://" in target else f"https://{target}")
         host = parsed.hostname or target
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        use_ssl = parsed.scheme == "https"
 
         module_map = {
             "sqli": [
@@ -1043,6 +1046,7 @@ class MetasploitRunner(ExternalTool):
             exploit_module=module_path,
             target_host=host,
             target_port=port,
+            use_ssl=use_ssl,
             options=extra_opts,
         )
 
