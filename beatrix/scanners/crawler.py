@@ -161,6 +161,12 @@ class TargetCrawler:
                 # Fingerprint technologies
                 self._fingerprint_tech(response, result)
 
+                # Enrich with external tools (whatweb, webanalyze) — non-blocking
+                try:
+                    await self._enrich_tech_fingerprint(result.resolved_url or target, result)
+                except Exception:
+                    pass  # External tools are optional
+
                 # Build soft-404 signature
                 await self._build_soft_404(client, result)
 
@@ -389,6 +395,45 @@ class TargetCrawler:
 
         # Deduplicate
         result.technologies = list(set(result.technologies))
+
+    async def _enrich_tech_fingerprint(self, url: str, result: 'CrawlResult'):
+        """
+        Enrich technology fingerprints using external tools (whatweb, webanalyze).
+        Called after the initial crawl to add deeper fingerprinting.
+        """
+        try:
+            from beatrix.core.external_tools import WhatwebRunner, WebanalyzeRunner
+
+            existing = set(result.technologies)
+
+            # WhatWeb — 1800+ plugin fingerprinting
+            whatweb = WhatwebRunner()
+            if whatweb.available:
+                try:
+                    techs = await whatweb.fingerprint(url)
+                    for name, version in techs.items():
+                        entry = f"{name} {version}".strip() if version else name
+                        if entry not in existing:
+                            result.technologies.append(entry)
+                            existing.add(entry)
+                except Exception:
+                    pass
+
+            # Webanalyze — Wappalyzer fingerprint database
+            webanalyze = WebanalyzeRunner()
+            if webanalyze.available:
+                try:
+                    techs = await webanalyze.fingerprint(url)
+                    for name, version in techs.items():
+                        entry = f"{name} {version}".strip() if version else name
+                        if entry not in existing:
+                            result.technologies.append(entry)
+                            existing.add(entry)
+                except Exception:
+                    pass
+
+        except ImportError:
+            pass  # external_tools module not available
 
     async def _build_soft_404(self, client: httpx.AsyncClient, result: CrawlResult):
         """Build a soft-404 signature to filter out false endpoint discoveries"""

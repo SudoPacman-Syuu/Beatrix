@@ -367,12 +367,16 @@ class KillChainExecutor:
         url = target if "://" in target else f"https://{target}"
         domain = url.split("://", 1)[1].split("/")[0].split(":")[0]
 
-        # ── Step 0: Subfinder — subdomain enumeration (optional) ──────────────
+        # ── Step 0: Subdomain enumeration — subfinder + amass (optional) ──────
         # Only run for deep scans (not quick preset — too slow)
         requested_modules = context.get("modules", [])
         run_deep_recon = not requested_modules  # empty = full scan
 
         if run_deep_recon:
+            from beatrix.core.external_tools import ExternalToolkit
+            toolkit = ExternalToolkit()
+
+            # Subfinder
             try:
                 from beatrix.core.subfinder import SubfinderRunner
                 subfinder = SubfinderRunner()
@@ -386,6 +390,19 @@ class KillChainExecutor:
                         self._emit("info", message="Subfinder: no subdomains found")
             except Exception as e:
                 self._emit("scanner_error", scanner="subfinder", error=str(e))
+
+            # Amass — additional subdomain enumeration (passive)
+            try:
+                if toolkit.amass.available:
+                    self._emit("info", message=f"Running amass passive enum on {domain}")
+                    amass_subs = await toolkit.amass.enumerate(domain, passive=True)
+                    if amass_subs:
+                        existing = set(context.get("subdomains", []))
+                        new_subs = [s for s in amass_subs if s not in existing]
+                        context.setdefault("subdomains", []).extend(new_subs)
+                        self._emit("info", message=f"Amass found {len(new_subs)} new subdomains ({len(amass_subs)} total)")
+            except Exception as e:
+                self._emit("scanner_error", scanner="amass", error=str(e))
 
         # ── Step 1: Crawl the target ──────────────────────────────────────────
         crawler = self.engine.modules.get("crawl")
@@ -453,14 +470,156 @@ class KillChainExecutor:
             except Exception as e:
                 self._emit("scanner_error", scanner="nmap", error=str(e))
 
-        # ── Steps 3-6: Run recon scanners concurrently ─────────────────────
+        # ── Step 3: External crawlers — katana, gospider, hakrawler, gau ──
+        # Feed discovered URLs back into the attack surface
+        if run_deep_recon:
+            try:
+                if not toolkit:
+                    from beatrix.core.external_tools import ExternalToolkit
+                    toolkit = ExternalToolkit()
+
+                discovered_urls = set(context.get("discovered_urls", []))
+                urls_with_params = set(context.get("urls_with_params", []))
+
+                # GAU — historical URLs from Wayback Machine, OTX, Common Crawl
+                if toolkit.gau.available:
+                    self._emit("info", message=f"Running gau on {domain} (historical URL discovery)")
+                    try:
+                        gau_urls = await toolkit.gau.fetch_urls(domain, subs=True)
+                        if gau_urls:
+                            for u in gau_urls:
+                                discovered_urls.add(u)
+                                if "?" in u:
+                                    urls_with_params.add(u)
+                            self._emit("info", message=f"GAU found {len(gau_urls)} historical URLs")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="gau", error=str(e))
+
+                # Katana — deep JS crawling and endpoint extraction
+                if toolkit.katana.available:
+                    self._emit("info", message=f"Running katana on {url} (deep JS crawling)")
+                    try:
+                        katana_result = await toolkit.katana.crawl(url, depth=3, js_crawl=True)
+                        for u in katana_result.get("urls", []):
+                            discovered_urls.add(u)
+                            if "?" in u:
+                                urls_with_params.add(u)
+                        js_from_katana = katana_result.get("js_urls", [])
+                        if js_from_katana:
+                            context.setdefault("js_files", []).extend(js_from_katana)
+                        self._emit("info", message=f"Katana found {len(katana_result.get('urls', []))} URLs, {len(js_from_katana)} JS files")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="katana", error=str(e))
+
+                # Gospider — web spidering
+                if toolkit.gospider.available:
+                    self._emit("info", message=f"Running gospider on {url}")
+                    try:
+                        spider_result = await toolkit.gospider.spider(url, depth=2)
+                        for u in spider_result.get("urls", []):
+                            discovered_urls.add(u)
+                            if "?" in u:
+                                urls_with_params.add(u)
+                        for sub in spider_result.get("subdomains", []):
+                            context.setdefault("subdomains", []).append(sub)
+                        self._emit("info", message=f"Gospider found {len(spider_result.get('urls', []))} URLs")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="gospider", error=str(e))
+
+                # Hakrawler — endpoint crawler
+                if toolkit.hakrawler.available:
+                    self._emit("info", message=f"Running hakrawler on {url}")
+                    try:
+                        hak_urls = await toolkit.hakrawler.crawl(url, depth=2)
+                        for u in hak_urls:
+                            discovered_urls.add(u)
+                            if "?" in u:
+                                urls_with_params.add(u)
+                        self._emit("info", message=f"Hakrawler found {len(hak_urls)} URLs")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="hakrawler", error=str(e))
+
+                # Merge all discovered URLs back into context
+                context["discovered_urls"] = sorted(discovered_urls)
+                context["urls_with_params"] = sorted(urls_with_params)
+
+            except Exception as e:
+                self._emit("scanner_error", scanner="external_crawlers", error=str(e))
+
+        # ── Step 4: Tech fingerprinting — whatweb + webanalyze ─────────────
+        if run_deep_recon:
+            try:
+                if not toolkit:
+                    from beatrix.core.external_tools import ExternalToolkit
+                    toolkit = ExternalToolkit()
+
+                combined_techs = dict(context.get("technologies", {})) if isinstance(context.get("technologies"), dict) else {}
+
+                # WhatWeb — deep tech fingerprinting (1800+ plugins)
+                if toolkit.whatweb.available:
+                    self._emit("info", message=f"Running whatweb on {url} (tech fingerprinting)")
+                    try:
+                        whatweb_techs = await toolkit.whatweb.fingerprint(url)
+                        if whatweb_techs:
+                            combined_techs.update(whatweb_techs)
+                            self._emit("info", message=f"WhatWeb identified {len(whatweb_techs)} technologies")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="whatweb", error=str(e))
+
+                # Webanalyze — Wappalyzer fingerprint database
+                if toolkit.webanalyze.available:
+                    self._emit("info", message=f"Running webanalyze on {url} (Wappalyzer fingerprinting)")
+                    try:
+                        wa_techs = await toolkit.webanalyze.fingerprint(url)
+                        if wa_techs:
+                            combined_techs.update(wa_techs)
+                            self._emit("info", message=f"Webanalyze identified {len(wa_techs)} technologies")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="webanalyze", error=str(e))
+
+                if combined_techs:
+                    context["technologies"] = combined_techs
+
+            except Exception as e:
+                self._emit("scanner_error", scanner="tech_fingerprint", error=str(e))
+
+        # ── Step 5: Dirsearch — directory and file brute-force ─────────────
+        if run_deep_recon:
+            try:
+                if not toolkit:
+                    from beatrix.core.external_tools import ExternalToolkit
+                    toolkit = ExternalToolkit()
+
+                if toolkit.dirsearch.available:
+                    self._emit("info", message=f"Running dirsearch on {url} (directory brute-force)")
+                    try:
+                        ds_result = await toolkit.dirsearch.scan(url)
+                        ds_found = ds_result.get("found", [])
+                        if ds_found:
+                            base = url.rstrip("/")
+                            for entry in ds_found:
+                                path = entry.get("path", "")
+                                if path:
+                                    full_url = f"{base}{path}" if path.startswith("/") else f"{base}/{path}"
+                                    context.setdefault("discovered_urls", []).append(full_url)
+                                    context.setdefault("discovered_paths", []).append(path)
+                            self._emit("info", message=f"Dirsearch found {len(ds_found)} paths")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="dirsearch", error=str(e))
+            except Exception as e:
+                self._emit("scanner_error", scanner="dirsearch", error=str(e))
+
+        # ── Step 6-9: Run recon scanners concurrently ─────────────────────
         # These scanners are independent — run them in parallel for speed
         import asyncio
 
         js_scan_ctx = None
+        js_files = context.get("js_files", [])
         if crawl_result and crawl_result.js_files:
+            js_files = list(set(js_files + list(crawl_result.js_files)))
+        if js_files:
             js_scan_ctx = ScanContext.from_url(url)
-            js_scan_ctx.extra = {"js_files": list(crawl_result.js_files)}
+            js_scan_ctx.extra = {"js_files": js_files}
 
         scanner_tasks = [
             self._run_scanner("endpoint_prober", url, context),
@@ -479,13 +638,16 @@ class KillChainExecutor:
         merged = await self._merge_scanner_results(results)
 
         # Add discovered assets to the merged result
+        all_discovered = sorted(set(context.get("discovered_urls", [])))
         if crawl_result:
-            merged["assets"] = list(crawl_result.urls)[:100]
-            merged["context"] = {
-                "endpoints": list(crawl_result.urls),
-                "parameters": list(crawl_result.parameters.keys()),
-                "technologies": crawl_result.technologies,
-            }
+            all_discovered = sorted(set(all_discovered + list(crawl_result.urls)))
+
+        merged["assets"] = all_discovered[:200]
+        merged["context"] = {
+            "endpoints": all_discovered,
+            "parameters": list(crawl_result.parameters.keys()) if crawl_result else [],
+            "technologies": context.get("technologies", {}),
+        }
 
         return merged
 
@@ -612,6 +774,155 @@ class KillChainExecutor:
             results.append(await self._run_scanner("nuclei", url, context))
         else:
             self._emit("info", message="Nuclei not available — install: go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest")
+
+        # ── Deep exploitation — sqlmap, dalfox, commix on confirmed vulns ─────
+        # Only run when tools are available AND internal scanners found issues
+        try:
+            from beatrix.core.external_tools import ExternalToolkit
+            toolkit = ExternalToolkit()
+
+            # Collect confirmed vulnerabilities from internal scanner results
+            all_findings = []
+            for r in results:
+                all_findings.extend(r.get("findings", []))
+
+            sqli_targets = []
+            xss_targets = []
+            cmdi_targets = []
+            jwt_tokens = []
+
+            for finding in all_findings:
+                ftitle = getattr(finding, "title", "") or ""
+                ftitle_lower = ftitle.lower() if isinstance(ftitle, str) else ""
+                finding_url = getattr(finding, "url", "") or url
+                finding_param = getattr(finding, "parameter", "") or ""
+                evidence = getattr(finding, "evidence", {}) or {}
+
+                if "sql" in ftitle_lower or "sqli" in ftitle_lower:
+                    sqli_targets.append({"url": finding_url, "param": finding_param})
+                if "xss" in ftitle_lower or "cross-site scripting" in ftitle_lower:
+                    xss_targets.append({"url": finding_url, "param": finding_param})
+                if "command" in ftitle_lower or "cmdi" in ftitle_lower or "os_command" in ftitle_lower:
+                    cmdi_targets.append({"url": finding_url, "param": finding_param})
+                if "jwt" in ftitle_lower:
+                    token = evidence.get("token", "") if isinstance(evidence, dict) else ""
+                    if token:
+                        jwt_tokens.append(token)
+
+            # sqlmap — deep SQLi exploitation on confirmed injection points
+            if toolkit.sqlmap.available and sqli_targets:
+                self._emit("info", message=f"Running sqlmap on {len(sqli_targets)} confirmed SQLi targets")
+                for target_info in sqli_targets[:5]:  # Limit to avoid runaway
+                    try:
+                        sqlmap_result = await toolkit.sqlmap.exploit(
+                            url=target_info["url"],
+                            param=target_info.get("param"),
+                            level=3,
+                            risk=2,
+                        )
+                        if sqlmap_result.get("vulnerable"):
+                            from beatrix.core.types import Finding, Severity
+                            results.append({"findings": [Finding(
+                                severity=Severity.CRITICAL,
+                                url=target_info["url"],
+                                title=f"SQLmap confirmed SQLi — DBMS: {sqlmap_result.get('dbms', 'unknown')}",
+                                description=(
+                                    f"sqlmap confirmed SQL injection.\n"
+                                    f"DBMS: {sqlmap_result.get('dbms')}\n"
+                                    f"Current DB: {sqlmap_result.get('current_db')}\n"
+                                    f"Current User: {sqlmap_result.get('current_user')}\n"
+                                    f"DBA: {sqlmap_result.get('is_dba')}\n"
+                                    f"Databases: {', '.join(sqlmap_result.get('databases', []))}\n"
+                                    f"Injection type: {sqlmap_result.get('injection_type')}"
+                                ),
+                                evidence=sqlmap_result,
+                                scanner_module="sqlmap",
+                            )], "assets": [], "context": {}, "modules": ["sqlmap"], "requests": 0})
+                            self._emit("info", message=f"sqlmap CONFIRMED SQLi on {target_info['url']} (DBMS: {sqlmap_result.get('dbms')})")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="sqlmap", error=str(e))
+
+            # dalfox — XSS validation and WAF bypass on confirmed XSS
+            if toolkit.dalfox.available and xss_targets:
+                self._emit("info", message=f"Running dalfox on {len(xss_targets)} confirmed XSS targets")
+                for target_info in xss_targets[:10]:
+                    try:
+                        dalfox_findings = await toolkit.dalfox.scan(
+                            url=target_info["url"],
+                            param=target_info.get("param"),
+                        )
+                        for df in dalfox_findings:
+                            from beatrix.core.types import Finding, Severity
+                            results.append({"findings": [Finding(
+                                severity=Severity.HIGH,
+                                url=df.get("url", target_info["url"]),
+                                title=f"Dalfox confirmed XSS — {df.get('type', 'reflected')}",
+                                description=(
+                                    f"Dalfox confirmed XSS vulnerability.\n"
+                                    f"Type: {df.get('type')}\n"
+                                    f"Payload: {df.get('payload')}\n"
+                                    f"Evidence: {df.get('evidence')}"
+                                ),
+                                evidence=df,
+                                scanner_module="dalfox",
+                            )], "assets": [], "context": {}, "modules": ["dalfox"], "requests": 0})
+                            self._emit("info", message=f"dalfox CONFIRMED XSS on {target_info['url']}")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="dalfox", error=str(e))
+
+            # commix — command injection exploitation on confirmed CMDi
+            if toolkit.commix.available and cmdi_targets:
+                self._emit("info", message=f"Running commix on {len(cmdi_targets)} confirmed CMDi targets")
+                for target_info in cmdi_targets[:5]:
+                    try:
+                        commix_result = await toolkit.commix.exploit(
+                            url=target_info["url"],
+                            param=target_info.get("param"),
+                        )
+                        if commix_result.get("vulnerable"):
+                            from beatrix.core.types import Finding, Severity
+                            results.append({"findings": [Finding(
+                                severity=Severity.CRITICAL,
+                                url=target_info["url"],
+                                title=f"Commix confirmed command injection — OS: {commix_result.get('os', 'unknown')}",
+                                description=(
+                                    f"Commix confirmed OS command injection.\n"
+                                    f"Technique: {commix_result.get('technique')}\n"
+                                    f"OS: {commix_result.get('os')}"
+                                ),
+                                evidence=commix_result,
+                                scanner_module="commix",
+                            )], "assets": [], "context": {}, "modules": ["commix"], "requests": 0})
+                            self._emit("info", message=f"commix CONFIRMED CMDi on {target_info['url']}")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="commix", error=str(e))
+
+            # jwt_tool — deep JWT analysis on discovered tokens
+            if toolkit.jwt_tool.available and jwt_tokens:
+                self._emit("info", message=f"Running jwt_tool on {len(jwt_tokens)} JWT tokens")
+                for token in jwt_tokens[:5]:
+                    try:
+                        jwt_result = await toolkit.jwt_tool.analyze(token)
+                        if jwt_result.get("vulnerabilities"):
+                            from beatrix.core.types import Finding, Severity
+                            vuln_types = [v["type"] for v in jwt_result["vulnerabilities"]]
+                            results.append({"findings": [Finding(
+                                severity=Severity.HIGH,
+                                url=url,
+                                title=f"jwt_tool found JWT vulnerabilities: {', '.join(vuln_types)}",
+                                description=(
+                                    f"jwt_tool discovered JWT vulnerabilities:\n" +
+                                    "\n".join(f"  - {v['type']}: {v['detail']}" for v in jwt_result["vulnerabilities"])
+                                ),
+                                evidence=jwt_result,
+                                scanner_module="jwt_tool",
+                            )], "assets": [], "context": {}, "modules": ["jwt_tool"], "requests": 0})
+                            self._emit("info", message=f"jwt_tool found {len(jwt_result['vulnerabilities'])} JWT vulnerabilities")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner="jwt_tool", error=str(e))
+
+        except Exception as e:
+            self._emit("scanner_error", scanner="deep_exploitation", error=str(e))
 
         return await self._merge_scanner_results(results)
 

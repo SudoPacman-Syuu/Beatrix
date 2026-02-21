@@ -1191,7 +1191,7 @@ ATTACK_PHASES = [
             "Identify potential vulnerabilities from version info",
             "Map application structure and functionality",
         ],
-        tools=["subfinder", "amass", "httpx", "whatweb", "wappalyzer", "nmap"],
+        tools=["subfinder", "amass", "httpx", "whatweb", "webanalyze", "nmap"],
         output_artifacts=["subdomains.txt", "live_hosts.json", "technologies.json", "endpoints.txt"]
     ),
     AttackPhase(

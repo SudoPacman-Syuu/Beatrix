@@ -862,7 +862,7 @@ def arsenal(ctx):
         ("playwright", "Browser automation for DOM XSS and WAF evasion"),
         ("amass", "Advanced subdomain enumeration and attack surface mapping"),
         ("whatweb", "Technology fingerprinting and version detection"),
-        ("wappalyzer", "Technology fingerprinting and version detection"),
+        ("webanalyze", "Technology fingerprinting and version detection (Wappalyzer engine)"),
         ("gospider", "Fast web spidering and URL discovery"),
         ("hakrawler", "Web crawler for discovering endpoints and assets"),
         ("gau", "Fetch known URLs from AlienVault's Open Threat Exchange, the Wayback Machine, and Common Crawl"),
@@ -1006,7 +1006,7 @@ def setup_cmd(ctx, check):
     \b
     Automatically installs all 21 external dependencies:
     nuclei, httpx, subfinder, ffuf, katana, sqlmap, nmap,
-    adb, mitmproxy, playwright, amass, whatweb, wappalyzer,
+    adb, mitmproxy, playwright, amass, whatweb, webanalyze,
     gospider, hakrawler, gau, dirsearch, dalfox, commix,
     jwt_tool, and metasploit.
 
@@ -1015,7 +1015,7 @@ def setup_cmd(ctx, check):
       • System packages (apt/dnf/pacman) for nmap, sqlmap, etc.
       • Go install for nuclei, subfinder, httpx, ffuf, etc.
       • pip for mitmproxy, playwright, dirsearch, commix
-      • npm for wappalyzer
+      • Go install for webanalyze
       • Official installer for metasploit
 
     \b
@@ -1029,7 +1029,7 @@ def setup_cmd(ctx, check):
     tools = [
         "nuclei", "httpx", "subfinder", "ffuf", "katana", "sqlmap",
         "nmap", "adb", "mitmproxy", "playwright", "amass", "whatweb",
-        "wappalyzer", "gospider", "hakrawler", "gau", "dirsearch",
+        "webanalyze", "gospider", "hakrawler", "gau", "dirsearch",
         "dalfox", "commix", "jwt_tool", "msfconsole",
     ]
 

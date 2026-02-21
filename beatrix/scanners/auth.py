@@ -314,8 +314,6 @@ JWTs are only base64-encoded, not encrypted - anyone can read the payload.
 
         return findings
 
-    # =========== USERNAME ENUMERATION ===========
-
     async def test_username_enumeration(self, login_url: str) -> List[Finding]:
         """Test for username enumeration via error messages or timing"""
         findings = []
@@ -1521,6 +1519,46 @@ The 2FA verification may be bypassable using: {bypass_data}
                     for finding in self.analyze_jwt(match.group()):
                         finding.url = ctx.url
                         yield finding
+
+        # ── jwt_tool deep analysis — external tool (optional) ─────────────
+        # Extract all JWT tokens found so far and run jwt_tool for deeper analysis
+        try:
+            from beatrix.core.external_tools import JwtToolRunner
+            jwt_tool = JwtToolRunner()
+            if jwt_tool.available and ctx.response:
+                jwt_pattern_deep = r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'
+                tokens_checked = set()
+                # Collect tokens from all response locations
+                all_text = ""
+                for _, hv in ctx.response.headers.items():
+                    all_text += hv + "\n"
+                if ctx.response.body:
+                    all_text += ctx.response.body.decode('utf-8', errors='ignore') if isinstance(ctx.response.body, bytes) else str(ctx.response.body)
+
+                for match in re.finditer(jwt_pattern_deep, all_text):
+                    token = match.group()
+                    if token in tokens_checked:
+                        continue
+                    tokens_checked.add(token)
+                    try:
+                        jwt_result = await jwt_tool.analyze(token)
+                        if jwt_result and jwt_result.get("vulnerabilities"):
+                            for vuln in jwt_result["vulnerabilities"]:
+                                yield Finding(
+                                    title=f"jwt_tool: {vuln.get('type', 'JWT Vulnerability')}",
+                                    description=f"jwt_tool deep analysis found: {vuln.get('detail', 'Unknown vulnerability')}",
+                                    severity=Severity.HIGH,
+                                    confidence=Confidence.FIRM,
+                                    url=ctx.url,
+                                    evidence={"jwt_tool_result": vuln, "token_prefix": token[:50]},
+                                    cwe_id=345,
+                                    owasp_category=self.owasp_category,
+                                    scanner_module="jwt_tool",
+                                )
+                    except Exception:
+                        pass  # jwt_tool failed on this token — internal checks still ran
+        except ImportError:
+            pass  # external_tools not available
 
         # Test auth endpoints
         for findings in [

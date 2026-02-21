@@ -1328,8 +1328,17 @@ class PoCChainEngine:
         return "\n".join(lines)
 
     def export_all_scripts(self) -> Dict[str, str]:
-        """Export all generated scripts"""
+        """Export all generated scripts, including Metasploit resource files"""
         scripts = {}
+
+        # Import msfconsole integration for .rc file generation
+        try:
+            from beatrix.core.external_tools import MetasploitRunner
+            msf = MetasploitRunner()
+            msf_available = msf.available
+        except ImportError:
+            msf = None
+            msf_available = False
 
         for chain in self.chains:
             safe_name = re.sub(r'[^a-zA-Z0-9]', '_', chain.name.lower())
@@ -1337,6 +1346,27 @@ class PoCChainEngine:
             scripts[f"{safe_name}.sh"] = chain.full_curl_script
             scripts[f"{safe_name}.yaml"] = chain.nuclei_template
             scripts[f"{safe_name}.md"] = chain.markdown_report
+
+            # Generate Metasploit .rc resource file if msfconsole is available
+            if msf_available and msf and chain.steps:
+                # Determine finding type from chain name
+                chain_lower = chain.name.lower()
+                finding_type = None
+                for ftype in ["sqli", "rce", "ssti", "deserialization", "xxe", "file_upload"]:
+                    if ftype in chain_lower:
+                        finding_type = ftype
+                        break
+                if not finding_type and "injection" in chain_lower:
+                    finding_type = "sqli" if "sql" in chain_lower else "rce"
+
+                if finding_type:
+                    rc_content = msf.generate_exploit_rc(
+                        finding_type=finding_type,
+                        target=chain.steps[0].url,
+                        evidence={"chain": chain.name},
+                    )
+                    if rc_content:
+                        scripts[f"{safe_name}.rc"] = rc_content
 
         return scripts
 

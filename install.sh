@@ -475,25 +475,20 @@ WRAPPER
         fi
     fi
 
-    # ── 5. Node.js tools ─────────────────────────────────
+    # ── 5. webanalyze (Go-based Wappalyzer) ──────────────
     echo ""
-    echo -e "${BOLD}[5/6] Node.js tools...${RESET}"
+    echo -e "${BOLD}[5/6] webanalyze (tech fingerprinting)...${RESET}"
 
-    if command_exists wappalyzer; then
-        success "wappalyzer (already installed)"
+    if command_exists webanalyze; then
+        success "webanalyze (already installed)"
         ((skipped++))
     else
-        if ensure_node; then
-            info "Installing wappalyzer..."
-            if sudo npm install -g wappalyzer &>/dev/null || npm install -g wappalyzer &>/dev/null; then
-                success "wappalyzer"
-                ((installed++))
-            else
-                warn "Failed to install wappalyzer"
-                ((failed++))
-            fi
+        info "Installing webanalyze..."
+        if go install -v github.com/rverton/webanalyze/cmd/webanalyze@latest &>/dev/null; then
+            success "webanalyze"
+            ((installed++))
         else
-            warn "Skipping wappalyzer (Node.js not available)"
+            warn "Failed to install webanalyze"
             ((failed++))
         fi
     fi

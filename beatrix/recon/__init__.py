@@ -122,6 +122,28 @@ class ReconRunner:
                 self.result.subdomains.update(r)
         self.result.subdomains.add(self.domain)
         self.result.subdomains.add(f"www.{self.domain}")
+
+        # ── External tools: subfinder + amass ─────────────────────────────
+        try:
+            from beatrix.core.subfinder import SubfinderRunner
+            subfinder = SubfinderRunner()
+            if subfinder.available:
+                subs = await subfinder.enumerate(self.domain)
+                self.result.subdomains.update(subs)
+                self.log(f"Subfinder found {len(subs)} subdomains", "SUCCESS")
+        except Exception:
+            pass
+
+        try:
+            from beatrix.core.external_tools import AmassRunner
+            amass = AmassRunner()
+            if amass.available:
+                subs = await amass.enumerate(self.domain, passive=True)
+                self.result.subdomains.update(subs)
+                self.log(f"Amass found {len(subs)} subdomains", "SUCCESS")
+        except Exception:
+            pass
+
         self.log(f"Total unique subdomains: {len(self.result.subdomains)}", "SUCCESS")
         return self.result.subdomains
 
@@ -311,6 +333,89 @@ class ReconRunner:
         await self.find_js_files(base_url)
         await self.analyze_js_files()
         await self.check_common_endpoints(base_url)
+
+        # ── External tools: gau, katana, gospider, hakrawler ──────────────
+        try:
+            from beatrix.core.external_tools import ExternalToolkit
+            toolkit = ExternalToolkit()
+
+            # GAU — historical URL discovery
+            if toolkit.gau.available:
+                try:
+                    gau_urls = await toolkit.gau.fetch_urls(self.domain, subs=True)
+                    for u in gau_urls:
+                        self.result.endpoints.add(u)
+                    self.log(f"GAU found {len(gau_urls)} historical URLs", "SUCCESS")
+                except Exception:
+                    pass
+
+            # Katana — JS endpoint extraction
+            if toolkit.katana.available:
+                try:
+                    katana_result = await toolkit.katana.crawl(base_url, depth=2)
+                    for u in katana_result.get("urls", []):
+                        self.result.endpoints.add(u)
+                    for js in katana_result.get("js_urls", []):
+                        self.result.js_files.add(js)
+                    self.log(f"Katana found {len(katana_result.get('urls', []))} URLs", "SUCCESS")
+                except Exception:
+                    pass
+
+            # Gospider — web spidering
+            if toolkit.gospider.available:
+                try:
+                    spider_result = await toolkit.gospider.spider(base_url, depth=2)
+                    for u in spider_result.get("urls", []):
+                        self.result.endpoints.add(u)
+                    for sub in spider_result.get("subdomains", []):
+                        self.result.subdomains.add(sub)
+                    self.log(f"Gospider found {len(spider_result.get('urls', []))} URLs", "SUCCESS")
+                except Exception:
+                    pass
+
+            # Hakrawler — endpoint crawler
+            if toolkit.hakrawler.available:
+                try:
+                    hak_urls = await toolkit.hakrawler.crawl(base_url, depth=2)
+                    for u in hak_urls:
+                        self.result.endpoints.add(u)
+                    self.log(f"Hakrawler found {len(hak_urls)} URLs", "SUCCESS")
+                except Exception:
+                    pass
+
+            # WhatWeb + Webanalyze — deeper tech fingerprinting
+            if toolkit.whatweb.available:
+                try:
+                    techs = await toolkit.whatweb.fingerprint(base_url)
+                    for name, version in techs.items():
+                        self.result.technologies[name] = version
+                    self.log(f"WhatWeb identified {len(techs)} technologies", "SUCCESS")
+                except Exception:
+                    pass
+
+            if toolkit.webanalyze.available:
+                try:
+                    techs = await toolkit.webanalyze.fingerprint(base_url)
+                    for name, version in techs.items():
+                        self.result.technologies[name] = version
+                    self.log(f"Webanalyze identified {len(techs)} technologies", "SUCCESS")
+                except Exception:
+                    pass
+
+            # Dirsearch — directory brute-force
+            if deep and toolkit.dirsearch.available:
+                try:
+                    ds_result = await toolkit.dirsearch.scan(base_url)
+                    for entry in ds_result.get("found", []):
+                        path = entry.get("path", "")
+                        if path:
+                            self.result.endpoints.add(f"{base_url.rstrip('/')}{path}")
+                    self.log(f"Dirsearch found {ds_result.get('total_found', 0)} paths", "SUCCESS")
+                except Exception:
+                    pass
+
+        except ImportError:
+            pass  # external_tools not available
 
         if deep and len(self.result.subdomains) <= 50:
             tasks = [self._check_alive(sub) for sub in self.result.subdomains]
