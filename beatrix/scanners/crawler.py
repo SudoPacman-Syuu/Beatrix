@@ -119,6 +119,7 @@ class TargetCrawler:
             CrawlResult with all discovered data
         """
         result = CrawlResult()
+        self._visited = set()  # Reset for reuse safety
 
         # Normalize target
         if not target.startswith(("http://", "https://")):

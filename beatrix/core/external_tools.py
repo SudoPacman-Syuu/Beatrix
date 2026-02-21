@@ -67,11 +67,11 @@ class ExternalTool:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.PIPE if stdin else None,
             )
             try:
-                stdout, _ = await asyncio.wait_for(
+                stdout, stderr = await asyncio.wait_for(
                     process.communicate(input=stdin.encode() if stdin else None),
                     timeout=self.timeout,
                 )
@@ -81,8 +81,14 @@ class ExternalTool:
                 return None
 
             if process.returncode not in (0, None):
-                # Some tools return non-zero but still produce useful output
-                pass
+                # Log stderr for debugging but still return stdout (many tools
+                # write useful output even on non-zero exit)
+                stderr_text = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+                if stderr_text:
+                    import logging
+                    logging.getLogger("beatrix.external_tools").debug(
+                        "%s exited %s: %s", cmd[0], process.returncode, stderr_text[:500]
+                    )
 
             return stdout.decode("utf-8", errors="replace").strip()
         except Exception:

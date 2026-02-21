@@ -35,12 +35,11 @@ try:
         correlate_scan_results,  # noqa: F401
         get_kill_chain_summary,  # noqa: F401
     )
-except ImportError:
-    from correlation_engine import (
-        KILL_CHAIN_MITRE_MAPPING,
-        CyberKillChainPhase,
-        EventCorrelationEngine,
-    )
+except ImportError as _import_err:
+    raise ImportError(
+        "beatrix.core.correlation_engine is required for chain reporting. "
+        "Ensure Beatrix is properly installed."
+    ) from _import_err
 
 
 # =============================================================================

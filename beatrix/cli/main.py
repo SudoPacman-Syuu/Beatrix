@@ -2238,28 +2238,31 @@ def batch(ctx, targets_file, module, output, threads):
 
     console.print(f"\n[bold cyan]📋 Batch scanning {len(targets)} targets with [bold]{module}[/bold][/bold cyan]\n")
 
-    engine = BeatrixEngine()
     reporter = ReportGenerator(Path(output))
     all_findings = []
 
-    for i, target in enumerate(targets, 1):
-        console.print(f"[{i}/{len(targets)}] {target}...", end=" ")
+    async def _run_batch():
+        engine = BeatrixEngine()
+        for i, target in enumerate(targets, 1):
+            console.print(f"[{i}/{len(targets)}] {target}...", end=" ")
 
-        try:
-            result = asyncio.run(engine.strike(target, module))
+            try:
+                result = await engine.strike(target, module)
 
-            if result.findings:
-                console.print(f"[red]🎯 {len(result.findings)} findings![/red]")
-                all_findings.extend(result.findings)
+                if result.findings:
+                    console.print(f"[red]🎯 {len(result.findings)} findings![/red]")
+                    all_findings.extend(result.findings)
 
-                for finding in result.findings:
-                    if finding.severity.value in ["critical", "high"]:
-                        report_path = reporter.generate_report(finding)
-                        console.print(f"    [dim]Report: {report_path}[/dim]")
-            else:
-                console.print("[green]✓ clean[/green]")
-        except Exception as e:
-            console.print(f"[yellow]⚠ {e}[/yellow]")
+                    for finding in result.findings:
+                        if finding.severity.value in ["critical", "high"]:
+                            report_path = reporter.generate_report(finding)
+                            console.print(f"    [dim]Report: {report_path}[/dim]")
+                else:
+                    console.print("[green]✓ clean[/green]")
+            except Exception as e:
+                console.print(f"[yellow]⚠ {e}[/yellow]")
+
+    asyncio.run(_run_batch())
 
     console.print("\n[bold]Batch Complete:[/bold]")
     console.print(f"  Targets scanned: {len(targets)}")

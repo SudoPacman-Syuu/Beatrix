@@ -535,7 +535,7 @@
     <div id="top" class="hero">
         <h1>BEATRIX</h1>
         <p>THE BLACK MAMBA OF BUG BOUNTY FRAMEWORKS</p>
-        <span class="version-badge">38+ Modules · 21 External Tools · Full OWASP Top 10</span>
+        <span class="version-badge">29 Modules · 13 Tool Integrations · 21 External Tools · Full OWASP Top 10</span>
     </div>
 
     <div class="container">
@@ -564,7 +564,7 @@
                 <li class="sub-item"><a href="#cmd-manual">manual</a></li>
                 <li class="sub-item"><a href="#cmd-setup">setup</a></li>
                 
-                <li><a href="#modules">5. The Arsenal (38+ Modules)</a></li>
+                <li><a href="#modules">5. The Arsenal (29 Modules)</a></li>
                 <li class="sub-item"><a href="#mod-recon">Phase 1: Reconnaissance</a></li>
                 <li class="sub-item"><a href="#mod-weap">Phase 2: Weaponization</a></li>
                 <li class="sub-item"><a href="#mod-deliv">Phase 3: Delivery</a></li>
@@ -592,7 +592,7 @@
 
             <section id="intro">
                 <h2>1. Introduction</h2>
-                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 38+ scanner modules, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration directly to your terminal.</p>
+                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 29 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration directly to your terminal.</p>
                 <p>Beatrix is built for operators who prefer a terminal over a GUI. It bridges the gap between high-level automation (for rapid, wide-scale sweeps) and low-level manual control (for surgical, targeted strikes).</p>
                 
                 <div class="warning">
@@ -638,7 +638,7 @@ sudo pip install .</code></pre>
                     <li><code>mitmproxy</code> (Python) - Required by the Mobile Interceptor for SSL/TLS traffic interception.</li>
                     <li><code>playwright</code> (Chromium) - Required by the Browser Scanner for DOM XSS detection and WAF evasion.</li>
                     <li><code>amass</code> (Go) - Used for advanced subdomain enumeration.</li>
-                    <li><code>whatweb</code> / <code>wappalyzer</code> - Used for technology fingerprinting.</li>
+                    <li><code>whatweb</code> / <code>webanalyze</code> (Wappalyzer replacement) - Used for technology fingerprinting.</li>
                     <li><code>gospider</code> / <code>hakrawler</code> / <code>gau</code> - Used for crawling and URL discovery.</li>
                     <li><code>dirsearch</code> (Python) - Used for directory brute-forcing.</li>
                     <li><code>dalfox</code> (Go) - Used for XSS scanning.</li>
@@ -675,10 +675,10 @@ beatrix config --set ai.model claude-3-5-sonnet-20241022</code></pre>
                     <li><strong>🔍 Reconnaissance:</strong> Target discovery, subdomain enumeration (via <code>subfinder</code>), port scanning (via <code>nmap</code>), service detection, and JavaScript bundle analysis.</li>
                     <li><strong>⚔️ Weaponization:</strong> Payload crafting, WAF fingerprinting, and attack planning.</li>
                     <li><strong>📦 Delivery:</strong> Endpoint discovery, parameter fuzzing, and request delivery.</li>
-                    <li><strong>💥 Exploitation:</strong> Active scanning using the 38+ modules (Injection, Auth bypass, IDOR, CORS, SSRF, etc.).</li>
-                    <li><strong>🔧 Installation:</strong> Persistence testing (e.g., File Upload bypasses).</li>
-                    <li><strong>📡 Command & Control:</strong> Data exfiltration and Out-Of-Band (OOB) channel testing.</li>
-                    <li><strong>🎯 Objectives:</strong> Impact assessment, PoC generation, and report formatting.</li>
+                    <li><strong>💥 Exploitation:</strong> Full vulnerability testing using 14 scanner modules (Injection, SSRF, IDOR, BAC, Auth, SSTI, XXE, etc.). Confirmed findings are escalated to deep exploitation tools (sqlmap, dalfox, commix, jwt_tool).</li>
+                    <li><strong>🔧 Installation:</strong> Persistence testing (e.g., File Upload bypasses — extension bypass, polyglot, path traversal).</li>
+                    <li><strong>📡 Command & Control:</strong> OOB callback polling via interact.sh — correlates DNS/HTTP callbacks from blind SSRF, XXE, and RCE payloads injected during Phase 4. Confirmed interactions become CRITICAL findings.</li>
+                    <li><strong>🎯 Objectives:</strong> Finding aggregation, deduplication, and impact assessment.</li>
                 </ol>
             </section>
 
@@ -707,7 +707,7 @@ beatrix help findings</code></pre>
                     <summary>arsenal — List All Scanner Modules</summary>
                     <div class="detail-body">
                         <pre><code>beatrix arsenal</code></pre>
-                        <p>Displays the full Beatrix arsenal — all 38+ scanner modules with descriptions, categories, and OWASP mappings. No arguments needed.</p>
+                        <p>Displays the full Beatrix arsenal — all 29 scanner modules with descriptions, categories, and OWASP mappings. No arguments needed.</p>
                     </div>
                 </details>
 
@@ -1138,8 +1138,8 @@ beatrix mobile analyze capture.json --secrets known_keys.json</code></pre>
             </section>
 
             <section id="modules">
-                <h2>5. The Arsenal (38+ Modules)</h2>
-                <p>Beatrix packs over 38 specialized scanner modules. You can view them in your terminal using <code>beatrix arsenal</code>. Here is the comprehensive breakdown of every capability.</p>
+                <h2>5. The Arsenal (29 Modules + 13 Tool Integrations)</h2>
+                <p>Beatrix packs 29 registered scanner modules plus 13 external tool integrations. You can view them in your terminal using <code>beatrix arsenal</code>. Here is the comprehensive breakdown of every capability.</p>
 
                 <h3 id="mod-recon">Phase 1: Reconnaissance</h3>
                 <p>The foundation of the framework. Without crawling and probing, scanners only see a bare URL with zero parameters, zero endpoints, and zero forms. This phase builds the <code>ScanContext</code> attack surface.</p>

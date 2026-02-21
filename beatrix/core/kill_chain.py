@@ -215,12 +215,21 @@ class KillChainExecutor:
         self.engine = engine
         self.phase_handlers: Dict[KillChainPhase, Callable] = {}
         self._on_event = on_event  # Callback for real-time progress
+        self._toolkit = None  # Lazy singleton — shared across all phases
         self._register_default_handlers()
 
     def _emit(self, event: str, **kwargs) -> None:
         """Emit a progress event to the callback."""
         if self._on_event:
             self._on_event(event, kwargs)
+
+    @property
+    def toolkit(self):
+        """Lazy singleton ExternalToolkit — avoids repeated shutil.which() probing."""
+        if self._toolkit is None:
+            from beatrix.core.external_tools import ExternalToolkit
+            self._toolkit = ExternalToolkit()
+        return self._toolkit
 
     def _register_default_handlers(self) -> None:
         """Register default phase handlers mapping kill chain phases to scanner modules."""
@@ -379,8 +388,7 @@ class KillChainExecutor:
         run_deep_recon = not requested_modules  # empty = full scan
 
         if run_deep_recon:
-            from beatrix.core.external_tools import ExternalToolkit
-            toolkit = ExternalToolkit()
+            toolkit = self.toolkit
 
             # Subfinder
             try:
@@ -840,8 +848,7 @@ class KillChainExecutor:
         # ── Deep exploitation — sqlmap, dalfox, commix on confirmed vulns ─────
         # Only run when tools are available AND internal scanners found issues
         try:
-            from beatrix.core.external_tools import ExternalToolkit
-            toolkit = ExternalToolkit()
+            toolkit = self.toolkit
 
             # Collect confirmed vulnerabilities from internal scanner results
             all_findings = []
@@ -1049,7 +1056,12 @@ class KillChainExecutor:
         return await self._merge_scanner_results(results)
 
     async def _handle_c2(self, target: str, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 6 — C2: OOB detection, exfiltration testing."""
+        """Phase 6 — C2: OOB callback correlation, exfiltration testing.
+
+        The OOB detector was initialized in Phase 4 before exploitation scanners
+        ran. This phase polls for any callbacks that arrived during exploitation
+        and converts confirmed interactions into findings.
+        """
         results = []
 
         # OOB detector should already be initialized in Phase 4 (_handle_exploitation).
@@ -1063,6 +1075,37 @@ class KillChainExecutor:
                 self._emit("info", message="OOB detector initialized (late — Phase 4 was skipped)")
             except Exception:
                 context["oob_available"] = False
+
+        # ── Poll OOB detector for callbacks from exploitation phase ───────────
+        oob = context.get("oob_detector")
+        if oob and context.get("oob_available"):
+            try:
+                interactions = await oob.poll(timeout=10.0)
+                if interactions:
+                    from beatrix.core.types import Finding, Severity
+                    self._emit("info", message=f"OOB detector received {len(interactions)} callback(s)!")
+                    for interaction in interactions:
+                        sev = Severity.CRITICAL if interaction.vuln_type in ("rce", "ssrf") else Severity.HIGH
+                        results.append({"findings": [Finding(
+                            severity=sev,
+                            url=interaction.target_url or target,
+                            title=f"OOB callback confirmed: {interaction.vuln_type or 'blind'} via {interaction.type.name}",
+                            description=(
+                                f"Out-of-band {interaction.type.name} callback received.\n"
+                                f"Vulnerability type: {interaction.vuln_type or 'unknown'}\n"
+                                f"Target URL: {interaction.target_url}\n"
+                                f"Parameter: {interaction.parameter}\n"
+                                f"Callback from: {interaction.client_ip}\n"
+                                f"This confirms the vulnerability is exploitable — the server made an external request to our canary."
+                            ),
+                            evidence={"interaction_type": interaction.type.name, "client_ip": interaction.client_ip,
+                                      "raw": interaction.raw_data, "payload_id": interaction.payload_id},
+                            scanner_module="oob_detector",
+                        )], "assets": [], "context": {}, "modules": ["oob_detector"], "requests": 0})
+                else:
+                    self._emit("info", message="OOB detector: no callbacks received (clean, or payloads not triggered)")
+            except Exception as e:
+                self._emit("scanner_error", scanner="oob_detector", error=str(e))
 
         return await self._merge_scanner_results(results)
 

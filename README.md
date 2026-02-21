@@ -2,7 +2,7 @@
 
 > *"Revenge is a dish best served with a working PoC."*
 
-A command-line bug bounty hunting framework. 38+ scanner modules, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal.
+A command-line bug bounty hunting framework. 29 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, 7-phase Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal.
 
 Globally installable on any Linux system. Call it from anywhere.
 
@@ -125,13 +125,13 @@ beatrix list --modules
 
 Every `hunt` follows the Cyber Kill Chain methodology:
 
-1. 🔍 **Reconnaissance** — Subdomain enum, port scan, service detection
-2. ⚔️ **Weaponization** — Payload crafting, WAF fingerprinting
-3. 📦 **Delivery** — Endpoint discovery, parameter fuzzing
-4. 💥 **Exploitation** — Injection, auth bypass, IDOR, CORS, SSRF
-5. 🔧 **Installation** — Persistence testing
-6. 📡 **Command & Control** — Data exfiltration, OOB channels
-7. 🎯 **Objectives** — Impact assessment, PoC generation
+1. 🔍 **Reconnaissance** — Subdomain enum (`subfinder`, `amass`), crawling (`katana`, `gospider`, `hakrawler`, `gau`), port scan (`nmap`), JS analysis, endpoint probing, tech fingerprinting (`whatweb`, `webanalyze`)
+2. ⚔️ **Weaponization** — Subdomain takeover, error disclosure, cache poisoning, prototype pollution
+3. 📦 **Delivery** — CORS, open redirects, OAuth redirect, HTTP smuggling, WebSocket testing
+4. 💥 **Exploitation** — Injection (SQLi/XSS/CMDi), SSRF, IDOR, BAC, auth bypass, SSTI, XXE, deserialization, GraphQL, mass assignment, business logic, ReDoS, payment, nuclei CVE scan. Confirmed findings are escalated to deep exploitation tools (`sqlmap`, `dalfox`, `commix`, `jwt_tool`)
+5. 🔧 **Installation** — File upload bypass, polyglot uploads, path traversal
+6. 📡 **Command & Control** — OOB callback correlation via `interact.sh`, blind SSRF/XXE/RCE confirmation
+7. 🎯 **Objectives** — Finding aggregation, deduplication, impact assessment
 
 ### Presets
 
@@ -151,22 +151,83 @@ beatrix hunt example.com --preset injection
 
 ### Scanner Modules (Arsenal)
 
-Run `beatrix arsenal` for the full table. Core modules:
+Run `beatrix arsenal` for the full table. 29 registered modules across 5 kill chain phases:
 
-| Module | Category | What It Tests |
-|--------|----------|---------------|
-| `cors` | A02 | Origin reflection, null origin, wildcard, credential leaks |
-| `injection` | A03 | SQLi, XSS, command injection with WAF bypass |
-| `headers` | A02 | CSP, HSTS, X-Frame-Options analysis |
-| `redirect` | Redirect | Open redirect detection |
-| `ssrf` | A10 | Cloud metadata extraction, internal service access |
-| `takeover` | Takeover | Dangling CNAME → 30+ services |
-| `idor` | A01 | ID manipulation, sequential/UUID/negative |
-| `bac` | A01 | Method override, force browsing, privilege escalation |
-| `auth` | A07 | JWT attacks, 2FA bypass, session management |
-| `error_disclosure` | A05 | Stack traces, SQL errors, debug info |
-| `js_analysis` | Recon | API routes, secrets from JS bundles |
-| `endpoint_prober` | Recon | Admin panels, debug routes, hidden endpoints |
+**Phase 1 — Reconnaissance:**
+
+| Module | What It Does |
+|--------|-------------|
+| `crawl` | Depth-limited spider with soft-404 detection, form/param extraction |
+| `endpoint_prober` | Probes 200+ common API/admin/debug paths |
+| `js_analysis` | Extracts API routes, secrets, source maps from JS bundles |
+| `headers` | CSP, HSTS, X-Frame-Options, security header analysis |
+| `github_recon` | GitHub org secret scanning, git history analysis |
+
+**Phase 2 — Weaponization:**
+
+| Module | What It Does |
+|--------|-------------|
+| `takeover` | Dangling CNAME detection for 30+ cloud services |
+| `error_disclosure` | Stack traces, SQL errors, framework debug info leaks |
+| `cache_poisoning` | Unkeyed header injection, fat GET, parameter cloaking |
+| `prototype_pollution` | Server-side + client-side JS prototype pollution |
+
+**Phase 3 — Delivery:**
+
+| Module | What It Does |
+|--------|-------------|
+| `cors` | 6 bypass techniques, credential leak detection |
+| `redirect` | Open redirect detection |
+| `oauth_redirect` | OAuth redirect URI manipulation |
+| `http_smuggling` | CL.TE / TE.CL / TE.TE desync |
+| `websocket` | WebSocket origin, CSWSH, message injection |
+
+**Phase 4 — Exploitation:**
+
+| Module | What It Does |
+|--------|-------------|
+| `injection` | SQLi, XSS, CMDi with WAF bypass |
+| `ssrf` | 44 payloads, cloud metadata, internal service access |
+| `idor` | Sequential/UUID/negative ID manipulation |
+| `bac` | Method override, force browsing, privilege escalation |
+| `auth` | JWT attacks, 2FA bypass, session management |
+| `ssti` | Server-side template injection (Jinja2, Twig, etc.) |
+| `xxe` | XML external entity injection |
+| `deserialization` | Insecure deserialization (Java, PHP, Python, .NET) |
+| `graphql` | Introspection, batching, injection |
+| `mass_assignment` | Hidden field binding exploitation |
+| `business_logic` | Race conditions, boundary testing |
+| `redos` | Regular expression denial of service |
+| `payment` | Checkout flow manipulation, price tampering |
+| `nuclei` | 8000+ CVE/misconfig templates |
+
+**Phase 5 — Installation:**
+
+| Module | What It Does |
+|--------|-------------|
+| `file_upload` | Extension bypass, polyglot uploads, path traversal |
+
+### External Tool Integrations (13 Runners)
+
+Beatrix wraps 13 external security tools via async subprocess runners with timeouts and structured output parsing. These are used by kill chain phases to augment the internal scanners:
+
+| Tool | Used In | Purpose |
+|------|---------|---------|
+| `subfinder` | Recon | Passive subdomain enumeration |
+| `amass` | Recon | Active/passive subdomain enum |
+| `nmap` | Recon | Port scanning, service detection |
+| `katana` | Recon | Deep crawling, JS rendering |
+| `gospider` | Recon | Fast crawling, form/JS extraction |
+| `hakrawler` | Recon | URL discovery |
+| `gau` | Recon | Historical URL harvesting |
+| `whatweb` | Recon | Technology fingerprinting |
+| `webanalyze` | Recon | Wappalyzer-based tech detection |
+| `dirsearch` | Recon | Directory brute-forcing (adaptive extensions) |
+| `sqlmap` | Exploitation | Deep SQLi exploitation, DB takeover |
+| `dalfox` | Exploitation | XSS validation, WAF bypass |
+| `commix` | Exploitation | OS command injection exploitation |
+| `jwt_tool` | Exploitation | JWT vulnerability analysis, role escalation |
+| `metasploit` | PoC Chain | Exploit search, module suggestions |
 
 Use a specific module with `strike`:
 
@@ -358,24 +419,33 @@ beatrix list --presets
 
 ```
 beatrix/
-├── cli/main.py          # CLI entry point (this is what you interact with)
+├── cli/main.py              # CLI entry point — 20 commands via Click + Rich
 ├── core/
-│   ├── engine.py        # BeatrixEngine — orchestrates everything
-│   ├── kill_chain.py    # 7-phase kill chain executor
-│   └── types.py         # Finding, Severity, Target, ScanResult
+│   ├── engine.py            # BeatrixEngine — orchestrates everything, 29 modules
+│   ├── kill_chain.py        # 7-phase kill chain executor
+│   ├── external_tools.py    # 13 async subprocess tool runners
+│   ├── types.py             # Finding, Severity, Confidence, ScanContext
+│   ├── oob_detector.py      # OOB callback manager (interact.sh)
+│   ├── correlation_engine.py # MITRE ATT&CK correlation
+│   ├── findings_db.py       # SQLite findings storage (WAL mode)
+│   ├── issue_consolidator.py # Finding deduplication
+│   └── poc_chain_engine.py  # PoC generation + Metasploit integration
 ├── scanners/
-│   ├── base.py          # BaseScanner ABC (all scanners extend this)
-│   ├── cors.py          # CORS misconfiguration
-│   ├── injection.py     # SQLi, XSS, CMDi
-│   ├── ssrf.py          # Server-Side Request Forgery
-│   ├── idor.py          # Insecure Direct Object Reference
-│   └── ...              # 38+ scanner modules
-├── validators/          # ImpactValidator + ReadinessGate
-├── reporters/           # Report generation (markdown, JSON)
-├── recon/               # Reconnaissance tools
-├── ai/                  # GHOST agent, Haiku integration
-├── integrations/        # HackerOne API client
-└── config/              # Default configurations
+│   ├── base.py              # BaseScanner ABC — rate limiting, httpx client
+│   ├── crawler.py           # Target spider — foundation for all scanning
+│   ├── injection.py         # SQLi, XSS, CMDi with WAF bypass
+│   ├── ssrf.py              # 44-payload SSRF scanner
+│   ├── cors.py              # 6-technique CORS bypass scanner
+│   ├── auth.py              # JWT, OAuth, 2FA, session attacks
+│   ├── idor.py              # IDOR + BAC scanners
+│   ├── nuclei.py            # Nuclei template engine wrapper
+│   └── ...                  # 29 scanner modules total
+├── validators/              # ImpactValidator + ReadinessGate
+├── reporters/               # Markdown, JSON, HTML chain reports
+├── recon/                   # ReconRunner — subfinder/amass/nmap integration
+├── ai/                      # GHOST agent, Haiku integration
+├── integrations/            # HackerOne API client
+└── utils/                   # WAF bypass, VRT classifier, helpers
 ```
 
 ---
