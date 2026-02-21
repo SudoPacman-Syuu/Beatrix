@@ -434,6 +434,33 @@ class InjectionScanner(BaseScanner):
             )
 
             if is_vuln:
+                # ── Confirmation pass for time-based findings ─────────────
+                # A single slow response can be network jitter. Re-test 2 more
+                # times and require at least 2/3 total to show consistent delay.
+                if payload.detection == "time":
+                    confirm_count = 1  # First test already passed
+                    for _ in range(2):
+                        try:
+                            cstart = time.time()
+                            cresp = await self.request(
+                                request.method,
+                                url,
+                                headers=headers,
+                                content=body if body else None,
+                            )
+                            celapsed = time.time() - cstart
+                            c_vuln, _ = self._check_response(
+                                payload, cresp.text, celapsed, baseline_time
+                            )
+                            if c_vuln:
+                                confirm_count += 1
+                        except Exception:
+                            pass
+                    if confirm_count < 2:
+                        self.log(f"Time-based finding NOT confirmed ({confirm_count}/3 passed) — skipping {payload.name}")
+                        return None
+                    evidence += f"\nConfirmed: {confirm_count}/3 samples showed consistent delay"
+
                 return self._create_injection_finding(
                     url, request, ip, payload, response, evidence
                 )

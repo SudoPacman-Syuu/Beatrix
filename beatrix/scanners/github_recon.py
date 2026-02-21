@@ -19,6 +19,7 @@ Author: BEATRIX
 """
 
 import asyncio
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -91,6 +92,32 @@ SECRET_PATTERNS: List[Tuple[str, str, Severity]] = [
     # Generic high-entropy strings in key positions
     (r'(?i)(?:secret|token|key|password|passwd|pwd|apikey|api_key|auth)\s*[=:]\s*["\']([A-Za-z0-9@#$%^&*!]{12,})["\']', "Hardcoded Secret", Severity.MEDIUM),
 ]
+
+# Patterns whose matched VALUE requires high entropy to be a real secret.
+# Structural patterns (AWS key prefix, private key header, connection strings)
+# are always valid regardless of entropy.
+ENTROPY_REQUIRED_TYPES = {
+    "API Key/Token", "Access/Auth Token", "JWT Secret",
+    "Database Password", "Password in JSON Config", "Secret in JSON Config",
+    "Hardcoded Secret", "Encryption Key", "Heroku API Key",
+}
+
+# Minimum Shannon entropy (bits/char) for generic secret values.
+# Real secrets (hex, base64, random): 3.5-6.0
+# English words: 2.0-3.2
+# Repeated chars: <2.0
+MIN_SECRET_ENTROPY = 3.2
+
+
+def _shannon_entropy(s: str) -> float:
+    """Calculate Shannon entropy in bits per character."""
+    if not s:
+        return 0.0
+    length = len(s)
+    freq: Dict[str, int] = {}
+    for c in s:
+        freq[c] = freq.get(c, 0) + 1
+    return -sum((count / length) * math.log2(count / length) for count in freq.values())
 
 # Files that commonly contain secrets
 INTERESTING_FILES = [
@@ -556,6 +583,12 @@ class GitHubRecon(BaseScanner):
                     if self._is_code_pattern(value):
                         continue
 
+                    # Skip low-entropy matches for generic patterns (English words)
+                    if secret_type in ENTROPY_REQUIRED_TYPES:
+                        entropy = _shannon_entropy(value)
+                        if entropy < MIN_SECRET_ENTROPY:
+                            continue
+
                     # Skip commented-out lines in source code
                     stripped = line.strip()
                     if stripped.startswith('//') or stripped.startswith('#') or stripped.startswith('*'):
@@ -601,6 +634,14 @@ class GitHubRecon(BaseScanner):
 
         # Template literals: {{ }}, {% %}
         if '{{' in v or '{%' in v:
+            return True
+
+        # Objective-C/Swift k-prefix constants: kPlainErrorKey, kSecAttrAccount, etc.
+        if re.match(r'^k[A-Z][a-zA-Z]{4,}', v):
+            return True
+
+        # ALL_CAPS_CONSTANT references (not values): ERROR_KEY, SECRET_NAME, etc.
+        if re.match(r'^[A-Z][A-Z0-9_]{3,}$', v) and '_' in v:
             return True
 
         return False

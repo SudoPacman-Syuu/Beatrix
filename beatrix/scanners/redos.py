@@ -223,8 +223,10 @@ class ReDoSScanner(BaseScanner):
 
     # Detection thresholds
     TIMING_MULTIPLIER_THRESHOLD = 3.0  # 3x growth between sizes
-    TIMING_ABSOLUTE_THRESHOLD_MS = 3000  # Consider >3s as suspicious
+    TIMING_ABSOLUTE_THRESHOLD_MS = 5000  # Consider >5s as suspicious (was 3s — too lenient)
+    TIMING_MIN_SUSPICIOUS_MS = 1000     # Below 1s is network jitter, not ReDoS
     BASELINE_SAMPLES = 3  # Number of baseline measurements
+    CONFIRM_SAMPLES = 3   # Samples per payload for confirmation (take median)
     TIMEOUT_MS = 10000  # Max wait per request
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -321,21 +323,33 @@ class ReDoSScanner(BaseScanner):
             if len(payload) > self.max_payload_length:
                 break
 
-            result = await self._timed_request(
-                "GET", context.url, payload, param_name, delivery,
-            )
-            results.append(result)
+            # Take multiple samples per payload length and use median
+            # to eliminate network jitter false positives
+            samples = []
+            for _ in range(self.CONFIRM_SAMPLES):
+                result = await self._timed_request(
+                    "GET", context.url, payload, param_name, delivery,
+                )
+                if result.timed_out:
+                    samples.append(result)
+                    break
+                samples.append(result)
+
+            # Use the median sample
+            samples.sort(key=lambda r: r.response_time_ms)
+            median_result = samples[len(samples) // 2]
+            results.append(median_result)
 
             # Safety: if timed out, stop escalating
-            if result.timed_out:
+            if median_result.timed_out:
                 break
 
             # Safety: if already very slow, stop
-            if result.response_time_ms > self.TIMEOUT_MS:
+            if median_result.response_time_ms > self.TIMEOUT_MS:
                 break
 
-        if len(results) < 2:
-            return
+        if len(results) < 3:
+            return  # Need at least 3 data points for meaningful growth analysis
 
         # Analyze timing growth
         is_vulnerable, growth_analysis = self._analyze_timing_growth(baseline_ms, results)
@@ -511,9 +525,6 @@ class ReDoSScanner(BaseScanner):
 
             yield finding
 
-    # Minimum absolute response time to consider suspicious (filters network jitter)
-    TIMING_MIN_SUSPICIOUS_MS = 500
-
     def _analyze_timing_growth(
         self, baseline_ms: float, results: List[TimingResult]
     ) -> Tuple[bool, str]:
@@ -523,15 +534,16 @@ class ReDoSScanner(BaseScanner):
         increases. A single spike followed by normal times is network jitter.
 
         Requirements for a positive:
-        - At least 2 consecutive increasing intervals (monotonic growth)
-        - Max response time must exceed baseline by a meaningful absolute amount
-        - Max must exceed the minimum suspicious threshold
+        - At least 3 consecutive increasing intervals (monotonic growth)
+        - Max response time must exceed baseline by >=5x (not 3x)
+        - Max must exceed 1000ms absolute minimum (filters jitter)
         - Timeout at longer payloads is definitive only if shorter payloads also
           showed escalating times
+        - NO fallback heuristic comparing first-vs-last (caused FPs)
         """
 
-        if not results or len(results) < 2:
-            return False, "Insufficient data"
+        if not results or len(results) < 3:
+            return False, "Insufficient data (need 3+ measurements)"
 
         max_time = max(r.response_time_ms for r in results)
 
@@ -554,36 +566,34 @@ class ReDoSScanner(BaseScanner):
         if max_time < self.TIMING_MIN_SUSPICIOUS_MS:
             return False, f"Max {max_time:.0f}ms below {self.TIMING_MIN_SUSPICIOUS_MS}ms threshold"
 
-        # Must be meaningfully above baseline (at least 3x)
-        if max_time < baseline_ms * 3:
-            return False, f"Max {max_time:.0f}ms < 3x baseline {baseline_ms:.0f}ms"
+        # Must be meaningfully above baseline (at least 5x)
+        if max_time < baseline_ms * 5:
+            return False, f"Max {max_time:.0f}ms < 5x baseline {baseline_ms:.0f}ms"
 
-        # Check for MONOTONIC growth: at least 2 consecutive increases with
-        # each step showing >= TIMING_MULTIPLIER_THRESHOLD growth
+        # Check for MONOTONIC growth: at least 3 consecutive increases with
+        # each step showing >= 1.5x growth per step.
+        # 3 consecutive increases = exponential curve, not jitter.
         consecutive_increases = 0
+        max_consecutive = 0
         for i in range(1, len(results)):
             prev = results[i - 1].response_time_ms
             curr = results[i].response_time_ms
 
             if prev > 0 and curr > prev * 1.5:  # At least 1.5x growth per step
                 consecutive_increases += 1
+                max_consecutive = max(max_consecutive, consecutive_increases)
             else:
                 consecutive_increases = 0  # Reset — growth must be continuous
 
-        if consecutive_increases >= 2:
+        if max_consecutive >= 3:
             first = results[0].response_time_ms
             last = results[-1].response_time_ms
             growth = last / first if first > 0 else 0
-            return True, f"Monotonic super-linear growth: {growth:.1f}x over {len(results)} measurements"
+            return True, f"Monotonic super-linear growth: {growth:.1f}x over {len(results)} measurements ({max_consecutive} consecutive increases)"
 
-        # Check overall growth from first to last, but require large factor + absolute threshold
-        first = results[0].response_time_ms
-        last = results[-1].response_time_ms
-        if first > 0 and last / first > 10 and last > self.TIMING_ABSOLUTE_THRESHOLD_MS:
-            growth = last / first
-            return True, f"Overall growth: {growth:.1f}x from {results[0].length} to {results[-1].length} chars"
-
-        return False, f"No confirmed exponential growth (max: {max_time:.0f}ms)"
+        # No fallback first-vs-last heuristic — it caused false positives
+        # from single network spikes. Require genuine monotonic escalation.
+        return False, f"No confirmed exponential growth (max: {max_time:.0f}ms, best streak: {max_consecutive} consecutive increases)"
 
     # =========================================================================
     # INPUT DISCOVERY

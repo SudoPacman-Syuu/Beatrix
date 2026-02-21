@@ -316,9 +316,17 @@ class TestRecordFinding:
 
     @pytest.mark.asyncio
     async def test_record_finding_missing_required(self, agent):
-        result = await agent._tool_record_finding({"title": "test"})
+        # All three of title, type, and description must be missing to error
+        result = await agent._tool_record_finding({})
         assert "Error" in result
         assert len(agent.findings) == 0
+
+    @pytest.mark.asyncio
+    async def test_record_finding_partial_fields_ok(self, agent):
+        # Title alone is enough — we accept partial input from AI
+        result = await agent._tool_record_finding({"title": "test"})
+        assert "Finding recorded" in result
+        assert len(agent.findings) == 1
 
     @pytest.mark.asyncio
     async def test_record_multiple_findings(self, agent):

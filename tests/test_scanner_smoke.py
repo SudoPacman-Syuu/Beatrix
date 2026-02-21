@@ -86,6 +86,90 @@ def test_import_idor_auth():
 
 
 # ============================================================================
+# NUCLEI SCANNER TESTS
+# ============================================================================
+
+def test_nuclei_instantiation():
+    """NucleiScanner should instantiate and report availability."""
+    from beatrix.scanners.nuclei import NucleiScanner
+    scanner = NucleiScanner({"rate_limit": 10, "timeout": 5})
+    assert scanner.name == "nuclei"
+    assert isinstance(scanner.available, bool)
+
+
+def test_nuclei_build_tags_no_tech():
+    """Build tags with no technologies should return base tags only."""
+    from beatrix.scanners.nuclei import NucleiScanner
+    scanner = NucleiScanner()
+    tags = scanner._build_tags()
+    # Base tags must include these critical categories
+    for tag in ["misconfig", "exposure", "cve", "default-login", "takeover", "rce", "xss", "sqli"]:
+        assert tag in tags, f"Missing base tag: {tag}"
+
+
+def test_nuclei_build_tags_with_tech():
+    """Build tags should add technology-specific tags."""
+    from beatrix.scanners.nuclei import NucleiScanner
+    scanner = NucleiScanner()
+    scanner.set_technologies(["WordPress", "nginx", "PHP"])
+    tags = scanner._build_tags()
+    for tag in ["wordpress", "wp-plugin", "wp-theme", "nginx", "php"]:
+        assert tag in tags, f"Missing tech tag: {tag}"
+
+
+def test_nuclei_build_tags_with_tech_dict():
+    """Build tags should handle dict-style technologies (from kill chain context)."""
+    from beatrix.scanners.nuclei import NucleiScanner
+    scanner = NucleiScanner()
+    scanner.set_technologies({"WordPress": "5.9", "nginx": "1.22", "PHP": "8.1"})
+    tags = scanner._build_tags()
+    for tag in ["wordpress", "wp-plugin", "nginx", "php"]:
+        assert tag in tags, f"Missing tech tag from dict: {tag}"
+
+
+def test_nuclei_add_urls():
+    """add_urls should extend the internal URL list."""
+    from beatrix.scanners.nuclei import NucleiScanner
+    scanner = NucleiScanner()
+    scanner.add_urls(["https://example.com/api/v1", "https://example.com/admin"])
+    assert len(scanner._urls_to_scan) == 2
+    scanner.add_urls(["https://example.com/login"])
+    assert len(scanner._urls_to_scan) == 3
+
+
+def test_nuclei_severity_map():
+    """Severity mapping should cover all nuclei severities."""
+    from beatrix.core.types import Severity
+    from beatrix.scanners.nuclei import NUCLEI_SEVERITY_MAP
+    # All standard nuclei severities must be mapped
+    for sev in ["critical", "high", "medium", "low", "info", "unknown"]:
+        assert sev in NUCLEI_SEVERITY_MAP
+    assert NUCLEI_SEVERITY_MAP["critical"] == Severity.CRITICAL
+    assert NUCLEI_SEVERITY_MAP["high"] == Severity.HIGH
+
+
+def test_nuclei_parse_finding():
+    """_parse_nuclei_finding should convert nuclei JSON to Beatrix Finding."""
+    from beatrix.scanners.nuclei import NucleiScanner
+    scanner = NucleiScanner()
+    finding = scanner._parse_nuclei_finding({
+        "template-id": "tech-detect",
+        "info": {
+            "name": "WordPress Detected",
+            "severity": "info",
+            "description": "WordPress CMS detected",
+            "tags": ["tech", "wordpress"],
+        },
+        "matched-at": "https://example.com",
+    })
+    assert finding is not None
+    assert "[Nuclei]" in finding.title
+    assert "WordPress" in finding.title
+    assert finding.url == "https://example.com"
+    assert finding.scanner_module == "nuclei"
+
+
+# ============================================================================
 # CORE MODULE IMPORTS
 # ============================================================================
 
@@ -216,6 +300,24 @@ def test_kill_chain_has_handlers():
     assert KillChainPhase.RECONNAISSANCE in engine.kill_chain.phase_handlers
     assert KillChainPhase.DELIVERY in engine.kill_chain.phase_handlers
     assert KillChainPhase.EXPLOITATION in engine.kill_chain.phase_handlers
+
+
+def test_engine_presets_valid_modules():
+    """All preset module keys must map to loaded engine modules."""
+    from beatrix.core.engine import BeatrixEngine
+    engine = BeatrixEngine()
+    for preset_name, preset in engine.PRESETS.items():
+        modules = preset["modules"]
+        if modules:  # Empty = run all
+            for mod in modules:
+                assert mod in engine.modules, f"Preset '{preset_name}' references unknown module '{mod}'"
+
+
+def test_engine_injection_preset_has_phase1():
+    """Injection preset must include Phase 1 for crawling to populate URLs."""
+    from beatrix.core.engine import BeatrixEngine
+    engine = BeatrixEngine()
+    assert 1 in engine.PRESETS["injection"]["phases"], "Injection preset needs Phase 1 for crawling"
 
 
 def test_engine_presets_exist():
