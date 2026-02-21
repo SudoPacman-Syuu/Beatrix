@@ -555,7 +555,7 @@ check_optional_tools() {
     for tool in "${tools[@]}"; do
         if command_exists "$tool"; then
             success "$tool"
-            ((found++))
+            found=$((found + 1))
         else
             echo -e "  ${DIM}○ $tool (not installed)${RESET}"
         fi
