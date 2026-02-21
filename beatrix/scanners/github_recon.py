@@ -677,8 +677,12 @@ class GitHubRecon(BaseScanner):
         if re.match(r'^[a-z][a-z0-9]*(?:_[a-z][a-z0-9]*){2,}$', v):
             return True
 
-        # camelCase identifiers: accessToken, authBearerToken, responseToken
-        if re.match(r'^[a-z]+(?:[A-Z][a-z0-9]+){2,}$', v):
+        # camelCase identifiers: accessToken, translatedCount, processorExceptions
+        if re.match(r'^[a-z]+(?:[A-Z][a-z0-9]+)+$', v):
+            return True
+
+        # PascalCase identifiers: AccessTokenCommon, DataInputStream, etc.
+        if re.match(r'^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+$', v):
             return True
 
         # English words joined by underscores/hyphens — not secrets
