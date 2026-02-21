@@ -1,13 +1,6 @@
 """
 GHOST - Generative Heuristic Offensive Security Tester
 
-Ported from AIAgentV2.java (BurpSweet) to Python.
-
-An autonomous penetration testing agent powered by Claude with
-structured tool calls and comprehensive testing capabilities.
-
-Instead of Burp's HTTP stack, uses httpx for async HTTP operations.
-
 Usage:
     ghost = GhostAgent()
     await ghost.investigate(
