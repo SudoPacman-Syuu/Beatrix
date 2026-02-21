@@ -19,7 +19,7 @@ import asyncio
 import hashlib
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import AsyncIterator, Dict, List, Optional, Set
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
@@ -79,7 +79,14 @@ class TargetCrawler:
 
     This is NOT a vulnerability scanner — it's the recon phase that
     feeds data INTO scanners. Without this, scanners see nothing.
+
+    Supports async context manager protocol so it can be used via
+    the generic engine.strike() / _run_scanner() path:
+        async with crawler:
+            async for finding in crawler.scan(ctx): ...
     """
+
+    name: str = "crawl"
 
     def __init__(
         self,
@@ -97,6 +104,48 @@ class TargetCrawler:
         self.semaphore = asyncio.Semaphore(rate_limit)
         self._visited: Set[str] = set()
         self._log_callback = None
+
+    async def __aenter__(self):
+        """Async context manager entry (no-op — crawler manages its own httpx client)."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        pass
+
+    async def scan(self, context) -> 'AsyncIterator[Finding]':
+        """
+        Adapter so TargetCrawler works through the generic scanner path.
+
+        Runs crawl() under the hood and yields INFO-level findings
+        summarising the discovered attack surface.
+        """
+        from beatrix.core.types import Confidence, Finding, Severity
+
+        result = await self.crawl(context.url)
+        if result.pages_crawled > 0:
+            yield Finding(
+                title=f"Crawl complete: {result.pages_crawled} pages, {len(result.urls)} URLs, {len(result.urls_with_params)} with params",
+                severity=Severity.INFO,
+                confidence=Confidence.CERTAIN,
+                url=result.resolved_url or context.url,
+                description=(
+                    f"Discovered {len(result.urls)} URLs, "
+                    f"{len(result.urls_with_params)} with parameters, "
+                    f"{len(result.js_files)} JS files, "
+                    f"{len(result.forms)} forms, "
+                    f"{len(result.technologies)} technologies."
+                ),
+                evidence={
+                    "pages_crawled": result.pages_crawled,
+                    "urls": len(result.urls),
+                    "urls_with_params": len(result.urls_with_params),
+                    "js_files": len(result.js_files),
+                    "forms": len(result.forms),
+                    "technologies": result.technologies,
+                },
+                scanner_module="crawl",
+            )
 
     def set_log_callback(self, callback):
         """Set a callback for progress logging"""

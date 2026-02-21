@@ -507,7 +507,8 @@ class IDORScanner(BaseScanner):
     def compare_responses(self,
                          original: httpx.Response,
                          test: httpx.Response,
-                         candidate: IDORCandidate) -> Optional[Dict[str, Any]]:
+                         candidate: IDORCandidate,
+                         request_headers: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
         """
         Compare responses to detect IDOR.
 
@@ -528,7 +529,7 @@ class IDORScanner(BaseScanner):
                     # cross-user data access, or if the endpoint appears to require auth.
                     pii_detected = self.detect_pii_in_response(test.text) if hasattr(self, 'detect_pii_in_response') else False
                     auth_required = any(h.lower() in ['authorization', 'cookie', 'x-auth-token']
-                                       for h in (candidate.headers or {}))
+                                       for h in (request_headers or {}))
 
                     if pii_detected or auth_required:
                         findings['status'] = 'different_data_returned'
@@ -640,7 +641,7 @@ class IDORScanner(BaseScanner):
                     **request_kwargs,
                 )
 
-                result = self.compare_responses(original_response, test_response, candidate)
+                result = self.compare_responses(original_response, test_response, candidate, request_headers=headers)
 
                 if result and result.get('severity') in ['high', 'medium']:
                     # Detect PII in the response to assess real impact
@@ -826,7 +827,22 @@ class BACScanner(IDORScanner):
         'permission', 'permissions', 'group', 'user_type', 'userType',
     ]
 
-    async def probe_admin_endpoints(self, base_url: str, auth_headers: Dict[str, str]) -> List[Finding]:
+    async def scan(self, ctx: ScanContext) -> AsyncIterator[Finding]:
+        """
+        BAC scanning: IDOR checks (inherited) + admin endpoint probing.
+        """
+        # Run parent IDOR scan
+        async for finding in super().scan(ctx):
+            yield finding
+
+        # Additionally probe admin endpoints for vertical privilege escalation
+        admin_findings = await self.probe_admin_endpoints(
+            ctx.base_url, auth_headers=dict(ctx.headers) if ctx.headers else None,
+        )
+        for finding in admin_findings:
+            yield finding
+
+    async def probe_admin_endpoints(self, base_url: str, auth_headers: Optional[Dict[str, str]] = None) -> List[Finding]:
         """Check if admin endpoints are accessible without admin role"""
         findings = []
 
@@ -898,7 +914,7 @@ This could indicate missing role-based access control.
 
             except Exception:
                 continue
-
+            finally:
                 await asyncio.sleep(0.1)
 
         return findings

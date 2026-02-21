@@ -284,6 +284,11 @@ class KillChainExecutor:
             url = target if "://" in target else f"https://{target}"
             ctx = scan_context or ScanContext.from_url(url)
 
+            # Propagate crawl context so scanners have access to
+            # discovered JS files, forms, technologies, etc.
+            if not ctx.extra and context.get("crawl_extra"):
+                ctx.extra = context["crawl_extra"]
+
             async def _collect():
                 async with scanner:
                     async for finding in scanner.scan(ctx):
@@ -772,16 +777,20 @@ class KillChainExecutor:
         """
         url = context.get("resolved_url", target if "://" in target else f"https://{target}")
 
-        # ── Initialize OOB detector early so SSRF/XXE scanners can verify callbacks ──
+        # ── Initialize OOB detector so blind SSRF/XXE/RCE callbacks can be correlated in Phase 6 ──
         if not context.get("oob_available"):
             try:
-                from beatrix.core.oob_detector import OOBDetector
-                oob = OOBDetector()
-                context["oob_detector"] = oob
+                from beatrix.core.oob_detector import InteractshClient
+                interactsh = InteractshClient()
+                await interactsh.__aenter__()
+                context["interactsh_client"] = interactsh
+                context["oob_detector"] = interactsh._detector
+                context["oob_domain"] = f"{interactsh._session_id}.{interactsh._server}"
                 context["oob_available"] = True
-                self._emit("info", message="OOB detector initialized for SSRF/XXE callback verification")
+                self._emit("info", message=f"OOB detector initialized via interact.sh (domain: {context['oob_domain']})")
             except Exception:
                 context["oob_available"] = False
+                self._emit("info", message="OOB detector unavailable — blind callback verification disabled")
 
         results = []
         urls_with_params = context.get("urls_with_params", [])
@@ -1068,9 +1077,11 @@ class KillChainExecutor:
         # If it wasn't (e.g., Phase 4 was skipped), initialize it now.
         if not context.get("oob_available"):
             try:
-                from beatrix.core.oob_detector import OOBDetector
-                oob = OOBDetector()
-                context["oob_detector"] = oob
+                from beatrix.core.oob_detector import InteractshClient
+                interactsh = InteractshClient()
+                await interactsh.__aenter__()
+                context["interactsh_client"] = interactsh
+                context["oob_detector"] = interactsh._detector
                 context["oob_available"] = True
                 self._emit("info", message="OOB detector initialized (late — Phase 4 was skipped)")
             except Exception:
@@ -1162,23 +1173,32 @@ class KillChainExecutor:
             run_phases = [p for p in run_phases if p.value not in skip_phases]
 
         # Execute each phase
-        for phase in run_phases:
-            if state.cancelled:
-                break
+        try:
+            for phase in run_phases:
+                if state.cancelled:
+                    break
 
-            while state.paused:
-                await asyncio.sleep(0.5)
+                while state.paused:
+                    await asyncio.sleep(0.5)
 
-            state.current_phase = phase
-            result = await self._execute_phase(phase, state)
-            state.phase_results[phase] = result
+                state.current_phase = phase
+                result = await self._execute_phase(phase, state)
+                state.phase_results[phase] = result
 
-            # Merge context for next phase
-            state.merge_context(result.context)
+                # Merge context for next phase
+                state.merge_context(result.context)
 
-            # Stop if phase failed critically
-            if result.status == PhaseStatus.FAILED and result.errors:
-                break
+                # Stop if phase failed critically
+                if result.status == PhaseStatus.FAILED and result.errors:
+                    break
+        finally:
+            # Cleanup OOB / InteractshClient session if one was created
+            interactsh = state.context.get("interactsh_client")
+            if interactsh:
+                try:
+                    await interactsh.__aexit__(None, None, None)
+                except Exception:
+                    pass
 
         return state
 

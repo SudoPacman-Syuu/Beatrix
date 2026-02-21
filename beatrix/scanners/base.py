@@ -137,6 +137,7 @@ class BaseScanner(ABC):
         """Async context manager exit"""
         if self.client:
             await self.client.aclose()
+            self.client = None
 
     # =========================================================================
     # MAIN ENTRY POINTS

@@ -67,8 +67,7 @@ beatrix version       # Display version info
 | `run_dalfox` | dalfox | 4 Exploitation | XSS exploitation |
 | `run_commix` | commix | 4 Exploitation | Command injection exploitation |
 | `run_jwt_tool` | jwt_tool | 4 Exploitation | JWT attack toolkit |
-| `run_nikto` | nikto | 3 Delivery | Web server scanning |
-| `run_interactsh` | interactsh-client | 6 C2 | OOB callback detection |
+| `run_metasploit` | msfconsole | PoC Chain | Exploit search, module suggestions |
 
 All runners live in `beatrix/core/external_tools.py` (1,144 LOC). `ExternalToolkit` is a lazy singleton on `KillChainExecutor` — instantiated once per hunt via `self.toolkit` property.
 
@@ -80,10 +79,10 @@ All runners live in `beatrix/core/external_tools.py` (1,144 LOC). `ExternalToolk
 |-------|------|-------------|----------------|
 | 1 | Reconnaissance | EndpointProber, JSBundleAnalyzer, SubdomainTakeoverScanner | subfinder, nmap, whatweb, webanalyze, wafw00f |
 | 2 | Weaponization | HeaderSecurityScanner, ErrorDisclosureScanner | ffuf |
-| 3 | Delivery | NucleiScanner, CORSScanner, CachePoisoningScanner | nuclei, nikto |
+| 3 | Delivery | NucleiScanner, CORSScanner, CachePoisoningScanner | nuclei |
 | 4 | Exploitation | InjectionScanner, SSRFScanner, IDORScanner, AuthScanner, SSTIScanner, XXEScanner, + 8 more | sqlmap, dalfox, commix, jwt_tool |
 | 5 | Installation | FileUploadScanner | — |
-| 6 | Command & Control | OOBDetector polling | interactsh-client |
+| 6 | Command & Control | InteractshClient OOB polling | — |
 | 7 | Objectives | IssueConsolidator dedup + impact assessment | — |
 
 ---
