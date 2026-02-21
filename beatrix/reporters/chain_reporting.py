@@ -581,7 +581,7 @@ class AttackChainReportGenerator:
             active = "active" if count > 0 else ""
             count_class = "" if count > 0 else "zero"
 
-            KILL_CHAIN_MITRE_MAPPING[phase]
+            mapping = KILL_CHAIN_MITRE_MAPPING[phase]
 
             phases_html.append(f"""
                 <div class="kc-phase {active}">
@@ -622,7 +622,7 @@ class AttackChainReportGenerator:
                 t = e.finding_type
                 finding_types[t] = finding_types.get(t, 0) + 1
 
-            types_str = ', '.join(f"{t} ({c})" for t, c in finding_types.items()) or "None"
+            types_str = ', '.join(f"{html.escape(t)} ({c})" for t, c in finding_types.items()) or "None"
 
             rows.append(f"""
                 <tr>

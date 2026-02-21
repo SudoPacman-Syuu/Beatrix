@@ -574,11 +574,11 @@ class CorrelatedEvent:
     # Risk scoring
     base_cvss: float = 0.0
     chain_multiplier: float = 1.0
-    effective_risk: float = 0.0
 
-    def __post_init__(self):
-        """Calculate effective risk after initialization"""
-        self.effective_risk = self.base_cvss * self.chain_multiplier
+    @property
+    def effective_risk(self) -> float:
+        """Chain-adjusted risk score — recalculated when chain_multiplier changes."""
+        return self.base_cvss * self.chain_multiplier
 
 
 # =============================================================================

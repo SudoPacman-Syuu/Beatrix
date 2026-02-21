@@ -707,7 +707,7 @@ class ImpactValidator:
         # Check for generic "hardcoded credential" findings that are actually
         # just client-side config
         if ("hardcoded" in combined or "embedded" in combined or
-            "exposed.*credential" in combined or "credential.*expos" in combined):
+            re.search(r"exposed.*credential", combined) or re.search(r"credential.*expos", combined)):
             benign_indicators = [
                 r"instrumentation", r"dsn", r"client.?id", r"tracking",
                 r"analytics", r"maps?\.api", r"public.?key",
