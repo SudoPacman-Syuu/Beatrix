@@ -1,7 +1,7 @@
 # BEATRIX Architecture
 
 **Version:** 1.0.0  
-**Last Updated:** February 21, 2026
+**Last Updated:** February 23, 2026
 
 ---
 
@@ -9,21 +9,21 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              BEATRIX CLI                                     │
-│                 beatrix hunt / strike / ghost / recon / batch                 │
-│                         (Click + Rich terminal UI)                           │
+│                              BEATRIX CLI                                    │
+│                 beatrix hunt / strike / ghost / recon / batch               │
+│                         (Click + Rich terminal UI)                          │
 └─────────────────────────────────────────┬───────────────────────────────────┘
                                           │
                                           ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           CORE ENGINE (engine.py)                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │ Kill Chain   │  │ 29 Scanner   │  │  External    │  │  Issue       │    │
-│  │ Executor     │  │ Modules      │  │  Toolkit     │  │ Consolidator │    │
-│  │ (7 phases)   │  │ (BaseScanner)│  │ (13 tools)   │  │ (dedup)      │    │
-│  └──────┬───────┘  └──────────────┘  └──────────────┘  └──────────────┘    │
-│         │                                                                    │
-│         ▼                                                                    │
+│                           CORE ENGINE (engine.py)                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │ Kill Chain   │  │ 29 Scanner   │  │  External    │  │  Issue       │     │
+│  │ Executor     │  │ Modules      │  │  Toolkit     │  │ Consolidator │     │
+│  │ (7 phases)   │  │ (BaseScanner)│  │ (13 tools)   │  │ (dedup)      │     │
+│  └──────┬───────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
+│         │                                                                   │
+│         ▼                                                                   │
 │  Phase 1: _handle_recon ──────────────→ crawl, endpoint_prober, js_analysis │
 │  Phase 2: _handle_weaponization ──────→ takeover, error_disclosure, cache   │
 │  Phase 3: _handle_delivery ───────────→ cors, redirect, smuggling, websocket│
@@ -41,7 +41,7 @@
 ├───────────────────────┤ ├───────────────────────┤ ├───────────────────────┤
 │ Finding dataclass     │ │ 13 async subprocess   │ │ Markdown / JSON       │
 │ → IssueConsolidator   │ │ runners with timeouts │ │ HTML chain reports    │
-│ → FindingsDB (SQLite) │ │ stderr captured       │ │ MITRE ATT&CK heatmap │
+│ → FindingsDB (SQLite) │ │ stderr captured       │ │ MITRE ATT&CK heatmap  │
 │ → ImpactValidator     │ │ Lazy singleton per    │ │ HackerOne submission  │
 │ → ReadinessGate       │ │   kill chain run      │ │                       │
 └───────────────────────┘ └───────────────────────┘ └───────────────────────┘
@@ -87,10 +87,10 @@ module key shown below.
 |-------|----------------|
 | A01 Broken Access Control | `idor`, `bac`, `mass_assignment`, `endpoint_prober` |
 | A02 Cryptographic Failures | `cors`, `headers`, `graphql` |
-| A03 Injection | `injection`, `ssti`, `xxe`, `deserialization` + sqlmap/dalfox/commix |
+| A03 Injection | `injection` (57K+ payloads), `ssti`, `xxe`, `deserialization` + sqlmap/dalfox/commix |
 | A04 Insecure Design | `payment`, `business_logic`, `file_upload` |
 | A05 Security Misconfiguration | `error_disclosure`, `cache_poisoning`, `js_analysis` |
-| A06 Vulnerable Components | `nuclei` (8000+ CVE templates) |
+| A06 Vulnerable Components | `nuclei` (12,600+ CVE templates) |
 | A07 Auth Failures | `auth` + jwt_tool |
 | A08 Software Integrity | `prototype_pollution`, `deserialization` |
 | A09 Logging Failures | (covered via error_disclosure probing) |
@@ -127,12 +127,13 @@ beatrix/
 │   ├── parallel_haiku.py          # Concurrent AI workers
 │   ├── ssh_auditor.py             # SSH configuration auditing
 │   ├── auto_register.py           # Scanner auto-discovery
+│   ├── seclists_manager.py        # Dynamic wordlist engine (SecLists + PATT, 57K+ payloads)
 │   ├── scan_check_types.py        # Scan check type definitions
 │   └── packet_crafter.py          # Custom packet construction
 ├── scanners/
 │   ├── base.py                    # BaseScanner ABC — rate limiter, httpx client
 │   ├── crawler.py                 # Target spider — soft-404, forms, params, tech
-│   ├── injection.py               # SQLi, XSS, CMDi (time-based + canary)
+│   ├── injection.py               # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads via SecLists + PATT)
 │   ├── ssrf.py                    # 44-payload SSRF scanner
 │   ├── cors.py                    # 6-technique CORS bypass
 │   ├── auth.py                    # JWT, OAuth, 2FA, Keycloak, session
@@ -233,6 +234,33 @@ beatrix/
 6. OUTPUT
    Rich terminal display + optional file reports + HackerOne submission
 ```
+
+---
+
+## Dynamic Wordlist Engine (`seclists_manager.py`)
+
+The `SecListsManager` provides 57,000+ unique injection payloads fetched on-demand from GitHub:
+
+- **90 raw GitHub URLs**: 27 from SecLists + 63 from PayloadsAllTheThings
+- **11 payload categories**: `sqli`, `xss`, `cmdi`, `ssti`, `lfi`, `ssrf`, `nosqli`, `ldap`, `xxe`, `redirect`, `crlf`
+- **Disk + memory cache**: `~/.cache/beatrix/wordlists/` with 7-day TTL
+- **Fallback payloads**: Built-in per-category fallbacks when offline
+- **Singleton pattern**: `get_manager()` returns shared instance
+
+### Consumers
+
+| Module | How It Uses SecListsManager |
+|--------|-----------------------------|
+| `InjectionScanner` (`scanners/injection.py`) | `_augment_with_seclists()` — augments built-in payloads with all matching category wordlists |
+| `FFufEngine` (`core/ffuf_engine.py`) | `get_wordlist()` — fetches specific wordlist files for exhaustive fuzzing modes |
+
+### Payload Breakdown
+
+| Source | Entries | Raw Payloads |
+|--------|---------|-------------|
+| SecLists | 27 | ~32,700 |
+| PayloadsAllTheThings | 63 | ~37,100 |
+| **Combined (deduplicated)** | **90** | **~57,000** |
 
 ---
 

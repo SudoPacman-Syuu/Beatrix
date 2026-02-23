@@ -186,8 +186,8 @@ Run `beatrix arsenal` for the full table. 29 registered modules across 5 kill ch
 
 | Module | What It Does |
 |--------|-------------|
-| `injection` | SQLi, XSS, CMDi with WAF bypass |
-| `ssrf` | 44 payloads, cloud metadata, internal service access |
+| `injection` | SQLi, XSS, CMDi, LFI, SSTI — 57K+ payloads via SecLists + PayloadsAllTheThings |
+| `ssrf` | 44+ payloads, cloud metadata, internal service access |
 | `idor` | Sequential/UUID/negative ID manipulation |
 | `bac` | Method override, force browsing, privilege escalation |
 | `auth` | JWT attacks, 2FA bypass, session management |
@@ -199,7 +199,7 @@ Run `beatrix arsenal` for the full table. 29 registered modules across 5 kill ch
 | `business_logic` | Race conditions, boundary testing |
 | `redos` | Regular expression denial of service |
 | `payment` | Checkout flow manipulation, price tampering |
-| `nuclei` | 8000+ CVE/misconfig templates |
+| `nuclei` | 12,600+ CVE/misconfig templates |
 
 **Phase 5 — Installation:**
 
@@ -347,6 +347,39 @@ beatrix github-recon acme-corp --repo acme-corp/api-server -o report.md
 ```bash
 # Validate findings before submission
 beatrix validate beatrix_report.json
+
+# Validate with verbose output
+beatrix validate scan_results.json -v
+```
+
+Accepts both envelope format (`{"findings": [...], "metadata": {...}}`) and bare lists (`[...]`).
+
+### JSON Output Format
+
+All `-o` / `--output` JSON exports use a standardized envelope:
+
+```json
+{
+  "findings": [
+    {
+      "title": "CORS Misconfiguration",
+      "severity": "high",
+      "confidence": "confirmed",
+      "url": "https://example.com/api",
+      "scanner_module": "cors",
+      "description": "...",
+      "evidence": "...",
+      "remediation": "..."
+    }
+  ],
+  "metadata": {
+    "tool": "beatrix",
+    "version": "1.0.0",
+    "target": "example.com",
+    "total_findings": 1,
+    "generated_at": "2026-02-23T12:00:00Z"
+  }
+}
 ```
 
 ---
@@ -425,6 +458,7 @@ beatrix/
 │   ├── kill_chain.py        # 7-phase kill chain executor
 │   ├── external_tools.py    # 13 async subprocess tool runners
 │   ├── types.py             # Finding, Severity, Confidence, ScanContext
+│   ├── seclists_manager.py  # Dynamic wordlist engine (SecLists + PayloadsAllTheThings)
 │   ├── oob_detector.py      # OOB callback manager (interact.sh)
 │   ├── correlation_engine.py # MITRE ATT&CK correlation
 │   ├── findings_db.py       # SQLite findings storage (WAL mode)
@@ -433,7 +467,7 @@ beatrix/
 ├── scanners/
 │   ├── base.py              # BaseScanner ABC — rate limiting, httpx client
 │   ├── crawler.py           # Target spider — foundation for all scanning
-│   ├── injection.py         # SQLi, XSS, CMDi with WAF bypass
+│   ├── injection.py         # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads)
 │   ├── ssrf.py              # 44-payload SSRF scanner
 │   ├── cors.py              # 6-technique CORS bypass scanner
 │   ├── auth.py              # JWT, OAuth, 2FA, session attacks

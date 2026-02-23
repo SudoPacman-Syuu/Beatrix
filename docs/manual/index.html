@@ -564,6 +564,8 @@
                 <li class="sub-item"><a href="#cmd-manual">manual</a></li>
                 <li class="sub-item"><a href="#cmd-setup">setup</a></li>
                 
+                <li><a href="#json-format">4b. JSON Output Format</a></li>
+                
                 <li><a href="#modules">5. The Arsenal (29 Modules)</a></li>
                 <li class="sub-item"><a href="#mod-recon">Phase 1: Reconnaissance</a></li>
                 <li class="sub-item"><a href="#mod-weap">Phase 2: Weaponization</a></li>
@@ -627,7 +629,7 @@ sudo pip install .</code></pre>
                     <strong>Auto-Install:</strong> You never need to install these manually. The installer handles Go, Python, Node.js, and system packages automatically. To re-run the setup later: <code>beatrix setup</code>. To check status: <code>beatrix setup --check</code>.
                 </div>
                 <ul>
-                    <li><code>nuclei</code> (Go) - Used for CVE scanning, misconfigs, and default logins (8000+ templates).</li>
+                    <li><code>nuclei</code> (Go) - Used for CVE scanning, misconfigs, and default logins (12,600+ templates).</li>
                     <li><code>subfinder</code> (Go) - Used for passive subdomain enumeration.</li>
                     <li><code>httpx</code> (Go) - Used for rapid live-host probing.</li>
                     <li><code>ffuf</code> (Go) - Used for directory fuzzing and parameter discovery.</li>
@@ -675,7 +677,7 @@ beatrix config --set ai.model claude-3-5-sonnet-20241022</code></pre>
                     <li><strong>🔍 Reconnaissance:</strong> Target discovery, subdomain enumeration (via <code>subfinder</code>), port scanning (via <code>nmap</code>), service detection, and JavaScript bundle analysis.</li>
                     <li><strong>⚔️ Weaponization:</strong> Payload crafting, WAF fingerprinting, and attack planning.</li>
                     <li><strong>📦 Delivery:</strong> Endpoint discovery, parameter fuzzing, and request delivery.</li>
-                    <li><strong>💥 Exploitation:</strong> Full vulnerability testing using 14 scanner modules (Injection, SSRF, IDOR, BAC, Auth, SSTI, XXE, etc.). Confirmed findings are escalated to deep exploitation tools (sqlmap, dalfox, commix, jwt_tool).</li>
+                    <li><strong>💥 Exploitation:</strong> Full vulnerability testing using 14 scanner modules (Injection, SSRF, IDOR, BAC, Auth, SSTI, XXE, etc.) with <strong>57,000+ dynamically-fetched payloads</strong> from SecLists and PayloadsAllTheThings (cached locally with 7-day TTL). Confirmed findings are escalated to deep exploitation tools (sqlmap, dalfox, commix, jwt_tool).</li>
                     <li><strong>🔧 Installation:</strong> Persistence testing (e.g., File Upload bypasses — extension bypass, polyglot, path traversal).</li>
                     <li><strong>📡 Command & Control:</strong> OOB callback polling via interact.sh — correlates DNS/HTTP callbacks from blind SSRF, XXE, and RCE payloads injected during Phase 4. Confirmed interactions become CRITICAL findings.</li>
                     <li><strong>🎯 Objectives:</strong> Finding aggregation, deduplication, and impact assessment.</li>
@@ -1017,8 +1019,15 @@ beatrix haiku-hunt example.com --deep --region eu-west-1 -o haiku_results.json</
                     <div class="detail-body">
                         <pre><code>beatrix validate FINDINGS_FILE</code></pre>
                         <p>Takes a JSON report file with findings and re-tests each one to confirm exploitability. Filters out false positives before you submit to a bounty program.</p>
+                        <p><strong>Input Format:</strong> Accepts both the standard envelope format (<code>{"findings": [...], "metadata": {...}}</code>) and bare finding lists (<code>[...]</code>) for backward compatibility.</p>
+                        <table class="flag-table">
+                            <tr><td>-v, --verbose</td><td>Show detailed validation progress</td></tr>
+                        </table>
                         <pre><code># Validate a report
-beatrix validate scan_results.json</code></pre>
+beatrix validate scan_results.json
+
+# Validate with verbose output
+beatrix validate scan_results.json -v</code></pre>
                     </div>
                 </details>
 
@@ -1135,6 +1144,44 @@ beatrix mobile intercept --apk target_app.apk -p com.target.app -d 600
 beatrix mobile analyze capture.json --secrets known_keys.json</code></pre>
                     </div>
                 </details>
+            </section>
+
+            <!-- ═══════════════════════════════════════════════════════════════ -->
+            <!-- JSON OUTPUT FORMAT                                              -->
+            <!-- ═══════════════════════════════════════════════════════════════ -->
+            <section id="json-format">
+                <h2>4b. JSON Output Format</h2>
+                <p>All Beatrix commands that produce JSON output (<code>-o report.json</code>, <code>findings export --fmt json</code>, etc.) use a standardized <strong>envelope format</strong>:</p>
+
+                <pre><code>{
+  "findings": [
+    {
+      "title": "CORS Misconfiguration",
+      "severity": "high",
+      "confidence": "confirmed",
+      "url": "https://example.com/api",
+      "scanner_module": "cors",
+      "description": "Arbitrary origin reflected with credentials",
+      "evidence": "Access-Control-Allow-Origin: https://evil.com",
+      "remediation": "Whitelist specific trusted origins"
+    }
+  ],
+  "metadata": {
+    "tool": "beatrix",
+    "version": "1.0.0",
+    "target": "example.com",
+    "total_findings": 1,
+    "generated_at": "2026-02-23T12:00:00Z"
+  }
+}</code></pre>
+
+                <p><strong>Key points:</strong></p>
+                <ul>
+                    <li><code>findings</code> — Array of finding objects, each with title, severity, confidence, url, scanner_module, description, evidence, and remediation fields.</li>
+                    <li><code>metadata</code> — Envelope metadata including tool name, version, target, total count, and ISO 8601 timestamp.</li>
+                    <li>The <code>validate</code> command accepts both this envelope format and bare finding lists (<code>[...]</code>) for backward compatibility.</li>
+                    <li><code>findings export --fmt jsonl</code> produces newline-delimited JSON (one finding per line) without the envelope.</li>
+                </ul>
             </section>
 
             <section id="modules">
@@ -1348,7 +1395,13 @@ beatrix mobile analyze capture.json --secrets known_keys.json</code></pre>
                 <details>
                     <summary>13. Multi-Vector Injection Scanner (injection.py) <span class="tag">A03</span></summary>
                     <div class="detail-body">
-                        <p><strong>Description:</strong> A comprehensive active scanner that hunts for SQL Injection, Cross-Site Scripting (XSS), Command Injection, and Path Traversal.</p>
+                        <p><strong>Description:</strong> A comprehensive active scanner that hunts for SQL Injection, Cross-Site Scripting (XSS), Command Injection, Path Traversal, and SSTI. <strong>Dynamically fetches 57,000+ payloads</strong> from SecLists and PayloadsAllTheThings via the <code>SecListsManager</code> wordlist engine, with built-in fallback payloads for offline use.</p>
+                        <p><strong>Dynamic Payload Sources:</strong></p>
+                        <ul>
+                            <li><strong>SecLists:</strong> 27 wordlist files — SQLi, XSS, LFI, command injection, SSTI payloads</li>
+                            <li><strong>PayloadsAllTheThings:</strong> 63 Intruder wordlists — SQL injection, XSS, command injection, directory traversal, file inclusion, NoSQL, LDAP, XXE, open redirect, CRLF injection</li>
+                            <li><strong>Caching:</strong> Payloads are cached to disk (<code>~/.cache/beatrix/wordlists/</code>) with 7-day TTL for fast repeat scans</li>
+                        </ul>
                         <p><strong>Technical Execution:</strong></p>
                         <ul>
                             <li><strong>SQL Injection:</strong> Fires error-based payloads (e.g., <code>'</code>, <code>1' OR '1'='1</code>) and parses responses for 9+ database error signatures (MySQL, PostgreSQL, Oracle, MSSQL, SQLite). Also tests time-based blind SQLi (e.g., <code>' OR SLEEP(5)--</code>, <code>pg_sleep(5)</code>) using a dynamic baseline timing mechanism to prevent false positives.</li>

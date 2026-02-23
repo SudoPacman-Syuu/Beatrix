@@ -2,7 +2,7 @@
 
 **Codename:** The Omega Project
 **Version:** 1.0.0 "The Bride"
-**Last Updated:** February 7, 2026
+**Last Updated:** February 23, 2026
 **Current Phase:** Stable — Full audit complete
 **Framework LOC:** ~55,355 (88 Python files across inner package)
 
@@ -12,7 +12,7 @@
 
 | Component | Lines | Files | Status | Notes |
 |-----------|-------|-------|--------|-------|
-| Core Engine | 15,285 | 20 | ✅ Working | Engine, kill chain, types, methodology, external tools, fuzzer, OOB, correlation |
+| Core Engine | 16,150 | 21 | ✅ Working | Engine, kill chain, types, methodology, external tools, fuzzer, OOB, correlation, **seclists_manager (dynamic wordlists)** |
 | Scanner Modules | 27,431 | 39 | ✅ Working | 27 BaseScanner + 2 BaseModule subclasses + support modules |
 | CLI Framework | 2,993 | 2 | ✅ Working | 20 commands via Click + Rich |
 | AI Integration | 1,828 | 4 | ✅ Working | GHOST agent, HaikuGrunt, Bedrock/Anthropic |
@@ -113,10 +113,11 @@ beatrix/                       # Inner framework package
 │   ├── findings_db.py         # Findings persistence
 │   ├── issue_consolidator.py  # Deduplication + consolidation
 │   ├── response_analyzer.py   # HTTP response analysis
+│   ├── seclists_manager.py    # Dynamic wordlist engine (SecLists + PATT, 57K+ payloads)
 │   └── scan_check_types.py    # Scan check type definitions
 ├── scanners/                  # Scanner modules (27.4K LOC, 39 files)
 │   ├── base.py                # BaseScanner ABC, ScanContext
-│   ├── injection.py           # SQLi, XSS, CMDi, LFI, header injection
+│   ├── injection.py           # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads)
 │   ├── ssrf.py                # SSRF (44 payloads, gopher/AWS/GCP/Azure)
 │   ├── idor.py                # IDOR + method override
 │   ├── auth.py                # Authentication bypass
@@ -279,10 +280,10 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 |-------|---------|--------|
 | A01 Broken Access Control | IDORScanner, AuthScanner, MassAssignmentScanner, EndpointProber | ✅ |
 | A02 Cryptographic Failures | CORSScanner, HeaderSecurityScanner, GraphQLScanner | ✅ |
-| A03 Injection | InjectionScanner, SSTIScanner, XXEScanner, DeserializationScanner, PowerInjector | ✅ |
+| A03 Injection | InjectionScanner (57K+ dynamic payloads), SSTIScanner, XXEScanner, DeserializationScanner, PowerInjector | ✅ |
 | A04 Insecure Design | PaymentScanner, BusinessLogicScanner, FileUploadScanner | ✅ |
 | A05 Security Misconfiguration | ErrorDisclosureScanner, JSBundleAnalyzer, CachePoisoningScanner | ✅ |
-| A06 Vulnerable Components | NucleiScanner (CVE templates) | ✅ |
+| A06 Vulnerable Components | NucleiScanner (12,600+ CVE templates) | ✅ |
 | A07 Auth Failures | AuthScanner, CredentialValidator | ✅ |
 | A08 Software Integrity | PrototypePollutionScanner, DeserializationScanner | ✅ |
 | A09 Logging Failures | (covered via error_disclosure probing) | ✅ |
@@ -316,6 +317,47 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - [ ] Integration test: full kill chain on a test target
 - [ ] GHOST: add Bedrock Sonnet support for complex investigations
 - [ ] Explore Agent Bridge for multi-Claude coordination during hunts
+- [x] Dynamic wordlist engine (SecLists + PayloadsAllTheThings)
+- [x] Standardize JSON output format (envelope with metadata)
+- [x] Fix `validate` command crash on bare-list JSON
+- [x] Harden installer (extended extras, dependency verification)
+
+---
+
+### Session 6 — February 23, 2026
+
+**Focus:** Dynamic wordlist engine, PayloadsAllTheThings integration, JSON output standardization
+
+**New module — `seclists_manager.py` (851 LOC):**
+- `SecListsManager` class: dynamic wordlist fetcher with disk + memory cache (7-day TTL)
+- 90 GitHub raw URLs in `DIRECT_URL_CATALOG`: 27 from SecLists, 63 from PayloadsAllTheThings
+- 11 payload categories: `sqli`, `xss`, `cmdi`, `ssti`, `lfi`, `ssrf`, `nosqli`, `ldap`, `xxe`, `redirect`, `crlf`
+- Fallback payloads for offline operation
+- Singleton pattern via `get_manager()`
+- All 90 URLs verified returning HTTP 200, 57,045 unique payloads after dedup
+
+**injection.py — Dynamic payload augmentation:**
+- Added `_init_seclists()`, `_augment_with_seclists()`, `_load_builtin_payloads()` methods
+- InjectionScanner now augments built-in payloads with SecListsManager for all 5 attack categories
+- Validated: 56,481 total payloads loaded (cmdi: 8,776, path: 35,933, sqli: 1,419, ssti: 55, xss: 10,298)
+
+**FFufEngine — Now functional:**
+- `HAS_SECLISTS = True` since `seclists_manager.py` now exists
+- Exhaustive payload loaders working: XSS (6,350), SQLi (389), LFI (1,760), RCE (8,262)
+
+**JSON output standardization:**
+- All `-o` flag paths now produce `{"findings": [...], "metadata": {...}}` envelope
+- `_export_json()` in main.py — updated with envelope + metadata
+- `reporter.export_json()` in reporters/__init__.py — updated with envelope + metadata
+- `findings export --fmt json` — updated with envelope + filter metadata
+- `validate` command — now handles both envelope and bare-list JSON inputs
+
+**install.sh hardening:**
+- All install methods now try `.[extended]` extras first, fallback to base
+- Added `CORE_PYTHON_DEPS` array (28 packages) with import verification
+- Added `verify_python_deps()` and `repair_python_deps()` functions
+
+**Commits:** `b24db94`
 
 ---
 
