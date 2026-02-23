@@ -18,7 +18,7 @@ Key Features:
 Architecture inspired by:
 - sqlmap's exploitation engine
 - Nuclei's workflow system
-- Burp Suite's scan issue reporting
+- Sweet Scanner's scan issue reporting
 - HackerOne report templates
 
 Author: ReconX Framework
@@ -61,7 +61,7 @@ class PoCLanguage(Enum):
     CURL = "curl"
     PYTHON = "python"
     JAVASCRIPT = "javascript"
-    BURP = "burp"
+    SWEET = "sweet"
     NUCLEI = "nuclei"
     RAW_HTTP = "raw_http"
 

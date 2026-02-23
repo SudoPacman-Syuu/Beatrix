@@ -1,12 +1,12 @@
 """
 BEATRIX Response Analyzer
 
-Ported from Burp Suite's ResponseVariationsAnalyzer + ResponseKeywordsAnalyzer.
+Ported from Sweet Scanner's ResponseVariationsAnalyzer + ResponseKeywordsAnalyzer.
 
 Compares HTTP responses to detect subtle differences that indicate
 blind injection, access control bypasses, or behavioral changes.
 
-Uses 30 attribute types extracted from Burp's Montoya API AttributeType enum.
+Uses 30 attribute types for comprehensive response comparison.
 """
 
 import hashlib
@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Set
 
 class AttributeType(Enum):
     """
-    Response attributes to compare (from Burp's Montoya API).
+    Response attributes to compare (from Sweet Scanner's API).
 
     Each attribute captures a different dimension of the response,
     enabling detection of subtle behavioral differences.
@@ -184,7 +184,7 @@ def _extract_attributes(
     body: str,
 ) -> ResponseFingerprint:
     """
-    Extract all 30 Burp-style attribute dimensions from a response.
+    Extract all 30 attribute dimensions from a response.
     """
     attrs: Dict[AttributeType, Any] = {}
     h = {k.lower(): v for k, v in headers.items()}
@@ -254,7 +254,7 @@ class ResponseVariationsAnalyzer:
     Tracks which response attributes vary and which stay constant
     across multiple responses.
 
-    Usage (mirrors Burp's interface):
+    Usage (mirrors Sweet Scanner's interface):
         analyzer = ResponseVariationsAnalyzer()
         analyzer.update(200, headers1, body1)
         analyzer.update(200, headers2, body2)

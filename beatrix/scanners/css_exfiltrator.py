@@ -916,7 +916,7 @@ class CSSExfiltrator(BaseModule):
             "2. The page has CSP with style-src 'unsafe-inline' allowing CSS injection",
             "3. Open browser developer console and inject the following CSS payload:",
             f"   {poc_js[:200]}...",
-            "4. Monitor your DNS collaborator (e.g., Burp Collaborator or Interactsh)",
+            "4. Monitor your DNS collaborator (e.g., Interactsh or custom OOB server)",
             "5. Observe DNS lookups for each character position",
             f"6. The {target['type']} value extracted: {extracted.extracted_value}",
             f"7. This value can be used to: {business_impact[:100]}...",

@@ -5,7 +5,7 @@ Identifies injection points in HTTP requests where payloads can be inserted.
 
 This is the foundation for all injection testing (SQLi, XSS, SSTI, etc).
 
-Based on Burp's insertion point concept:
+Based on Sweet Scanner's insertion point concept:
 - URL parameters
 - Body parameters (form, JSON, XML)
 - Headers
@@ -13,7 +13,7 @@ Based on Burp's insertion point concept:
 - Path segments
 - File names
 
-Reference: Burp's IScannerInsertionPoint interface
+Reference: Sweet Scanner's IScannerInsertionPoint interface
 """
 
 import json

@@ -303,8 +303,8 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 |--------|---------|------|
 | ReconX v1.3 | Reference (older) | ~34K LOC |
 | ReconX v1.4 | Primary port source | ~44K LOC |
-| GHOST/BurpSweet | AI agent source | ~5.6K LOC Java |
-| Burp decompiled | Scanning patterns reference | ~18K Java files |
+| GHOST/Sweet Scanner | AI agent source | ~5.6K LOC Java |
+| Sweet Scanner decompiled | Scanning patterns reference | ~18K Java files |
 
 ---
 

@@ -111,7 +111,7 @@ class SSRFScanner(BaseScanner):
             ("017700000001", "http://017700000001/"),  # Octal
             ("0x7f000001", "http://0x7f000001/"),  # Hex
             ("localtest.me", "http://localtest.me/"),  # DNS that resolves to 127.0.0.1
-            ("spoofed.burpcollaborator.net", "http://spoofed.burpcollaborator.net/"),
+            ("spoofed.oast.live", "http://spoofed.oast.live/"),
             ("[::]", "http://[::]/"),  # IPv6 localhost
             ("[::1]", "http://[::1]/"),  # IPv6 loopback
             ("0", "http://0/"),

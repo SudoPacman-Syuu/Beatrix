@@ -1,7 +1,7 @@
 """
 BEATRIX Scan Check Types
 
-Ported from Burp Suite's ScanCheckType + ActiveScanCheck/PassiveScanCheck pattern.
+Ported from Sweet Scanner's ScanCheckType + ActiveScanCheck/PassiveScanCheck pattern.
 
 Defines the granularity at which scan checks operate and provides
 protocol classes (interfaces) for implementing custom checks.
@@ -16,7 +16,7 @@ from beatrix.core.types import Finding, InsertionPoint
 
 class ScanCheckGranularity(Enum):
     """
-    How often a scan check should run (from Burp's ScanCheckType).
+    How often a scan check should run (from Sweet Scanner's ScanCheckType).
 
     PER_HOST:             Once per unique host
     PER_REQUEST:          Once per unique URL/endpoint
@@ -39,7 +39,7 @@ class PassiveScanCheck(Protocol):
     """
     Protocol for passive scan checks (analyze without sending requests).
 
-    Mirrors Burp's PassiveScanCheck interface.
+    Mirrors Sweet Scanner's PassiveScanCheck interface.
     """
 
     @property
@@ -62,7 +62,7 @@ class ActiveScanCheck(Protocol):
     """
     Protocol for active scan checks (send payloads to insertion points).
 
-    Mirrors Burp's ActiveScanCheck interface.
+    Mirrors Sweet Scanner's ActiveScanCheck interface.
     """
 
     @property
@@ -102,7 +102,7 @@ class ScanCheckRegistry:
     """
     Central registry for all scan checks.
 
-    Mirrors Burp's Scanner.registerActiveScanCheck() / registerPassiveScanCheck().
+    Mirrors Sweet Scanner's registerActiveScanCheck() / registerPassiveScanCheck().
     """
 
     def __init__(self):

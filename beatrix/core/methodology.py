@@ -1236,7 +1236,7 @@ ATTACK_PHASES = [
             "Attempt credential access",
             "Document proof of concept",
         ],
-        tools=["burp_suite", "sqlmap", "metasploit", "custom_scripts"],
+        tools=["beatrix", "sqlmap", "metasploit", "custom_scripts"],
         output_artifacts=["exploitation_log.json", "poc_evidence/", "credentials_found.txt"]
     ),
     AttackPhase(

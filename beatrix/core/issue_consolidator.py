@@ -1,7 +1,7 @@
 """
 BEATRIX Issue Consolidator
 
-Ported from Burp Suite's ConsolidationAction pattern.
+Ported from Sweet Scanner's ConsolidationAction pattern.
 
 Deduplicates findings so the same bug isn't reported twice.
 Uses multi-dimensional similarity: URL, parameter, vuln type,
@@ -37,7 +37,7 @@ class IssueConsolidator:
     """
     Deduplicates findings based on configurable similarity dimensions.
 
-    Mirrors Burp's consolidateIssues() pattern but with richer heuristics.
+    Mirrors Sweet Scanner's consolidateIssues() pattern but with richer heuristics.
 
     Usage:
         consolidator = IssueConsolidator()

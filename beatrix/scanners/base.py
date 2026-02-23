@@ -2,7 +2,7 @@
 BEATRIX Base Scanner
 
 Abstract base class for all scanner modules.
-Inspired by Burp's IScannerCheck interface.
+Inspired by Sweet Scanner's IScannerCheck interface.
 """
 
 import asyncio
@@ -28,7 +28,7 @@ class ScanContext:
     """
     Context passed to scanners containing request/response and metadata.
 
-    Similar to Burp's IHttpRequestResponse but async-friendly.
+    Similar to Sweet Scanner's IHttpRequestResponse but async-friendly.
     """
     # Target info
     url: str
@@ -90,7 +90,7 @@ class BaseScanner(ABC):
     - passive_scan(): Analyze response without sending requests
     - active_scan(): Send attack payloads
 
-    Modeled after Burp's scanner architecture but fully async.
+    Modeled after Sweet Scanner's architecture but fully async.
     """
 
     # Scanner metadata

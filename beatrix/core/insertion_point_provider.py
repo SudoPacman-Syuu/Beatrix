@@ -1,7 +1,7 @@
 """
 BEATRIX Insertion Point Provider
 
-Ported from Burp Suite's AuditInsertionPointProvider + AuditInsertionPointType.
+Ported from Sweet Scanner's AuditInsertionPointProvider + AuditInsertionPointType.
 
 Systematically extracts every injectable location from an HTTP request:
 URL params, body params, cookies, headers, JSON values, XML values,
@@ -23,7 +23,7 @@ class RichInsertionPoint(InsertionPoint):
     Extended insertion point with request-rebuilding capability.
 
     Given a payload, can reconstruct the full modified request.
-    Mirrors Burp's AuditInsertionPoint.buildHttpRequestWithPayload().
+    Mirrors Sweet Scanner's buildHttpRequestWithPayload().
     """
     # Context for rebuilding
     _method: str = "GET"
@@ -174,7 +174,7 @@ def extract_insertion_points(
     """
     Extract ALL insertion points from an HTTP request.
 
-    Mirrors Burp's AuditInsertionPointProvider.provideInsertionPoints().
+    Mirrors Sweet Scanner's provideInsertionPoints().
 
     Returns a list of RichInsertionPoint objects, each capable of
     rebuilding the full request with a payload injected.

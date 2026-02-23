@@ -1,7 +1,7 @@
 """
 BEATRIX OOB Detector
 
-Ported from Burp Suite's Collaborator architecture.
+Ported from Sweet Scanner's Collaborator architecture.
 
 Provides out-of-band (OOB) callback detection for blind vulnerabilities:
 - Blind SSRF
@@ -10,7 +10,7 @@ Provides out-of-band (OOB) callback detection for blind vulnerabilities:
 - Blind SQLi (via DNS exfil)
 
 Supports multiple OOB services:
-- Burp Collaborator (if available)
+- Sweet Scanner Collaborator (if available)
 - interact.sh (open source)
 - Custom webhook/DNS endpoints
 - dnslog.cn

@@ -9,7 +9,7 @@ Tests for common injection vulnerabilities:
 - Path Traversal
 
 Uses insertion points from InsertionPointDetector.
-Inspired by Burp's active scanner approach.
+Inspired by Sweet Scanner's active scanner approach.
 """
 
 import re
