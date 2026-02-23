@@ -38,7 +38,6 @@ import asyncio
 import json
 import secrets
 import socket
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -400,6 +399,11 @@ class PoCServer:
         return f"http://{ip}:{port}"
 
     @property
+    def local_ip(self) -> str:
+        """The reachable local IP address (not the bind address)."""
+        return self._local_ip or "127.0.0.1"
+
+    @property
     def bound_port(self) -> Optional[int]:
         return self._bound_port
 
@@ -479,9 +483,9 @@ class PoCServer:
         collect_url = f"{self.base_url}/collect/{finding_id}"
         html = CORS_POC_TEMPLATE.format(
             finding_title=_html_escape(title),
-            target_url=_html_escape(target_url),
+            target_url=_js_string_escape(target_url),
             origin=_html_escape(origin),
-            collect_url=collect_url,
+            collect_url=_js_string_escape(collect_url),
         )
         self._poc_pages[finding_id] = html
         return f"{self.base_url}/poc/{finding_id}"
@@ -494,8 +498,8 @@ class PoCServer:
         """Register a clickjacking PoC page."""
         collect_url = f"{self.base_url}/collect/{finding_id}"
         html = CLICKJACK_TEMPLATE.format(
-            target_url=_html_escape(target_url),
-            collect_url=collect_url,
+            target_url=_js_string_escape(target_url),
+            collect_url=_js_string_escape(collect_url),
         )
         self._poc_pages[finding_id] = html
         return f"{self.base_url}/poc/{finding_id}"
@@ -522,10 +526,10 @@ class PoCServer:
         key = secrets.token_hex(6)
         results_url = f"{self.base_url}/enumerate/results?key={key}"
         html = ENUMERATE_TEMPLATE.format(
-            target_url=_html_escape(target_url),
+            target_url=_js_string_escape(target_url),
             token_regex=_js_regex(token_regex),
             iterations=iterations,
-            results_url=results_url,
+            results_url=_js_string_escape(results_url),
         )
         self._poc_pages[f"enum_{key}"] = html
         # Pre-register the result slot
@@ -693,8 +697,8 @@ class PoCServer:
         fid = secrets.token_hex(6)
         collect_url = f"{self.base_url}/collect/{fid}"
         html = CLICKJACK_TEMPLATE.format(
-            target_url=_html_escape(target_url),
-            collect_url=collect_url,
+            target_url=_js_string_escape(target_url),
+            collect_url=_js_string_escape(collect_url),
         )
         await self._respond_html(writer, 200, html)
 
@@ -713,10 +717,10 @@ class PoCServer:
 
         self._enum_results[key] = EnumerationResult(target_url=target_url)
         html = ENUMERATE_TEMPLATE.format(
-            target_url=_html_escape(target_url),
+            target_url=_js_string_escape(target_url),
             token_regex=_js_regex(regex),
             iterations=iterations,
-            results_url=results_url,
+            results_url=_js_string_escape(results_url),
         )
         await self._respond_html(writer, 200, html)
 
@@ -856,6 +860,17 @@ def _html_escape(s: str) -> str:
             .replace(">", "&gt;")
             .replace('"', "&quot;")
             .replace("'", "&#x27;"))
+
+
+def _js_string_escape(s: str) -> str:
+    """Escape a string for safe embedding in a JavaScript single-quoted literal."""
+    return (s
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("</", "<\\/"))
 
 
 def _js_regex(pattern: str) -> str:

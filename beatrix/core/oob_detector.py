@@ -380,6 +380,7 @@ class LocalPoCClient:
         self._port = port
         self._poc_server = None
         self._detector: Optional[OOBDetector] = None
+        self._last_poll_count: int = 0  # Track callbacks already processed
 
     async def __aenter__(self) -> "LocalPoCClient":
         from beatrix.core.poc_server import PoCServer
@@ -463,7 +464,7 @@ class LocalPoCClient:
 
     async def _poll_local(self) -> List[Dict]:
         """
-        Poll the local PoCServer for callbacks.
+        Poll the local PoCServer for NEW callbacks since last poll.
 
         Converts PoCServer's OOBCallback objects into the dict format
         expected by OOBDetector.poll().
@@ -471,8 +472,12 @@ class LocalPoCClient:
         if not self._poc_server:
             return []
 
+        all_cbs = self._poc_server.all_callbacks
+        new_cbs = all_cbs[self._last_poll_count:]
+        self._last_poll_count = len(all_cbs)
+
         results = []
-        for cb in self._poc_server.all_callbacks:
+        for cb in new_cbs:
             results.append({
                 "subdomain": cb.uid,
                 "type": "http",

@@ -526,7 +526,9 @@ class CSSExfiltrator(BaseModule):
         # Prefer the engine-managed PoC server when available via config
         poc_server = (self.config or {}).get("poc_server")
         if poc_server and getattr(poc_server, "is_running", False):
-            self.callback_domain = f"{poc_server.host}:{poc_server.port}"
+            from urllib.parse import urlparse
+            parsed = urlparse(poc_server.base_url)
+            self.callback_domain = parsed.netloc  # e.g. "10.0.11.240:41641"
             self._poc_server = poc_server
             return
 
