@@ -4,7 +4,7 @@
 **Version:** 1.0.0 "The Bride"
 **Last Updated:** February 23, 2026
 **Current Phase:** Stable — Full audit complete
-**Framework LOC:** ~55,355 (88 Python files across inner package)
+**Framework LOC:** ~59,678 (91 Python files across inner package)
 
 ---
 
@@ -12,8 +12,8 @@
 
 | Component | Lines | Files | Status | Notes |
 |-----------|-------|-------|--------|-------|
-| Core Engine | 16,150 | 21 | ✅ Working | Engine, kill chain, types, methodology, external tools, fuzzer, OOB, correlation, **seclists_manager (dynamic wordlists)** |
-| Scanner Modules | 27,431 | 39 | ✅ Working | 27 BaseScanner + 2 BaseModule subclasses + support modules |
+| Core Engine | 18,132 | 22 | ✅ Working | Engine, kill chain, types, methodology, external tools, fuzzer, OOB, correlation, **seclists_manager (dynamic wordlists)**, **poc_server (PoC validation HTTP server)** |
+| Scanner Modules | 28,353 | 39 | ✅ Working | 27 BaseScanner + 2 BaseModule subclasses + support modules |
 | CLI Framework | 2,993 | 2 | ✅ Working | 20 commands via Click + Rich |
 | AI Integration | 1,828 | 4 | ✅ Working | GHOST agent, HaikuGrunt, Bedrock/Anthropic |
 | Recon Module | 472 | 1 | ✅ Working | Subdomain enum, tech detect, JS analysis |
@@ -100,7 +100,8 @@ beatrix/                       # Inner framework package
 │   ├── external_tools.py      # 13 async subprocess tool runners (1,144 LOC)
 │   ├── methodology.py         # MITRE ATT&CK / OWASP alignment
 │   ├── correlation_engine.py  # Cross-finding correlation
-│   ├── oob_detector.py        # Out-of-band callback monitor
+│   ├── oob_detector.py        # OOB callback monitor (InteractshClient + LocalPoCClient)
+│   ├── poc_server.py          # Built-in PoC validation HTTP server (890 LOC)
 │   ├── smart_fuzzer.py        # Intelligent fuzzing engine
 │   ├── poc_chain_engine.py    # PoC chain generation
 │   ├── parallel_haiku.py      # Concurrent AI workers
@@ -115,7 +116,7 @@ beatrix/                       # Inner framework package
 │   ├── response_analyzer.py   # HTTP response analysis
 │   ├── seclists_manager.py    # Dynamic wordlist engine (SecLists + PATT, 57K+ payloads)
 │   └── scan_check_types.py    # Scan check type definitions
-├── scanners/                  # Scanner modules (27.4K LOC, 39 files)
+├── scanners/                  # Scanner modules (28.4K LOC, 39 files)
 │   ├── base.py                # BaseScanner ABC, ScanContext
 │   ├── injection.py           # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads)
 │   ├── ssrf.py                # SSRF (44 payloads, gopher/AWS/GCP/Azure)
@@ -321,6 +322,9 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - [x] Standardize JSON output format (envelope with metadata)
 - [x] Fix `validate` command crash on bare-list JSON
 - [x] Harden installer (extended extras, dependency verification)
+- [x] Built-in PoC validation server (eliminates interact.sh dependency)
+- [x] LocalPoCClient — drop-in InteractshClient replacement with dedup
+- [x] Scanner integrations for PoC server (CORS, SSRF, XXE, deserialization, CSS exfiltrator)
 
 ---
 
@@ -358,6 +362,73 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - Added `verify_python_deps()` and `repair_python_deps()` functions
 
 **Commits:** `b24db94`
+
+---
+
+### Session 7 — February 23, 2026
+
+**Focus:** Built-in PoC validation server, zero-dependency OOB callback infrastructure
+
+**New module — `poc_server.py` (890 LOC):**
+- `PoCServer` class: pure `asyncio.start_server` HTTP server — no external dependencies
+- Auto-binds free port via `port=0`, auto-detects local IP via UDP probe to 8.8.8.8
+- Routes: `/cb/{uid}` (OOB callbacks), `/poc/{id}` (PoC pages), `/collect/{id}` (exfil), `/clickjack`, `/enumerate`, `/enumerate/results`, `/health`
+- CORS PoC generation: XHR-based credential leak demonstration pages
+- Clickjacking PoC: iframe overlay with drag-and-drop interaction
+- URL enumeration: browser history/timing-based URL detection
+- Data exfiltration collection endpoint with full request logging
+- JS-safe string escaping (`_js_string_escape`) for template contexts
+- Helper dataclasses: `OOBCallback`, `ExfilData`, `EnumerationResult`
+- HTML templates: `CORS_POC_TEMPLATE`, `CLICKJACK_TEMPLATE`, `ENUMERATE_TEMPLATE`
+
+**`LocalPoCClient` (oob_detector.py addition):**
+- Async context manager wrapping `PoCServer` + `OOBDetector`
+- Drop-in replacement for `InteractshClient` (same `create_payload()` / `poll()` API)
+- `create_payload(vuln_type)` → `OOBPayload` with callback URL
+- `poll()` → `List[OOBInteraction]` with offset-based dedup (only returns NEW callbacks)
+- Auto-start/stop lifecycle via `async with`
+
+**Kill chain integration (`kill_chain.py`):**
+- `PoCServer` started before Phase 3 (Delivery), injected into `ctx.extra["poc_server"]`
+- Scanners in Phase 3-4 consume `poc_server` for OOB callbacks and PoC generation
+- Phase 6 (`_handle_c2`) uses `LocalPoCClient` to poll for confirmed callbacks → CRITICAL findings
+- `PoCServer.stop()` called in `finally` cleanup block
+
+**Scanner integrations (5 modules):**
+- `cors.py`: `_register_live_poc()` calls `poc_server.register_cors_poc()` for browser-ready exploitation PoCs
+- `ssrf.py`: `_inject_oob_payloads()` uses `poc_server.register_oob_payload()` + `oob_url()` for blind SSRF callbacks
+- `xxe.py`: `_inject_poc_server_collaborator()` registers OOB payloads; new `_build_local_oob_payloads()` generates direct callback URLs
+- `deserialization.py`: auto-populates `collaborator_domain` from `poc_server.base_url` for ysoserial payloads
+- `css_exfiltrator.py`: `_setup_callback_server()` uses `poc_server.base_url` for exfil collection
+
+**Commits:** `14853d2`
+
+---
+
+### Session 8 — February 23, 2026
+
+**Focus:** Deep bug audit of PoC server infrastructure — 9 bugs found and fixed
+
+**Critical bugs (2):**
+- `xxe.py`: `register_oob_payload()` called with positional dict arg instead of keyword args (`vuln_type=`, `target_url=`) — would crash at runtime
+- `xxe.py`: Used `poc_server.host` (bind address `0.0.0.0`) instead of `poc_server.base_url` parsed netloc — all OOB URLs unreachable
+
+**High severity bugs (2):**
+- `xxe.py`: Prepended canary as subdomain to `IP:port` producing invalid URLs like `http://canary.10.0.11.240:41641/` — replaced with new `_build_local_oob_payloads()` using direct `/cb/{uid}` callback URLs
+- `css_exfiltrator.py`: Same `0.0.0.0` bind address bug in `callback_domain` — fixed to parse `base_url`
+
+**Medium severity bugs (3):**
+- `oob_detector.py`: `_poll_local()` returned ALL callbacks on every poll (no dedup) — added `_last_poll_count` offset tracking, now only returns new callbacks since last poll
+- `xxe.py`: Discarded `register_oob_payload` return value — now uses `oob_url()` properly in local payloads
+- `css_exfiltrator.py`: Reads `poc_server` from `self.config` not `ctx.extra` — documented as acceptable (different module architecture: BaseModule not BaseScanner)
+
+**Low severity bugs (2):**
+- `poc_server.py`: Unused `import time` — removed
+- `poc_server.py`: `_html_escape()` used in JavaScript `<script>` contexts mangling `&` in URLs — added `_js_string_escape()`, updated all template formatters
+
+**Testing:** All 14 functional tests pass (PoCServer: 8, LocalPoCClient dedup: 3, imports: 3). All files compile cleanly via `py_compile`.
+
+**Commits:** `fa690fc`
 
 ---
 

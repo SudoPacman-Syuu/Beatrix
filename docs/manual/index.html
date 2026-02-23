@@ -679,7 +679,7 @@ beatrix config --set ai.model claude-3-5-sonnet-20241022</code></pre>
                     <li><strong>📦 Delivery:</strong> Endpoint discovery, parameter fuzzing, and request delivery.</li>
                     <li><strong>💥 Exploitation:</strong> Full vulnerability testing using 14 scanner modules (Injection, SSRF, IDOR, BAC, Auth, SSTI, XXE, etc.) with <strong>57,000+ dynamically-fetched payloads</strong> from SecLists and PayloadsAllTheThings (cached locally with 7-day TTL). Confirmed findings are escalated to deep exploitation tools (sqlmap, dalfox, commix, jwt_tool).</li>
                     <li><strong>🔧 Installation:</strong> Persistence testing (e.g., File Upload bypasses — extension bypass, polyglot, path traversal).</li>
-                    <li><strong>📡 Command & Control:</strong> OOB callback polling via interact.sh — correlates DNS/HTTP callbacks from blind SSRF, XXE, and RCE payloads injected during Phase 4. Confirmed interactions become CRITICAL findings.</li>
+                    <li><strong>📡 Command &amp; Control:</strong> OOB callback polling via the built-in <code>PoCServer</code> (pure asyncio HTTP server, auto-binds free port, auto-detects local IP) or external <code>interact.sh</code>. The <code>LocalPoCClient</code> wraps the PoC server with offset-based dedup polling &mdash; correlates DNS/HTTP callbacks from blind SSRF, XXE, and RCE payloads injected during Phase 4. Confirmed interactions become CRITICAL findings. The PoC server also hosts CORS exploitation PoCs, clickjacking PoCs, and data exfiltration collection endpoints.</li>
                     <li><strong>🎯 Objectives:</strong> Finding aggregation, deduplication, and impact assessment.</li>
                 </ol>
             </section>
@@ -1338,6 +1338,7 @@ beatrix mobile analyze capture.json --secrets known_keys.json</code></pre>
                             <li><strong>Regex Bypasses:</strong> Tests edge-case characters that often break poorly written regexes in CORS configurations, such as underscores (<code>https://target_.evil.com</code>) and backticks.</li>
                             <li><strong>Authenticated Testing:</strong> If the scanner has cookies or auth headers, it tests the CORS bypasses <em>with</em> authentication. If the bypass succeeds and the response contains PII (emails, phone numbers, addresses), the finding is immediately upgraded to <strong>CRITICAL</strong>.</li>
                             <li><strong>Preflight (OPTIONS) Testing:</strong> Sends <code>OPTIONS</code> requests requesting <code>PUT/DELETE</code> methods. If the server replies with <code>Access-Control-Allow-Credentials: true</code> and allows write methods from an evil origin, it flags a critical state-changing CORS vulnerability.</li>
+                            <li><strong>Live PoC Generation:</strong> When the built-in <code>PoCServer</code> is active, confirmed CORS misconfigurations automatically generate browser-ready exploitation PoC pages (XHR + credential leak) accessible at <code>/poc/{id}</code> on the PoC server.</li>
                         </ul>
                     </div>
                 </details>
@@ -1432,7 +1433,7 @@ beatrix mobile analyze capture.json --secrets known_keys.json</code></pre>
                         <p><strong>Technical Execution:</strong></p>
                         <ul>
                             <li><strong>In-Band File Read:</strong> Injects <code>ENTITY</code> declarations to read OS files (<code>/etc/passwd</code>, <code>C:\windows\win.ini</code>). Uses <code>php://filter/convert.base64-encode</code> to bypass binary parsing issues in PHP applications.</li>
-                            <li><strong>Blind/OOB XXE:</strong> Uses a collaborator domain to detect blind XXE via HTTP callbacks (<code>&lt;!ENTITY xxe SYSTEM "http://collaborator/"&gt;</code>) and DNS-only callbacks (to bypass HTTP egress filters).</li>
+                            <li><strong>Blind/OOB XXE:</strong> Uses the built-in <code>PoCServer</code> (or external collaborator) to detect blind XXE via direct HTTP callbacks to <code>/cb/{uid}</code> endpoints. When using the local PoC server, payloads use direct callback URLs (avoiding broken subdomain-on-IP patterns). Also supports DNS-only callbacks (to bypass HTTP egress filters).</li>
                             <li><strong>Error-Based XXE:</strong> Provokes parser errors that leak file contents by referencing non-existent files or invalid URI schemes (e.g., <code>invalid:///%file;</code>).</li>
                             <li><strong>Advanced Vectors:</strong> Tests XInclude attacks (<code>&lt;xi:include parse="text" href="file:///etc/passwd"/&gt;</code>) when the DOCTYPE cannot be modified, parameter entity injection (<code>%entity;</code>) for WAF bypasses, and UTF-16 encoding bypasses.</li>
                             <li><strong>XXE to SSRF:</strong> Attempts to read cloud metadata endpoints (AWS IMDSv1, GCP, Azure) and Kubernetes service account tokens via XXE.</li>

@@ -27,24 +27,28 @@
 │  Phase 1: _handle_recon ──────────────→ crawl, endpoint_prober, js_analysis │
 │  Phase 2: _handle_weaponization ──────→ takeover, error_disclosure, cache   │
 │  Phase 3: _handle_delivery ───────────→ cors, redirect, smuggling, websocket│
+│         ├── PoCServer starts ─────────→ auto-binds free port, detects IP    │
 │  Phase 4: _handle_exploitation ───────→ injection, ssrf, idor, auth, nuclei │
-│           └── deep exploit tools ─────→ sqlmap, dalfox, commix, jwt_tool    │
+│           ├── deep exploit tools ─────→ sqlmap, dalfox, commix, jwt_tool    │
+│           └── scanners use PoCServer ─→ OOB callbacks, CORS/clickjack PoCs  │
 │  Phase 5: _handle_installation ───────→ file_upload                         │
 │  Phase 6: _handle_c2 ────────────────→ OOB callback polling + correlation   │
+│           └── LocalPoCClient | interact.sh (auto-selected)                  │
 │  Phase 7: _handle_actions ────────────→ aggregation (findings in state)     │
 └─────────────────────────────────────────┬───────────────────────────────────┘
                                           │
-                    ┌─────────────────────┼─────────────────────┐
-                    ▼                     ▼                     ▼
-┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
-│  FINDINGS PIPELINE    │ │  EXTERNAL TOOLS       │ │  REPORTING            │
-├───────────────────────┤ ├───────────────────────┤ ├───────────────────────┤
-│ Finding dataclass     │ │ 13 async subprocess   │ │ Markdown / JSON       │
-│ → IssueConsolidator   │ │ runners with timeouts │ │ HTML chain reports    │
-│ → FindingsDB (SQLite) │ │ stderr captured       │ │ MITRE ATT&CK heatmap  │
-│ → ImpactValidator     │ │ Lazy singleton per    │ │ HackerOne submission  │
-│ → ReadinessGate       │ │   kill chain run      │ │                       │
-└───────────────────────┘ └───────────────────────┘ └───────────────────────┘
+              ┌───────────────┬───────────┼───────────┬─────────────────┐
+              ▼               ▼           ▼           ▼                 ▼
+┌──────────────────┐ ┌──────────────┐ ┌────────────────┐ ┌───────────────────┐
+│ FINDINGS PIPELINE│ │ EXTERNAL     │ │  PoC SERVER    │ │ REPORTING         │
+├──────────────────┤ │ TOOLS        │ │  (poc_server)  │ ├───────────────────┤
+│ Finding dataclass│ ├──────────────┤ ├────────────────┤ │ Markdown / JSON   │
+│ → Consolidator   │ │ 13 async     │ │ Pure asyncio   │ │ HTML chain reports│
+│ → FindingsDB     │ │ subprocess   │ │ HTTP server    │ │ MITRE ATT&CK map │
+│ → ImpactValidator│ │ runners with │ │ OOB callbacks  │ │ HackerOne submit  │
+│ → ReadinessGate  │ │ timeouts     │ │ CORS/click PoC │ │                   │
+└──────────────────┘ └──────────────┘ │ exfil collect  │ └───────────────────┘
+                                      └────────────────┘
 ```
 
 ---
@@ -62,7 +66,7 @@ module key shown below.
 | 3. Delivery | `_handle_delivery` | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` |
 | 4. Exploitation | `_handle_exploitation` | `injection`, `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` + external: sqlmap, dalfox, commix, jwt_tool |
 | 5. Installation | `_handle_installation` | `file_upload` |
-| 6. C2 | `_handle_c2` | OOB detector polling (interact.sh) |
+| 6. C2 | `_handle_c2` | OOB detector polling — `LocalPoCClient` (built-in) or `InteractshClient` (external). PoCServer callbacks are polled with dedup tracking. |
 | 7. Actions | `_handle_actions` | Aggregation only — findings collected via `KillChainState.all_findings` |
 
 ---
@@ -78,6 +82,71 @@ module key shown below.
 | TA0004 | Privilege Escalation | IDOR, BAC, mass assignment, role confusion |
 | TA0009 | Collection | GraphQL introspection, API scraping, error disclosure |
 | TA0010 | Exfiltration | SSRF, XXE, OOB callbacks, CORS abuse |
+
+---
+
+## PoC Validation Server (`poc_server.py`)
+
+Beatrix includes a **built-in PoC validation server** — a pure `asyncio` HTTP server that eliminates the dependency on external collaborator services (interact.sh) for OOB callback detection and automated PoC generation.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        PoCServer (890 LOC)                      │
+│  Pure asyncio.start_server — no external dependencies          │
+├─────────────────────────────────────────────────────────────────┤
+│  Routes:                                                        │
+│    /cb/{uid}        OOB callback endpoint (GET/POST)           │
+│    /poc/{id}        Serve generated PoC pages                  │
+│    /collect/{id}    Exfiltration data collection                │
+│    /clickjack       Clickjacking PoC generator                 │
+│    /enumerate       URL enumeration via browser redirect        │
+│    /enumerate/results  Enumeration results collection           │
+│    /health          Health check                                │
+├─────────────────────────────────────────────────────────────────┤
+│  Features:                                                      │
+│    • Auto-binds free port (port=0)                             │
+│    • Auto-detects local IP (UDP probe to 8.8.8.8)             │
+│    • CORS PoC generation (XHR + credential leak)               │
+│    • Clickjacking PoC (iframe overlay)                         │
+│    • URL enumeration via browser history/timing                │
+│    • Data exfiltration collection endpoint                     │
+│    • JS-safe string escaping for template contexts             │
+│    • Full callback logging with timestamps + source IP         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  LocalPoCClient (oob_detector.py)                │
+│  Async context manager wrapping PoCServer + OOBDetector         │
+├─────────────────────────────────────────────────────────────────┤
+│  • Drop-in replacement for InteractshClient                    │
+│  • create_payload(vuln_type) → OOBPayload with callback URL    │
+│  • poll() → List[OOBInteraction] (with dedup tracking)         │
+│  • Auto-start/stop lifecycle via async with                    │
+│  • Offset-based dedup: only returns NEW callbacks per poll     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Kill Chain Integration
+
+| Phase | Integration Point |
+|-------|-------------------|
+| Before Phase 3 | `PoCServer` started, injected into `ctx.extra["poc_server"]` |
+| Phase 3-4 | Scanners (CORS, SSRF, XXE, deserialization, CSS exfiltrator) use `poc_server` for OOB callbacks and PoC generation |
+| Phase 6 | `LocalPoCClient.poll()` retrieves new callbacks, creates CRITICAL findings |
+| Finally | `PoCServer.stop()` called in cleanup |
+
+### Scanner Integrations
+
+| Scanner | How It Uses PoCServer |
+|---------|----------------------|
+| `cors.py` | `register_cors_poc()` — generates browser-ready CORS exploitation PoC pages |
+| `ssrf.py` | `register_oob_payload()` + `oob_url()` — OOB callback URLs for blind SSRF |
+| `xxe.py` | `register_oob_payload()` + `oob_url()` — direct callback URLs (avoids broken subdomain-on-IP patterns) |
+| `deserialization.py` | `base_url` netloc as collaborator domain for ysoserial payloads |
+| `css_exfiltrator.py` | `base_url` netloc as callback domain for CSS exfil collection |
 
 ---
 
@@ -111,7 +180,8 @@ beatrix/
 │   ├── kill_chain.py              # KillChainExecutor — 7-phase state machine
 │   ├── external_tools.py          # 13 async tool runners (ExternalToolkit)
 │   ├── types.py                   # Finding, Severity, Confidence, ScanContext
-│   ├── oob_detector.py            # OOB callback manager (interact.sh)
+│   ├── oob_detector.py            # OOB callback manager (InteractshClient + LocalPoCClient)
+│   ├── poc_server.py              # Built-in PoC validation HTTP server (890 LOC)
 │   ├── correlation_engine.py      # MITRE ATT&CK event correlation
 │   ├── findings_db.py             # SQLite WAL-mode findings storage
 │   ├── issue_consolidator.py      # Multi-dimensional finding dedup

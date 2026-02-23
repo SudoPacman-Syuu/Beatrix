@@ -130,7 +130,7 @@ Every `hunt` follows the Cyber Kill Chain methodology:
 3. 📦 **Delivery** — CORS, open redirects, OAuth redirect, HTTP smuggling, WebSocket testing
 4. 💥 **Exploitation** — Injection (SQLi/XSS/CMDi), SSRF, IDOR, BAC, auth bypass, SSTI, XXE, deserialization, GraphQL, mass assignment, business logic, ReDoS, payment, nuclei CVE scan. Confirmed findings are escalated to deep exploitation tools (`sqlmap`, `dalfox`, `commix`, `jwt_tool`)
 5. 🔧 **Installation** — File upload bypass, polyglot uploads, path traversal
-6. 📡 **Command & Control** — OOB callback correlation via `interact.sh`, blind SSRF/XXE/RCE confirmation
+6. 📡 **Command & Control** — OOB callback correlation via built-in `PoCServer` (pure asyncio HTTP server, auto-binds free port) or external `interact.sh`. Blind SSRF/XXE/RCE confirmation from callbacks registered during Phase 4. `LocalPoCClient` provides offset-based dedup polling.
 7. 🎯 **Objectives** — Finding aggregation, deduplication, impact assessment
 
 ### Presets
@@ -459,7 +459,8 @@ beatrix/
 │   ├── external_tools.py    # 13 async subprocess tool runners
 │   ├── types.py             # Finding, Severity, Confidence, ScanContext
 │   ├── seclists_manager.py  # Dynamic wordlist engine (SecLists + PayloadsAllTheThings)
-│   ├── oob_detector.py      # OOB callback manager (interact.sh)
+│   ├── oob_detector.py      # OOB callback manager (LocalPoCClient + interact.sh)
+│   ├── poc_server.py        # Built-in PoC validation server (890 LOC, pure asyncio)
 │   ├── correlation_engine.py # MITRE ATT&CK correlation
 │   ├── findings_db.py       # SQLite findings storage (WAL mode)
 │   ├── issue_consolidator.py # Finding deduplication
