@@ -123,8 +123,13 @@ class HeaderSecurityScanner(BaseScanner):
                         url=context.url,
                         description=info["description"],
                         evidence=f"Header '{header}' not found in response",
+                        request=f"GET {context.url}",
+                        response=f"HTTP {response.status_code}",
                         remediation=info["remediation"],
                         references=[f"https://cwe.mitre.org/data/definitions/{info['cwe'].split('-')[1]}.html"],
+                        cwe_id=info["cwe"],
+                        parameter=header,
+                        poc_curl=f"curl -sSk -I {context.url} | grep -i '{header}'",
                     )
 
             # Check for info leakage headers
@@ -138,7 +143,12 @@ class HeaderSecurityScanner(BaseScanner):
                         url=context.url,
                         description=f"Server exposes '{header}' header which reveals technology stack information",
                         evidence=f"{header}: {value}",
+                        request=f"GET {context.url}",
+                        response=f"HTTP {response.status_code}\n{header}: {value}",
                         remediation=f"Remove or obfuscate the {header} header",
+                        cwe_id="CWE-200",
+                        parameter=header,
+                        poc_curl=f"curl -sSk -I {context.url} | grep -i '{header}'",
                     )
 
             # Check cookie security
@@ -214,7 +224,11 @@ class HeaderSecurityScanner(BaseScanner):
                     url=url,
                     description=f"Cookie '{cookie_name}' has security issues: {', '.join(issues)}",
                     evidence=f"Set-Cookie: {cookie[:200]}...",
+                    request=f"GET {url}",
                     remediation="Add Secure, HttpOnly, and SameSite=Strict flags to sensitive cookies",
+                    cwe_id="CWE-614",
+                    parameter=cookie_name,
+                    poc_curl=f"curl -sSk -v {url} 2>&1 | grep -i 'set-cookie.*{cookie_name}'",
                 )
 
     async def _analyze_csp(self, url: str, csp: str) -> AsyncIterator[Finding]:

@@ -307,6 +307,12 @@ class BeatrixEngine:
         raw_findings = state.all_findings
         self.findings = self._consolidate_findings(raw_findings)
 
+        # Deterministic enrichment — fills poc_curl, impact, cwe_id, repro steps
+        if self.findings:
+            from beatrix.core.finding_enricher import FindingEnricher
+            enricher = FindingEnricher()
+            enricher.enrich_batch(self.findings)
+
         # AI enrichment — classify, add OWASP/CWE, remediation suggestions
         if self.config.ai_enabled and self.findings:
             await self._ai_enrich_findings()

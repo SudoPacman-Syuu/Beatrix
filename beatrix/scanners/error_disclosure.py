@@ -257,6 +257,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                 "https://cwe.mitre.org/data/definitions/209.html",
                                 "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/08-Testing_for_Error_Handling/",
                             ],
+                            cwe_id="CWE-209",
+                            poc_curl=f"curl -sSk {url}",
                         )
 
             # --- Framework leaks ---
@@ -282,6 +284,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                 "Strip framework-specific error details from production "
                                 "responses. Return generic error messages only."
                             ),
+                            cwe_id="CWE-209",
+                            poc_curl=f"curl -sSk {url}",
                         )
 
             # --- Stack trace / file path leaks ---
@@ -307,6 +311,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                 "Disable stack traces in production. Set NODE_ENV=production, "
                                 "DEBUG=false, or equivalent for your framework."
                             ),
+                            cwe_id="CWE-209",
+                            poc_curl=f"curl -sSk {url}",
                         )
 
             # --- Server version in headers ---
@@ -328,7 +334,11 @@ class ErrorDisclosureScanner(BaseScanner):
                                     f"Attackers can look up known CVEs for this version."
                                 ),
                                 evidence=f"server: {server}",
+                                request=f"GET {url}",
+                                response=f"HTTP {status}\nserver: {server}",
                                 remediation="server_tokens off; in nginx config, or equivalent.",
+                                cwe_id="CWE-200",
+                                poc_curl=f"curl -sSk -I {url} | grep -i server",
                             )
 
             # --- CORS wildcard on error pages ---
@@ -348,7 +358,11 @@ class ErrorDisclosureScanner(BaseScanner):
                             "enabling cross-origin information gathering."
                         ),
                         evidence=f"access-control-allow-origin: {acao}",
+                        request=f"GET {url}",
+                        response=f"HTTP {status}\naccess-control-allow-origin: {acao}",
                         remediation="Restrict CORS to trusted origins, especially on error responses.",
+                        cwe_id="CWE-942",
+                        poc_curl=f"curl -sSk -H 'Origin: https://evil.com' {url}",
                     )
 
         # --- Fuzz with edge-case values ---
@@ -389,6 +403,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                 request=f"GET {fuzz_url}",
                                 response=f"HTTP {response.status_code}",
                                 remediation="Never echo raw user input in error messages.",
+                                cwe_id="CWE-116",
+                                poc_curl=f"curl -sSk {fuzz_url}",
                             )
                 except Exception:
                     continue

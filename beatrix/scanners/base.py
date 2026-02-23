@@ -250,8 +250,15 @@ class BaseScanner(ABC):
         response: Optional[str] = None,
         remediation: Optional[str] = None,
         references: Optional[List[str]] = None,
+        impact: Optional[str] = None,
+        poc_curl: Optional[str] = None,
+        poc_python: Optional[str] = None,
+        reproduction_steps: Optional[List[str]] = None,
+        parameter: Optional[str] = None,
+        payload: Optional[str] = None,
+        cwe_id: Optional[str] = None,
     ) -> Finding:
-        """Helper to create a Finding with scanner metadata"""
+        """Helper to create a Finding with scanner metadata and all fields"""
         return Finding(
             title=title,
             severity=severity,
@@ -261,8 +268,15 @@ class BaseScanner(ABC):
             evidence=evidence,
             request=request,
             response=response,
+            impact=impact or "",
             remediation=remediation or "",
             references=references or [],
+            poc_curl=poc_curl,
+            poc_python=poc_python,
+            reproduction_steps=reproduction_steps or [],
+            parameter=parameter,
+            payload=payload,
+            cwe_id=cwe_id,
             scanner_module=self.name,
             owasp_category=self.owasp_category,
             mitre_technique=self.mitre_technique,

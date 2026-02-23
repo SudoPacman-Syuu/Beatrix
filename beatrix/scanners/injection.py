@@ -628,6 +628,18 @@ class InjectionScanner(BaseScanner):
             "path": "Validate and sanitize file paths. Use allowlisting for permitted files/directories.",
         }
 
+        cwe_map = {
+            "sqli": "CWE-89",
+            "xss": "CWE-79",
+            "cmdi": "CWE-78",
+            "ssti": "CWE-1336",
+            "path": "CWE-22",
+        }
+
+        # Generate poc_curl command
+        import shlex
+        poc_curl = f"curl -sSk {shlex.quote(url)}"
+
         return self.create_finding(
             title=f"{category_names[payload.category]} in {ip.type.value}: {ip.name}",
             severity=payload.severity,
@@ -642,6 +654,10 @@ class InjectionScanner(BaseScanner):
                 f"https://owasp.org/www-community/attacks/{payload.category.upper()}_Attacks" if payload.category != "path" else "https://owasp.org/www-community/attacks/Path_Traversal",
                 "https://portswigger.net/web-security",
             ],
+            parameter=ip.name,
+            payload=payload.value,
+            cwe_id=cwe_map.get(payload.category),
+            poc_curl=poc_curl,
         )
 
     async def quick_sqli_check(self, url: str) -> AsyncIterator[Finding]:

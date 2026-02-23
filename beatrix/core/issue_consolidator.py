@@ -59,6 +59,13 @@ class IssueConsolidator:
         self._fingerprints: Dict[str, int] = {}  # hash -> index in _findings
         self._strict = strict
 
+    # Injection-class vuln types: same host + param + vuln = same bug
+    # regardless of URL path (the backend handler is shared)
+    INJECTION_VULN_TYPES = frozenset([
+        "sqli", "xss", "rce", "ssti", "path_traversal", "xxe",
+        "header_injection",
+    ])
+
     def _fingerprint(self, f: Finding) -> str:
         """
         Generate a dedup fingerprint for a finding.
@@ -66,8 +73,10 @@ class IssueConsolidator:
         Dimensions considered:
         1. Vulnerability type (scanner_module + title pattern)
         2. Host + path (not full URL with params)
+           — For injection vulns, path is EXCLUDED (same param on
+             different paths = same backend bug)
         3. Parameter name
-        4. Injection point type
+        4. Injection point type (strict mode only)
         """
         parsed = urlparse(f.url)
         host = parsed.netloc.lower()
@@ -79,13 +88,16 @@ class IssueConsolidator:
         param = (f.parameter or "").lower()
         module = f.scanner_module.lower()
 
-        components = [host, path, vuln_type, param, module]
+        # For injection-class vulns with a known parameter, drop the path
+        # Same host + same param + same vuln type = same underlying bug
+        if vuln_type in self.INJECTION_VULN_TYPES and param:
+            components = [host, vuln_type, param, module]
+        else:
+            components = [host, path, vuln_type, param, module]
 
         if not self._strict:
-            # In non-strict mode, same host+path+vuln+param = same issue
             raw = "|".join(components)
         else:
-            # Strict mode adds injection point type
             ip_type = str(f.injection_point) if f.injection_point else ""
             components.append(ip_type)
             raw = "|".join(components)
