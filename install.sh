@@ -579,17 +579,9 @@ CORE_PYTHON_DEPS=(
     "aiohttp>=3.9.0"
     "requests>=2.31.0"
     "urllib3>=2.0.0"
-    # Parsing
-    "beautifulsoup4>=4.12.0"
-    "lxml>=4.9.0"
     # Config
     "pyyaml>=6.0"
-    "python-dotenv>=1.0.0"
-    # Database
-    "sqlalchemy>=2.0.0"
-    "aiosqlite>=0.19.0"
-    # AI
-    "anthropic>=0.18.0"
+    # AI (ghost.py uses raw httpx/boto3)
     "boto3>=1.34.0"
     # Security / Scanning
     "PyJWT>=2.8.0"
@@ -597,10 +589,6 @@ CORE_PYTHON_DEPS=(
     "python-nmap>=0.7.1"
     "paramiko>=3.4.0"
     "scapy>=2.5.0"
-    # Utils
-    "aiofiles>=23.0.0"
-    "python-dateutil>=2.8.0"
-    "regex>=2023.0.0"
     # Extended (full scanning support)
     "cloudscraper>=1.2.71"
     "networkx>=3.2.0"
@@ -614,22 +602,13 @@ declare -A IMPORT_MAP=(
     [aiohttp]="aiohttp"
     [requests]="requests"
     [urllib3]="urllib3"
-    [beautifulsoup4]="bs4"
-    [lxml]="lxml"
     [pyyaml]="yaml"
-    [python-dotenv]="dotenv"
-    [sqlalchemy]="sqlalchemy"
-    [aiosqlite]="aiosqlite"
-    [anthropic]="anthropic"
     [boto3]="boto3"
     [PyJWT]="jwt"
     [dnspython]="dns"
     [python-nmap]="nmap"
     [paramiko]="paramiko"
     [scapy]="scapy"
-    [aiofiles]="aiofiles"
-    [python-dateutil]="dateutil"
-    [regex]="regex"
     [cloudscraper]="cloudscraper"
     [networkx]="networkx"
 )

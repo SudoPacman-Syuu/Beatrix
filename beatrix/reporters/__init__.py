@@ -3,6 +3,7 @@ BEATRIX Report Generator
 
 Auto-generates bug bounty reports from findings.
 Outputs Markdown reports ready for HackerOne/Bugcrowd submission.
+Enriches findings with Bugcrowd VRT classification and CVSS 3.1 scores.
 """
 
 import json  # noqa: F401
@@ -12,6 +13,31 @@ from pathlib import Path
 from typing import List, Optional  # noqa: F401
 
 from beatrix.core.types import Finding, Severity
+
+# VRT classification for Bugcrowd-style priority rating + CVSS scoring
+try:
+    from beatrix.utils.vrt_classifier import VRTClassifier, classify_finding
+    HAS_VRT = True
+except ImportError:
+    HAS_VRT = False
+
+# Attack chain reporting (correlation engine → HTML/JSON chain reports)
+try:
+    from beatrix.reporters.chain_reporting import (  # noqa: F401
+        AttackChainReportGenerator,
+        enrich_report_with_chains,
+        generate_attack_chain_section_html,
+    )
+    HAS_CHAIN_REPORTING = True
+except ImportError:
+    HAS_CHAIN_REPORTING = False
+
+# PoC chain engine (transforms vuln chains into exploit code)
+try:
+    from beatrix.core.poc_chain_engine import PoCChainEngine, generate_poc_chains  # noqa: F401
+    HAS_POC_ENGINE = True
+except ImportError:
+    HAS_POC_ENGINE = False
 
 
 class ReportGenerator:
@@ -121,11 +147,11 @@ class ReportGenerator:
 - **OWASP**: {finding.owasp_category or "N/A"}
 - **MITRE ATT&CK**: {finding.mitre_technique or "N/A"}
 - **CWE**: {finding.cwe_id or "N/A"}
-
+{self._format_vrt_section(finding)}
 ---
 **Program**: {program}
 **Discovered**: {finding.found_at.strftime("%Y-%m-%d %H:%M:%S")}
-**Scanner**: BEATRIX v0.1.0 ({finding.scanner_module})
+**Scanner**: BEATRIX v1.0.0 ({finding.scanner_module})
 **Researcher**: {researcher}
 """
 
@@ -164,12 +190,26 @@ class ReportGenerator:
 
         # Add each finding
         for i, finding in enumerate(findings, 1):
+            # Enrich with VRT classification if available
+            vrt_section = ""
+            if HAS_VRT:
+                vrt = VRTClassifier.classify(
+                    finding.title,
+                    str(finding.evidence or ""),
+                    finding.severity.value,
+                )
+                if vrt:
+                    cvss_score = vrt.cvss.calculate_base_score()
+                    vrt_section = f"""
+**Bugcrowd VRT**: {vrt.get_priority_label()} — {vrt.get_full_classification()}
+**CVSS 3.1**: {cvss_score} ({vrt.cvss.get_severity_rating()}) `{vrt.cvss.get_vector_string()}`"""
+
             summary += f"""
 ## Finding #{i}: {finding.title}
 
 **Severity**: {finding.severity.icon} {finding.severity.value.upper()}
 **URL**: `{finding.url}`
-**Confidence**: {finding.confidence.value}
+**Confidence**: {finding.confidence.value}{vrt_section}
 
 ### Description
 {finding.description}
@@ -215,6 +255,27 @@ browser session. This can be used to steal session tokens, perform actions on
 behalf of the user, or redirect to malicious sites."""
 
         return "This vulnerability could be exploited by an attacker to compromise the security of the application or its users."
+
+    def _format_vrt_section(self, finding: Finding) -> str:
+        """Generate Bugcrowd VRT classification section for a finding."""
+        if not HAS_VRT:
+            return ""
+        vrt = VRTClassifier.classify(
+            finding.title,
+            str(finding.evidence or ""),
+            finding.severity.value,
+        )
+        if not vrt:
+            return ""
+        cvss_score = vrt.cvss.calculate_base_score()
+        return (
+            f"\n## Bugcrowd VRT Classification\n"
+            f"- **Priority**: {vrt.get_priority_label()}\n"
+            f"- **Category**: {vrt.get_full_classification()}\n"
+            f"- **CVSS 3.1**: {cvss_score} ({vrt.cvss.get_severity_rating()})\n"
+            f"- **Vector**: `{vrt.cvss.get_vector_string()}`\n"
+            f"\n### Impact Assessment\n{VRTClassifier.get_impact_statement(vrt)}\n"
+        )
 
     def _generate_poc(self, finding: Finding) -> str:
         """Generate proof of concept code"""

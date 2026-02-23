@@ -960,6 +960,56 @@ class KillChainExecutor:
         else:
             self._emit("info", message="Nuclei not available — install: go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest")
 
+        # ── SmartFuzzer — verified, deduplicated fuzzing with ffuf backend ─────
+        # Runs on parameterized URLs to discover additional vulns that scanners
+        # miss, then verifies and deduplicates so only confirmed findings survive.
+        if urls_with_params:
+            try:
+                from beatrix.core.smart_fuzzer import SmartFuzzer, VerifiedFinding as _VF
+                from beatrix.core.types import Finding as _F, Severity as _S, Confidence as _C
+
+                fuzzer = SmartFuzzer(threads=50, verify_top_n=50, verbose=False)
+                fuzz_targets = urls_with_params[:10]  # Cap to avoid timeout
+                self._emit("info", message=f"Running SmartFuzzer on {len(fuzz_targets)} parameterized URLs")
+
+                for fuzz_url in fuzz_targets:
+                    # Build FUZZ-marked URL from parameterized URL
+                    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+                    parsed = urlparse(fuzz_url)
+                    params = parse_qs(parsed.query, keep_blank_values=True)
+                    for param_name in list(params.keys())[:3]:
+                        fuzz_params = dict(params)
+                        fuzz_params[param_name] = ['FUZZ']
+                        fuzz_query = urlencode(fuzz_params, doseq=True)
+                        fuzz_marked = urlunparse(parsed._replace(query=fuzz_query))
+                        try:
+                            verified = await fuzzer.scan(fuzz_marked, parameter=param_name)
+                            for vf in verified:
+                                sev_map = {"critical": _S.CRITICAL, "high": _S.HIGH, "medium": _S.MEDIUM, "low": _S.LOW}
+                                results.append({"findings": [_F(
+                                    severity=sev_map.get(vf.severity, _S.HIGH),
+                                    confidence=_C.CONFIRMED if vf.confidence.value == "confirmed" else _C.FIRM,
+                                    url=vf.url,
+                                    title=f"SmartFuzzer: {vf.category.value} in {param_name}",
+                                    description=f"Verified {vf.category.value} via SmartFuzzer.\nEvidence: {vf.evidence}",
+                                    evidence={"payload": vf.payload, "evidence": vf.evidence,
+                                              "alternatives": vf.alternative_payloads[:3]},
+                                    parameter=param_name,
+                                    payload=vf.payload,
+                                    poc_curl=vf.poc_curl,
+                                    poc_python=vf.poc_python,
+                                    cwe_id=vf.cwe,
+                                    scanner_module="smart_fuzzer",
+                                )], "assets": [], "context": {}, "modules": ["smart_fuzzer"], "requests": 0})
+                                self._emit("info", message=f"SmartFuzzer CONFIRMED {vf.category.value} in {param_name}")
+                        except Exception:
+                            pass
+                self._emit("info", message=f"SmartFuzzer complete: {len(fuzzer.findings)} verified findings")
+            except ImportError:
+                self._emit("info", message="SmartFuzzer unavailable (ffuf not installed)")
+            except Exception as e:
+                self._emit("scanner_error", scanner="smart_fuzzer", error=str(e))
+
         # ── Deep exploitation — sqlmap, dalfox, commix on confirmed vulns ─────
         # Only run when tools are available AND internal scanners found issues
         try:
@@ -1430,6 +1480,60 @@ class KillChainExecutor:
                 self._emit("info", message="Metasploit available — RC files can be generated for confirmed RCE/SQLi findings post-scan")
         except Exception:
             pass
+
+        # ── Step 3: VRT classification — enrich all findings with Bugcrowd priority + CVSS ──
+        try:
+            from beatrix.utils.vrt_classifier import VRTClassifier
+            all_findings = context.get("all_findings", [])
+            vrt_enriched = 0
+            for finding in all_findings:
+                title = getattr(finding, "title", "") or ""
+                evidence_str = str(getattr(finding, "evidence", "") or "")
+                severity_str = getattr(finding, "severity", "").value if hasattr(getattr(finding, "severity", None), "value") else ""
+                vrt = VRTClassifier.classify(title, evidence_str, severity_str)
+                if vrt:
+                    # Store VRT data in evidence dict or as attribute
+                    if not hasattr(finding, '_vrt_classification'):
+                        finding._vrt_classification = vrt
+                    vrt_enriched += 1
+            if vrt_enriched:
+                self._emit("info", message=f"VRT classification: enriched {vrt_enriched}/{len(all_findings)} findings with Bugcrowd priority + CVSS scores")
+        except ImportError:
+            pass
+        except Exception as e:
+            self._emit("scanner_error", scanner="vrt_classifier", error=str(e))
+
+        # ── Step 4: PoC Chain Engine — generate exploit chains + reproduction guides ──
+        try:
+            from beatrix.core.poc_chain_engine import PoCChainEngine
+            from beatrix.core.correlation_engine import EventCorrelationEngine
+
+            all_findings = context.get("all_findings", [])
+            if len(all_findings) >= 2:
+                # Feed findings into correlation engine to discover chains
+                corr_engine = EventCorrelationEngine()
+                for finding in all_findings:
+                    corr_engine.add_event({
+                        "type": getattr(finding, "scanner_module", "unknown"),
+                        "title": getattr(finding, "title", ""),
+                        "url": getattr(finding, "url", ""),
+                        "severity": getattr(finding, "severity", "").value if hasattr(getattr(finding, "severity", None), "value") else "info",
+                        "evidence": getattr(finding, "evidence", ""),
+                        "parameter": getattr(finding, "parameter", ""),
+                    })
+
+                corr_engine.correlate()
+
+                if corr_engine.chains:
+                    poc_engine = PoCChainEngine(target)
+                    poc_chains = poc_engine.process_correlation_results(corr_engine)
+                    self._emit("info", message=f"PoC Chain Engine generated {len(poc_chains)} exploit chains from {len(corr_engine.chains)} correlated attack paths")
+                    context["poc_chains"] = poc_chains
+                    context["correlation_engine"] = corr_engine
+        except ImportError:
+            pass
+        except Exception as e:
+            self._emit("scanner_error", scanner="poc_chain_engine", error=str(e))
 
         return await self._merge_scanner_results(results) if results else {
             "findings": [], "assets": [], "context": {}, "modules": ["validate"], "requests": 0

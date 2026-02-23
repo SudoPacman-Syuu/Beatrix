@@ -22,6 +22,20 @@ from beatrix.core.types import Confidence, Finding, InsertionPoint, InsertionPoi
 from .base import BaseScanner, ScanContext
 from .insertion import InsertionPointDetector, ParsedRequest
 
+# Response fingerprint comparison for blind detection
+try:
+    from beatrix.core.response_analyzer import responses_differ, is_blind_indicator
+    HAS_RESPONSE_ANALYZER = True
+except ImportError:
+    HAS_RESPONSE_ANALYZER = False
+
+# WAF bypass payload generation
+try:
+    from beatrix.utils.advanced_waf_bypass import get_waf_bypass_payloads as _get_adv_bypass
+    HAS_WAF_BYPASS = True
+except ImportError:
+    HAS_WAF_BYPASS = False
+
 
 @dataclass
 class Payload:
@@ -428,8 +442,26 @@ class InjectionScanner(BaseScanner):
         categories = self._select_categories(insertion_point)
         baseline_time = 0.0
 
+        # Capture baseline response for behavioral (response_analyzer) detection
+        if HAS_RESPONSE_ANALYZER:
+            try:
+                resp = await self.request(
+                    request.method,
+                    request.url,
+                    headers=dict(request.headers),
+                    content=request.body if request.body else None,
+                )
+                self._baseline_body = resp.text
+                self._baseline_status = resp.status_code
+                self._baseline_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
+            except Exception:
+                self._baseline_body = ''
+                self._baseline_status = 200
+                self._baseline_headers = {}
+
         for category in categories:
             payloads = self.payloads.get(category, [])
+            found_in_category = False
 
             for payload in payloads:
                 # Calculate baseline if needed and not yet done
@@ -449,9 +481,35 @@ class InjectionScanner(BaseScanner):
                 finding = await self._test_payload(request, insertion_point, payload, baseline_time)
                 if finding:
                     yield finding
+                    found_in_category = True
                     # Stop testing this category for this IP if we found something
                     break
 
+            # WAF bypass fallback — if no findings in this category and WAF bypass
+            # payloads are available, retry the first payload with evasion variants
+            if not found_in_category and HAS_WAF_BYPASS and payloads:
+                attack_type_map = {"sqli": "sqli", "xss": "xss", "cmdi": "cmdi",
+                                   "ssti": "ssti", "path": "lfi"}
+                attack_type = attack_type_map.get(category, "sqli")
+                # Use the first (most reliable) payload to generate bypass variants
+                base_payload = payloads[0]
+                bypass_payloads = _get_adv_bypass(base_payload.value, attack_type)[:5]
+                for bp in bypass_payloads:
+                    if bp == base_payload.value:
+                        continue  # skip original, already tested
+                    waf_payload = Payload(
+                        value=bp,
+                        name=f"{base_payload.name}_waf_bypass",
+                        category=base_payload.category,
+                        detection=base_payload.detection,
+                        patterns=base_payload.patterns,
+                        severity=base_payload.severity,
+                        time_threshold=base_payload.time_threshold,
+                    )
+                    finding = await self._test_payload(request, insertion_point, waf_payload, baseline_time)
+                    if finding:
+                        yield finding
+                        break
     def _select_categories(self, ip: InsertionPoint) -> List[str]:
         """Select payload categories based on insertion point type"""
 
@@ -590,6 +648,24 @@ class InjectionScanner(BaseScanner):
                     end = min(len(response_text), match.end() + 50)
                     context = response_text[start:end]
                     return True, f"Pattern matched: {pattern}\nContext: ...{context}..."
+
+        # Behavioral detection — 30-dimension response fingerprint comparison
+        # Detects blind injection through subtle response structure differences
+        if payload.detection == "behavior" and HAS_RESPONSE_ANALYZER:
+            baseline_body = getattr(self, '_baseline_body', '')
+            baseline_status = getattr(self, '_baseline_status', 200)
+            baseline_headers = getattr(self, '_baseline_headers', {})
+            if baseline_body:
+                diffs = responses_differ(
+                    baseline_status, baseline_headers, baseline_body,
+                    200, {}, response_text,  # test response
+                )
+                if diffs and is_blind_indicator(diffs, min_attrs=2):
+                    diff_attrs = ', '.join(a.name for a in list(diffs.keys())[:5])
+                    return True, (
+                        f"Behavioral difference detected across {len(diffs)} response attributes "
+                        f"({diff_attrs}). Indicates blind injection via response fingerprint divergence."
+                    )
 
         return False, ""
 

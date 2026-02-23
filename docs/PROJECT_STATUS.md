@@ -2,9 +2,9 @@
 
 **Codename:** The Omega Project
 **Version:** 1.0.0 "The Bride"
-**Last Updated:** February 23, 2026
-**Current Phase:** Stable — Full audit complete
-**Framework LOC:** ~59,678 (91 Python files across inner package)
+**Last Updated:** February 24, 2026
+**Current Phase:** Stable — Full audit complete, unused modules wired in
+**Framework LOC:** ~58,957 (89 Python files across inner package)
 
 ---
 
@@ -20,7 +20,7 @@
 | Hunters | 474 | 3 | ✅ Working | RapidHunter, HaikuHunter |
 | Integrations | 683 | 2 | ✅ Working | HackerOne API client |
 | Validators | 1,277 | 3 | ✅ Working | ImpactValidator, ReadinessGate |
-| Reporters | 1,216 | 2 | ✅ Working | Chain reporting, HTML output |
+| Reporters | 1,216 | 2 | ✅ Working | Chain reporting, HTML output, VRT enrichment (Bugcrowd VRT + CVSS 3.1) |
 | Utils | 3,696 | 6 | ✅ Working | WAF bypass, VRT classifier, helpers, response validator |
 
 ---
@@ -80,10 +80,10 @@ All runners live in `beatrix/core/external_tools.py` (1,144 LOC). `ExternalToolk
 | 1 | Reconnaissance | EndpointProber, JSBundleAnalyzer, SubdomainTakeoverScanner | subfinder, nmap, whatweb, webanalyze, wafw00f |
 | 2 | Weaponization | HeaderSecurityScanner, ErrorDisclosureScanner | ffuf |
 | 3 | Delivery | NucleiScanner, CORSScanner, CachePoisoningScanner | nuclei |
-| 4 | Exploitation | InjectionScanner, SSRFScanner, IDORScanner, AuthScanner, SSTIScanner, XXEScanner, + 8 more | sqlmap, dalfox, commix, jwt_tool |
+| 4 | Exploitation | InjectionScanner (+ response_analyzer behavioral detection, WAF bypass fallback), SSRFScanner, IDORScanner, AuthScanner, SSTIScanner, XXEScanner, SmartFuzzer (ffuf verification), + 8 more | sqlmap, dalfox, commix, jwt_tool |
 | 5 | Installation | FileUploadScanner | — |
 | 6 | Command & Control | InteractshClient OOB polling | — |
-| 7 | Objectives | IssueConsolidator dedup + impact assessment | — |
+| 7 | Objectives | VRT classification (Bugcrowd VRT + CVSS 3.1), PoCChainEngine (exploit chain generation), IssueConsolidator dedup + impact assessment | — |
 
 ---
 
@@ -92,8 +92,7 @@ All runners live in `beatrix/core/external_tools.py` (1,144 LOC). `ExternalToolk
 ```
 beatrix/                       # Inner framework package
 ├── __init__.py                # v1.0.0 "The Bride"
-├── multi_scanner.py           # Concurrent scanner orchestration
-├── core/                      # Engine + orchestration (15.3K LOC, 20 files)
+├── core/                      # Engine + orchestration (15.3K LOC, 22 files)
 │   ├── engine.py              # BeatrixEngine orchestrator
 │   ├── types.py               # Finding, Severity, Confidence, Target, ScanContext
 │   ├── kill_chain.py          # 7-phase kill chain executor (1,226 LOC)
@@ -118,7 +117,7 @@ beatrix/                       # Inner framework package
 │   └── scan_check_types.py    # Scan check type definitions
 ├── scanners/                  # Scanner modules (28.4K LOC, 39 files)
 │   ├── base.py                # BaseScanner ABC, ScanContext
-│   ├── injection.py           # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads)
+│   ├── injection.py           # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads, response_analyzer behavioral detection, WAF bypass fallback)
 │   ├── ssrf.py                # SSRF (44 payloads, gopher/AWS/GCP/Azure)
 │   ├── idor.py                # IDOR + method override
 │   ├── auth.py                # Authentication bypass
@@ -325,6 +324,9 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - [x] Built-in PoC validation server (eliminates interact.sh dependency)
 - [x] LocalPoCClient — drop-in InteractshClient replacement with dedup
 - [x] Scanner integrations for PoC server (CORS, SSRF, XXE, deserialization, CSS exfiltrator)
+- [x] Wire unused modules into pipeline (response_analyzer, smart_fuzzer, vrt_classifier, poc_chain_engine, WAF bypass)
+- [x] Remove dead code (insertion_point_provider.py, multi_scanner.py)
+- [x] Remove unused Python dependencies (9 removed from pyproject.toml + install.sh)
 
 ---
 
@@ -429,6 +431,59 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 **Testing:** All 14 functional tests pass (PoCServer: 8, LocalPoCClient dedup: 3, imports: 3). All files compile cleanly via `py_compile`.
 
 **Commits:** `fa690fc`
+
+---
+
+### Session 9 — February 24, 2026
+
+**Focus:** Codebase audit — remove dead code, wire unused modules, remove unused deps
+
+**Audit findings:**
+- 12 unused modules identified: 2 to remove, 6 to wire in, 4 to keep as-is
+- 9 unused Python dependencies in pyproject.toml
+
+**Dead code removed (2 modules, ~721 LOC):**
+- `beatrix/core/insertion_point_provider.py` (307 LOC) — superseded by `scanners/insertion.py`
+- `beatrix/multi_scanner.py` (414 LOC) — superseded by haiku/rapid/quick_hunt entry points
+
+**Unused dependencies removed (9 packages):**
+- Removed from `pyproject.toml` and `install.sh`: beautifulsoup4, lxml, python-dotenv, sqlalchemy, aiosqlite, anthropic, aiofiles, python-dateutil, regex
+
+**Modules wired into pipeline (6):**
+
+1. **`response_analyzer`** → `scanners/injection.py`
+   - Baseline response capture before payload testing
+   - 30-dimension behavioral blind detection via `responses_differ()` + `is_blind_indicator()`
+   - New "behavior" detection type with min_attrs=2 threshold
+
+2. **`advanced_waf_bypass`** → `scanners/injection.py`
+   - WAF bypass payload fallback: when initial payloads find nothing, generates up to 5 bypass variants via `get_waf_bypass_payloads()`
+   - Retests each bypass variant through existing detection pipeline
+
+3. **`smart_fuzzer`** → `core/kill_chain.py` Phase 4
+   - Runs after nuclei, before deep exploitation tools
+   - Takes parameterized URLs, builds FUZZ-marked URLs, runs `SmartFuzzer.scan()`
+   - Converts `VerifiedFinding` → `Finding` objects
+
+4. **`vrt_classifier`** → `reporters/__init__.py` + `core/kill_chain.py` Phase 7
+   - VRT enrichment in both single and batch reports (priority label, CVSS score, vector string)
+   - New `_format_vrt_section()` helper for detailed single-finding reports
+   - Phase 7 classifies all findings with Bugcrowd VRT before aggregation
+
+5. **`poc_chain_engine`** → `core/kill_chain.py` Phase 7
+   - When ≥2 findings, feeds them into `EventCorrelationEngine` → `PoCChainEngine`
+   - Generates exploit chains from correlated findings
+   - Stores `poc_chains` and `correlation_engine` in kill chain context
+
+6. **`waf_bypass`** → exported via `utils/__init__.py` (used by advanced_waf_bypass internally)
+
+**Modules kept as-is (4):**
+- `scan_check_types.py` — Architecture reference for future scanner standardization
+- `packet_crafter.py` — Specialized scapy recon, requires root privileges
+- `privilege_graph.py` — BloodHound-inspired graphing, needs networkx + multi-role support
+- `ssh_auditor.py` — Specialized SSH target auditing
+
+**All integrations use lazy imports** with `try/except ImportError` + `HAS_*` flags — nothing breaks if a module fails to load.
 
 ---
 

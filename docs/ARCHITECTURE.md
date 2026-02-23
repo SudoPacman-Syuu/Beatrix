@@ -1,7 +1,7 @@
 # BEATRIX Architecture
 
 **Version:** 1.0.0  
-**Last Updated:** February 23, 2026
+**Last Updated:** February 24, 2026
 
 ---
 
@@ -30,11 +30,13 @@
 │         ├── PoCServer starts ─────────→ auto-binds free port, detects IP    │
 │  Phase 4: _handle_exploitation ───────→ injection, ssrf, idor, auth, nuclei │
 │           ├── deep exploit tools ─────→ sqlmap, dalfox, commix, jwt_tool    │
+│           ├── SmartFuzzer ────────────→ ffuf-verified fuzzing on param URLs │
 │           └── scanners use PoCServer ─→ OOB callbacks, CORS/clickjack PoCs  │
 │  Phase 5: _handle_installation ───────→ file_upload                         │
 │  Phase 6: _handle_c2 ────────────────→ OOB callback polling + correlation   │
 │           └── LocalPoCClient | interact.sh (auto-selected)                  │
-│  Phase 7: _handle_actions ────────────→ aggregation (findings in state)     │
+│  Phase 7: _handle_actions ────────────→ VRT classification, PoC chain gen,  │
+│                                         aggregation (findings in state)     │
 └─────────────────────────────────────────┬───────────────────────────────────┘
                                           │
               ┌───────────────┬───────────┼───────────┬─────────────────┐
@@ -44,7 +46,7 @@
 ├──────────────────┤ │ TOOLS        │ │  (poc_server)  │ ├───────────────────┤
 │ Finding dataclass│ ├──────────────┤ ├────────────────┤ │ Markdown / JSON   │
 │ → Consolidator   │ │ 13 async     │ │ Pure asyncio   │ │ HTML chain reports│
-│ → FindingsDB     │ │ subprocess   │ │ HTTP server    │ │ MITRE ATT&CK map │
+│ → FindingsDB     │ │ subprocess   │ │ HTTP server    │ │ MITRE ATT&CK map  │
 │ → ImpactValidator│ │ runners with │ │ OOB callbacks  │ │ HackerOne submit  │
 │ → ReadinessGate  │ │ timeouts     │ │ CORS/click PoC │ │                   │
 └──────────────────┘ └──────────────┘ │ exfil collect  │ └───────────────────┘
@@ -64,10 +66,10 @@ module key shown below.
 | 1. Reconnaissance | `_handle_recon` | `crawl`, `endpoint_prober`, `js_analysis`, `headers`, `github_recon` + external: subfinder, amass, nmap, katana, gospider, hakrawler, gau, whatweb, webanalyze, dirsearch |
 | 2. Weaponization | `_handle_weaponization` | `takeover`, `error_disclosure`, `cache_poisoning`, `prototype_pollution` |
 | 3. Delivery | `_handle_delivery` | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` |
-| 4. Exploitation | `_handle_exploitation` | `injection`, `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` + external: sqlmap, dalfox, commix, jwt_tool |
+| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` + SmartFuzzer (ffuf verification) + external: sqlmap, dalfox, commix, jwt_tool |
 | 5. Installation | `_handle_installation` | `file_upload` |
 | 6. C2 | `_handle_c2` | OOB detector polling — `LocalPoCClient` (built-in) or `InteractshClient` (external). PoCServer callbacks are polled with dedup tracking. |
-| 7. Actions | `_handle_actions` | Aggregation only — findings collected via `KillChainState.all_findings` |
+| 7. Actions | `_handle_actions` | VRT classification (Bugcrowd VRT + CVSS 3.1) → PoCChainEngine (exploit chain generation from correlated findings) → aggregation via `KillChainState.all_findings` |
 
 ---
 
@@ -94,38 +96,38 @@ Beatrix includes a **built-in PoC validation server** — a pure `asyncio` HTTP 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        PoCServer (890 LOC)                      │
-│  Pure asyncio.start_server — no external dependencies          │
+│  Pure asyncio.start_server — no external dependencies           │
 ├─────────────────────────────────────────────────────────────────┤
 │  Routes:                                                        │
-│    /cb/{uid}        OOB callback endpoint (GET/POST)           │
-│    /poc/{id}        Serve generated PoC pages                  │
+│    /cb/{uid}        OOB callback endpoint (GET/POST)            │
+│    /poc/{id}        Serve generated PoC pages                   │
 │    /collect/{id}    Exfiltration data collection                │
-│    /clickjack       Clickjacking PoC generator                 │
+│    /clickjack       Clickjacking PoC generator                  │
 │    /enumerate       URL enumeration via browser redirect        │
 │    /enumerate/results  Enumeration results collection           │
 │    /health          Health check                                │
 ├─────────────────────────────────────────────────────────────────┤
 │  Features:                                                      │
-│    • Auto-binds free port (port=0)                             │
-│    • Auto-detects local IP (UDP probe to 8.8.8.8)             │
-│    • CORS PoC generation (XHR + credential leak)               │
-│    • Clickjacking PoC (iframe overlay)                         │
-│    • URL enumeration via browser history/timing                │
-│    • Data exfiltration collection endpoint                     │
-│    • JS-safe string escaping for template contexts             │
-│    • Full callback logging with timestamps + source IP         │
+│    • Auto-binds free port (port=0)                              │
+│    • Auto-detects local IP (UDP probe to 8.8.8.8)               │
+│    • CORS PoC generation (XHR + credential leak)                │
+│    • Clickjacking PoC (iframe overlay)                          │
+│    • URL enumeration via browser history/timing                 │
+│    • Data exfiltration collection endpoint                      │
+│    • JS-safe string escaping for template contexts              │
+│    • Full callback logging with timestamps + source IP          │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                  LocalPoCClient (oob_detector.py)                │
+│                  LocalPoCClient (oob_detector.py)               │
 │  Async context manager wrapping PoCServer + OOBDetector         │
 ├─────────────────────────────────────────────────────────────────┤
-│  • Drop-in replacement for InteractshClient                    │
-│  • create_payload(vuln_type) → OOBPayload with callback URL    │
-│  • poll() → List[OOBInteraction] (with dedup tracking)         │
-│  • Auto-start/stop lifecycle via async with                    │
-│  • Offset-based dedup: only returns NEW callbacks per poll     │
+│  • Drop-in replacement for InteractshClient                     │
+│  • create_payload(vuln_type) → OOBPayload with callback URL     │
+│  • poll() → List[OOBInteraction] (with dedup tracking)          │
+│  • Auto-start/stop lifecycle via async with                     │
+│  • Offset-based dedup: only returns NEW callbacks per poll      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -172,7 +174,6 @@ Beatrix includes a **built-in PoC validation server** — a pure `asyncio` HTTP 
 ```
 beatrix/
 ├── __init__.py                    # v1.0.0
-├── multi_scanner.py               # Multi-target parallel scanning
 ├── cli/
 │   └── main.py                    # 20 CLI commands (Click + Rich)
 ├── core/
@@ -185,10 +186,9 @@ beatrix/
 │   ├── correlation_engine.py      # MITRE ATT&CK event correlation
 │   ├── findings_db.py             # SQLite WAL-mode findings storage
 │   ├── issue_consolidator.py      # Multi-dimensional finding dedup
-│   ├── poc_chain_engine.py        # PoC generation + Metasploit search
-│   ├── smart_fuzzer.py            # Intelligent fuzzing engine
-│   ├── insertion_point_provider.py # Injection point discovery
-│   ├── response_analyzer.py       # HTTP response analysis
+│   ├── poc_chain_engine.py        # PoC generation + Metasploit search (wired into Phase 7)
+│   ├── smart_fuzzer.py            # Intelligent fuzzing engine (wired into Phase 4)
+│   ├── response_analyzer.py       # HTTP response analysis (wired into injection.py)
 │   ├── privilege_graph.py         # Authorization graph analysis
 │   ├── methodology.py             # OWASP/MITRE framework alignment
 │   ├── nmap_scanner.py            # Nmap async wrapper
@@ -203,7 +203,7 @@ beatrix/
 ├── scanners/
 │   ├── base.py                    # BaseScanner ABC — rate limiter, httpx client
 │   ├── crawler.py                 # Target spider — soft-404, forms, params, tech
-│   ├── injection.py               # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads via SecLists + PATT)
+│   ├── injection.py               # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads via SecLists + PATT, response_analyzer behavioral detection, WAF bypass fallback)
 │   ├── ssrf.py                    # 44-payload SSRF scanner
 │   ├── cors.py                    # 6-technique CORS bypass
 │   ├── auth.py                    # JWT, OAuth, 2FA, Keycloak, session
@@ -285,7 +285,8 @@ beatrix/
                 │
    Phase 4: _handle_exploitation
      → OOB detector initialized for blind vuln confirmation
-     → injection, ssrf, idor, bac, auth, ssti, xxe, deserialization, ...
+     → injection (+ response_analyzer behavioral detection + WAF bypass fallback), ssrf, idor, bac, auth, ssti, xxe, deserialization, ...
+     → SmartFuzzer: ffuf-verified fuzzing on parameterized URLs
      → Confirmed findings → sqlmap, dalfox, commix, jwt_tool (deep exploit)
                 │
    Phase 5-6: _handle_installation, _handle_c2
@@ -293,12 +294,15 @@ beatrix/
      → OOB detector polled for callbacks → findings from blind vulns
                 │
    Phase 7: _handle_actions
-     → Aggregation only
+     → VRT classification (Bugcrowd VRT + CVSS 3.1) on all findings
+     → PoCChainEngine: correlation → exploit chain generation (≥2 findings)
+     → Aggregation
                 │
                 ▼
 5. FINDING PIPELINE
-   KillChainState.all_findings → IssueConsolidator (dedup) → ImpactValidator
-     → FindingsDB (SQLite) → ReportGenerator (markdown/JSON/HTML)
+   KillChainState.all_findings → VRTClassifier (CVSS 3.1) → PoCChainEngine
+     → IssueConsolidator (dedup) → ImpactValidator
+     → FindingsDB (SQLite) → ReportGenerator (markdown/JSON/HTML + VRT enrichment)
                 │
                 ▼
 6. OUTPUT

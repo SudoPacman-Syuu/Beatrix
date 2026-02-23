@@ -128,10 +128,10 @@ Every `hunt` follows the Cyber Kill Chain methodology:
 1. 🔍 **Reconnaissance** — Subdomain enum (`subfinder`, `amass`), crawling (`katana`, `gospider`, `hakrawler`, `gau`), port scan (`nmap`), JS analysis, endpoint probing, tech fingerprinting (`whatweb`, `webanalyze`)
 2. ⚔️ **Weaponization** — Subdomain takeover, error disclosure, cache poisoning, prototype pollution
 3. 📦 **Delivery** — CORS, open redirects, OAuth redirect, HTTP smuggling, WebSocket testing
-4. 💥 **Exploitation** — Injection (SQLi/XSS/CMDi), SSRF, IDOR, BAC, auth bypass, SSTI, XXE, deserialization, GraphQL, mass assignment, business logic, ReDoS, payment, nuclei CVE scan. Confirmed findings are escalated to deep exploitation tools (`sqlmap`, `dalfox`, `commix`, `jwt_tool`)
+4. 💥 **Exploitation** — Injection (SQLi/XSS/CMDi) with response_analyzer behavioral detection and WAF bypass fallback, SSRF, IDOR, BAC, auth bypass, SSTI, XXE, deserialization, GraphQL, mass assignment, business logic, ReDoS, payment, nuclei CVE scan. SmartFuzzer runs ffuf-verified fuzzing on parameterized URLs. Confirmed findings are escalated to deep exploitation tools (`sqlmap`, `dalfox`, `commix`, `jwt_tool`)
 5. 🔧 **Installation** — File upload bypass, polyglot uploads, path traversal
 6. 📡 **Command & Control** — OOB callback correlation via built-in `PoCServer` (pure asyncio HTTP server, auto-binds free port) or external `interact.sh`. Blind SSRF/XXE/RCE confirmation from callbacks registered during Phase 4. `LocalPoCClient` provides offset-based dedup polling.
-7. 🎯 **Objectives** — Finding aggregation, deduplication, impact assessment
+7. 🎯 **Objectives** — VRT classification (Bugcrowd VRT + CVSS 3.1), exploit chain generation via PoCChainEngine (correlates ≥2 findings), finding aggregation, deduplication, impact assessment
 
 ### Presets
 
@@ -186,7 +186,7 @@ Run `beatrix arsenal` for the full table. 29 registered modules across 5 kill ch
 
 | Module | What It Does |
 |--------|-------------|
-| `injection` | SQLi, XSS, CMDi, LFI, SSTI — 57K+ payloads via SecLists + PayloadsAllTheThings |
+| `injection` | SQLi, XSS, CMDi, LFI, SSTI — 57K+ payloads via SecLists + PayloadsAllTheThings, response_analyzer behavioral detection, WAF bypass fallback |
 | `ssrf` | 44+ payloads, cloud metadata, internal service access |
 | `idor` | Sequential/UUID/negative ID manipulation |
 | `bac` | Method override, force browsing, privilege escalation |
@@ -468,7 +468,7 @@ beatrix/
 ├── scanners/
 │   ├── base.py              # BaseScanner ABC — rate limiting, httpx client
 │   ├── crawler.py           # Target spider — foundation for all scanning
-│   ├── injection.py         # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads)
+│   ├── injection.py         # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads, response_analyzer + WAF bypass)
 │   ├── ssrf.py              # 44-payload SSRF scanner
 │   ├── cors.py              # 6-technique CORS bypass scanner
 │   ├── auth.py              # JWT, OAuth, 2FA, session attacks
@@ -480,7 +480,7 @@ beatrix/
 ├── recon/                   # ReconRunner — subfinder/amass/nmap integration
 ├── ai/                      # GHOST agent, Haiku integration
 ├── integrations/            # HackerOne API client
-└── utils/                   # WAF bypass, VRT classifier, helpers
+└── utils/                   # WAF bypass, VRT classifier, helpers, response_analyzer
 ```
 
 ---
