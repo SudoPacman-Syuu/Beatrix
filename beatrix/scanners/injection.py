@@ -58,10 +58,84 @@ class InjectionScanner(BaseScanner):
     def __init__(self, config=None):
         super().__init__(config)
         self.insertion_detector = InsertionPointDetector(config)
+        self._seclists = None
+        self._init_seclists()
         self.payloads = self._load_payloads()
 
+    def _init_seclists(self):
+        """Initialize SecLists manager for dynamic wordlist fetching."""
+        try:
+            from beatrix.core.seclists_manager import get_manager
+            self._seclists = get_manager(verbose=True)
+            self.log("SecLists manager initialized — dynamic wordlists enabled")
+        except Exception as e:
+            self.log(f"SecLists manager unavailable, using built-in payloads: {e}")
+            self._seclists = None
+
     def _load_payloads(self) -> Dict[str, List[Payload]]:
-        """Load injection payloads by category"""
+        """Load injection payloads by category, augmented with dynamic wordlists."""
+
+        base_payloads = self._load_builtin_payloads()
+
+        # Augment with dynamic wordlists from SecLists if available
+        if self._seclists:
+            self._augment_with_seclists(base_payloads)
+
+        return base_payloads
+
+    def _augment_with_seclists(self, payloads: Dict[str, List[Payload]]) -> None:
+        """Fetch and merge external wordlists into the payload dict."""
+        category_map = {
+            "sqli": ("sqli", "error", Severity.HIGH),
+            "xss": ("xss", "reflect", Severity.MEDIUM),
+            "cmdi": ("cmdi", "reflect", Severity.CRITICAL),
+            "ssti": ("ssti", "reflect", Severity.HIGH),
+            "path": ("lfi", "reflect", Severity.HIGH),
+        }
+
+        detection_patterns = {
+            "sqli": [
+                r"SQL syntax.*MySQL", r"Warning.*mysql_", r"PostgreSQL.*ERROR",
+                r"ORA-\d{5}", r"Microsoft.*ODBC.*SQL Server", r"SQLSTATE\[",
+                r"Unclosed quotation mark",
+            ],
+            "xss": [],  # Reflection-based, payload itself is the pattern
+            "cmdi": [r"uid=\d+.*gid=\d+"],
+            "ssti": [r"8348842383"],  # Canary multiplication result
+            "path": [r"root:.*:0:0:", r"/bin/bash", r"\[fonts\]"],
+        }
+
+        for payload_cat, (seclists_cat, detect_method, sev) in category_map.items():
+            try:
+                extra_payloads = self._seclists.get_by_category(seclists_cat)
+                existing_values = {p.value for p in payloads.get(payload_cat, [])}
+                added = 0
+
+                for raw_payload in extra_payloads:
+                    if raw_payload not in existing_values:
+                        patterns = detection_patterns.get(payload_cat, [])
+                        # For XSS reflection checks, use escaped payload as pattern
+                        if payload_cat == "xss" and not patterns:
+                            patterns = [re.escape(raw_payload)]
+
+                        payloads.setdefault(payload_cat, []).append(Payload(
+                            value=raw_payload,
+                            name=f"seclists_{payload_cat}_{added}",
+                            category=payload_cat,
+                            detection=detect_method,
+                            patterns=patterns,
+                            severity=sev,
+                        ))
+                        existing_values.add(raw_payload)
+                        added += 1
+
+                if added:
+                    self.log(f"Augmented {payload_cat} with {added} dynamic payloads from SecLists")
+            except Exception as e:
+                self.log(f"Failed to augment {payload_cat} from SecLists: {e}")
+
+    def _load_builtin_payloads(self) -> Dict[str, List[Payload]]:
+        """Load built-in injection payloads by category"""
 
         return {
             "sqli": [

@@ -251,9 +251,15 @@ xhr.send();
             return "- N/A"
         return "\n".join(f"- {ref}" for ref in refs)
 
-    def export_json(self, findings: List[Finding], filepath: Path) -> None:
-        """Export findings as JSON for further processing"""
-        data = []
+    def export_json(self, findings: List[Finding], filepath: Path, target: str = None) -> None:
+        """Export findings as JSON for further processing.
+
+        Produces a standardised ``{"findings": [...], "metadata": {...}}``
+        envelope compatible with ``beatrix validate``.
+        """
+        from datetime import datetime
+
+        finding_list = []
         for f in findings:
             d = {
                 "title": f.title,
@@ -268,6 +274,17 @@ xhr.send();
                 "scanner_module": f.scanner_module,
                 "found_at": f.found_at.isoformat(),
             }
-            data.append(d)
+            finding_list.append(d)
 
-        filepath.write_text(json.dumps(data, indent=2))
+        report = {
+            "findings": finding_list,
+            "metadata": {
+                "tool": "beatrix",
+                "version": "1.0.0",
+                "target": target,
+                "total_findings": len(finding_list),
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+            },
+        }
+
+        filepath.write_text(json.dumps(report, indent=2, default=str))

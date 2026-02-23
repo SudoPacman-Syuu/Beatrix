@@ -1286,7 +1286,7 @@ def hunt(ctx, target, preset, ai, modules, output):
             output_path = Path(output)
             if output_path.suffix == ".json" or str(output) == "-":
                 # JSON output: to file or stdout
-                _export_json(engine.findings, output_path if str(output) != "-" else None)
+                _export_json(engine.findings, output_path if str(output) != "-" else None, target=target)
             else:
                 # Directory output: full reports
                 from beatrix.reporters import ReportGenerator
@@ -1303,7 +1303,7 @@ def hunt(ctx, target, preset, ai, modules, output):
                         console.print(f"  [dim]→ {report_path.name}[/dim]")
 
                 json_path = output_path / "findings.json"
-                reporter.export_json(engine.findings, json_path)
+                reporter.export_json(engine.findings, json_path, target=target)
                 console.print(f"[green]📦 JSON export saved: {json_path}[/green]")
     except KeyboardInterrupt:
         _stop_printer.set()
@@ -1546,11 +1546,19 @@ def _render_finding_card(finding, index=None, total=None, full=False):
     ))
 
 
-def _export_json(findings, filepath=None):
-    """Export findings as JSON to file or stdout."""
-    import json as _json
+def _export_json(findings, filepath=None, target=None):
+    """Export findings as JSON to file or stdout.
 
-    data = []
+    Produces a standardised envelope::
+
+        {"findings": [...], "metadata": {...}}
+
+    so that ``beatrix validate <file>`` can consume it directly.
+    """
+    import json as _json
+    from datetime import datetime
+
+    finding_list = []
     for f in findings:
         d = {
             "title": f.title,
@@ -1576,9 +1584,20 @@ def _export_json(findings, filepath=None):
             "found_at": f.found_at.isoformat(),
             "validated": f.validated,
         }
-        data.append(d)
+        finding_list.append(d)
 
-    json_str = _json.dumps(data, indent=2, default=str)
+    report = {
+        "findings": finding_list,
+        "metadata": {
+            "tool": "beatrix",
+            "version": "1.0.0",
+            "target": target,
+            "total_findings": len(finding_list),
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        },
+    }
+
+    json_str = _json.dumps(report, indent=2, default=str)
 
     if filepath:
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
@@ -1825,7 +1844,23 @@ def findings_export(hunt_id, severity, module, target, output, fmt):
                 f[key] = []
 
     if fmt == "json":
-        output_str = json.dumps(results, indent=2, default=str)
+        from datetime import datetime
+        report = {
+            "findings": results,
+            "metadata": {
+                "tool": "beatrix",
+                "version": "1.0.0",
+                "target": target,
+                "total_findings": len(results),
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "filters": {
+                    "hunt_id": hunt_id,
+                    "severity": severity,
+                    "module": module,
+                },
+            },
+        }
+        output_str = json.dumps(report, indent=2, default=str)
     elif fmt == "jsonl":
         output_str = "\n".join(json.dumps(f, default=str) for f in results)
     elif fmt == "csv":
@@ -2273,7 +2308,7 @@ def batch(ctx, targets_file, module, output, threads):
         console.print(f"  Batch report:    {batch_report}")
 
         json_path = Path(output) / "findings.json"
-        reporter.export_json(all_findings, json_path)
+        reporter.export_json(all_findings, json_path, target=targets_file)
         console.print(f"  JSON export:     {json_path}")
 
 
@@ -2693,7 +2728,21 @@ def validate_findings(ctx, findings_file):
     with open(findings_file) as f:
         report = _json.load(f)
 
-    raw_findings = report.get("findings", [])
+    # Support both formats: {"findings": [...]} or bare [...]
+    if isinstance(report, list):
+        raw_findings = report
+    elif isinstance(report, dict):
+        raw_findings = report.get("findings", report.get("results", []))
+        # If dict has no findings/results key, treat all values that are lists of dicts
+        if not raw_findings:
+            for v in report.values():
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    raw_findings = v
+                    break
+    else:
+        console.print(f"[red]Error: unexpected JSON format in {findings_file}[/red]")
+        sys.exit(1)
+
     console.print(f"\n[cyan]Validating {len(raw_findings)} findings from {findings_file}[/cyan]\n")
 
     validator = ImpactValidator()

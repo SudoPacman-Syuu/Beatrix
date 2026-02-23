@@ -105,14 +105,15 @@ install_with_pipx() {
         $PYTHON -m pipx ensurepath 2>/dev/null || true
     fi
 
-    pipx install --force . || return 1
+    pipx install --force ".[extended]" || pipx install --force . || return 1
     success "Installed via pipx"
     return 0
 }
 
 install_with_pip_user() {
     info "Installing with pip (user-level)..."
-    $PYTHON -m pip install --user --break-system-packages . 2>/dev/null || \
+    $PYTHON -m pip install --user --break-system-packages ".[extended]" 2>/dev/null || \
+        $PYTHON -m pip install --user --break-system-packages . 2>/dev/null || \
         $PYTHON -m pip install --user . 2>/dev/null || \
         { warn "User install failed, trying system-level..."; return 1; }
 
@@ -129,7 +130,8 @@ install_with_pip_user() {
 
 install_with_pip_system() {
     info "Installing system-wide (requires sudo)..."
-    sudo $PYTHON -m pip install --break-system-packages . 2>/dev/null || \
+    sudo $PYTHON -m pip install --break-system-packages ".[extended]" 2>/dev/null || \
+        sudo $PYTHON -m pip install --break-system-packages . 2>/dev/null || \
         sudo $PYTHON -m pip install . || \
         fail "System install failed. Try: pipx install ."
 
@@ -143,7 +145,7 @@ install_with_venv() {
     local venv_dir="$HOME/.beatrix"
     $PYTHON -m venv "$venv_dir"
     "$venv_dir/bin/pip" install --upgrade pip
-    "$venv_dir/bin/pip" install .
+    "$venv_dir/bin/pip" install ".[extended]" || "$venv_dir/bin/pip" install .
 
     # Symlink to a dir on PATH
     local link_target="$INSTALL_DIR/beatrix"
@@ -565,6 +567,123 @@ check_optional_tools() {
     echo -e "  ${found}/${total} tools available."
 }
 
+# ── Python Dependency Verification & Repair ──────────────────
+
+# All core Python packages required by Beatrix (from pyproject.toml + extended)
+CORE_PYTHON_DEPS=(
+    # CLI
+    "click>=8.1.0"
+    "rich>=13.0.0"
+    # HTTP
+    "httpx>=0.25.0"
+    "aiohttp>=3.9.0"
+    "requests>=2.31.0"
+    "urllib3>=2.0.0"
+    # Parsing
+    "beautifulsoup4>=4.12.0"
+    "lxml>=4.9.0"
+    # Config
+    "pyyaml>=6.0"
+    "python-dotenv>=1.0.0"
+    # Database
+    "sqlalchemy>=2.0.0"
+    "aiosqlite>=0.19.0"
+    # AI
+    "anthropic>=0.18.0"
+    "boto3>=1.34.0"
+    # Security / Scanning
+    "PyJWT>=2.8.0"
+    "dnspython>=2.4.0"
+    "python-nmap>=0.7.1"
+    "paramiko>=3.4.0"
+    "scapy>=2.5.0"
+    # Utils
+    "aiofiles>=23.0.0"
+    "python-dateutil>=2.8.0"
+    "regex>=2023.0.0"
+    # Extended (full scanning support)
+    "cloudscraper>=1.2.71"
+    "networkx>=3.2.0"
+)
+
+# Map package install names to their Python import names for verification
+declare -A IMPORT_MAP=(
+    [click]="click"
+    [rich]="rich"
+    [httpx]="httpx"
+    [aiohttp]="aiohttp"
+    [requests]="requests"
+    [urllib3]="urllib3"
+    [beautifulsoup4]="bs4"
+    [lxml]="lxml"
+    [pyyaml]="yaml"
+    [python-dotenv]="dotenv"
+    [sqlalchemy]="sqlalchemy"
+    [aiosqlite]="aiosqlite"
+    [anthropic]="anthropic"
+    [boto3]="boto3"
+    [PyJWT]="jwt"
+    [dnspython]="dns"
+    [python-nmap]="nmap"
+    [paramiko]="paramiko"
+    [scapy]="scapy"
+    [aiofiles]="aiofiles"
+    [python-dateutil]="dateutil"
+    [regex]="regex"
+    [cloudscraper]="cloudscraper"
+    [networkx]="networkx"
+)
+
+verify_python_deps() {
+    local missing=()
+    local ok=0
+    local total=${#IMPORT_MAP[@]}
+
+    for pkg in "${!IMPORT_MAP[@]}"; do
+        local mod="${IMPORT_MAP[$pkg]}"
+        if $PYTHON -c "import ${mod}" &>/dev/null; then
+            ((ok++))
+        else
+            missing+=("$pkg")
+        fi
+    done
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        success "All $total Python dependencies verified"
+        return 0
+    fi
+
+    warn "${#missing[@]} Python dependencies missing: ${missing[*]}"
+    info "Installing missing dependencies..."
+
+    local repaired=0
+    for pkg in "${missing[@]}"; do
+        # Find the versioned spec from CORE_PYTHON_DEPS
+        local spec="$pkg"
+        for dep in "${CORE_PYTHON_DEPS[@]}"; do
+            if [[ "$dep" == "$pkg"* ]]; then
+                spec="$dep"
+                break
+            fi
+        done
+
+        info "  Installing $spec..."
+        if $PYTHON -m pip install --break-system-packages "$spec" &>/dev/null 2>&1 || \
+           $PYTHON -m pip install "$spec" &>/dev/null 2>&1; then
+            success "  $pkg"
+            ((repaired++))
+        else
+            warn "  Failed to install $pkg"
+        fi
+    done
+
+    if [[ $repaired -eq ${#missing[@]} ]]; then
+        success "All missing dependencies repaired ($repaired installed)"
+    else
+        warn "Some dependencies could not be installed. Run: $PYTHON -m pip install \".[extended]\""
+    fi
+}
+
 # ── Main ─────────────────────────────────────────────────────
 
 main() {
@@ -594,9 +713,14 @@ main() {
     install_with_pip_system || \
     install_with_venv
 
+    # ── Verify & repair Python dependencies ──────────────
+    echo ""
+    echo -e "${BOLD}Verifying Python dependencies...${RESET}"
+    verify_python_deps
+
     # Verify installation
     echo ""
-    echo -e "${BOLD}Verifying...${RESET}"
+    echo -e "${BOLD}Verifying CLI...${RESET}"
 
     # Need to refresh PATH for current session
     export PATH="$HOME/.local/bin:$PATH"
