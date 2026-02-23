@@ -290,6 +290,12 @@ class KillChainExecutor:
             if not ctx.extra and context.get("crawl_extra"):
                 ctx.extra = context["crawl_extra"]
 
+            # Inject PoC server reference so scanners can register live PoCs
+            if context.get("poc_server"):
+                ctx.extra["poc_server"] = context["poc_server"]
+            if context.get("oob_detector"):
+                ctx.extra["oob_detector"] = context["oob_detector"]
+
             async def _collect():
                 async with scanner:
                     async for finding in scanner.scan(ctx):
@@ -340,6 +346,11 @@ class KillChainExecutor:
                         try:
                             ctx = ScanContext.from_url(url)
                             ctx.extra = context.get("crawl_extra", {})
+                            # Inject PoC server + OOB detector
+                            if context.get("poc_server"):
+                                ctx.extra["poc_server"] = context["poc_server"]
+                            if context.get("oob_detector"):
+                                ctx.extra["oob_detector"] = context["oob_detector"]
 
                             async for finding in scanner.scan(ctx):
                                 # Stamp module attribution if scanner didn't set it
@@ -844,20 +855,31 @@ class KillChainExecutor:
         """
         url = context.get("resolved_url", target if "://" in target else f"https://{target}")
 
-        # ── Initialize OOB detector so blind SSRF/XXE/RCE callbacks can be correlated in Phase 6 ──
+        # ── Initialize OOB detection ──
+        # Prefer the local PoC server (started in execute()) for reliable HTTP callbacks.
+        # Fall back to interact.sh for DNS-only OOB when the local server can't be reached.
         if not context.get("oob_available"):
-            try:
-                from beatrix.core.oob_detector import InteractshClient
-                interactsh = InteractshClient()
-                await interactsh.__aenter__()
-                context["interactsh_client"] = interactsh
-                context["oob_detector"] = interactsh.detector
-                context["oob_domain"] = interactsh.oob_domain
+            # Check if local PoC client already provides OOB
+            poc_client = context.get("poc_client")
+            if poc_client and poc_client.detector:
+                context["oob_detector"] = poc_client.detector
+                context["oob_domain"] = poc_client.oob_domain
                 context["oob_available"] = True
-                self._emit("info", message=f"OOB detector initialized via interact.sh (domain: {context['oob_domain']})")
-            except Exception:
-                context["oob_available"] = False
-                self._emit("info", message="OOB detector unavailable — blind callback verification disabled")
+                self._emit("info", message=f"OOB detector using local PoC server ({context['oob_domain']})")
+            else:
+                # Fall back to interact.sh for DNS-based OOB
+                try:
+                    from beatrix.core.oob_detector import InteractshClient
+                    interactsh = InteractshClient()
+                    await interactsh.__aenter__()
+                    context["interactsh_client"] = interactsh
+                    context["oob_detector"] = interactsh.detector
+                    context["oob_domain"] = interactsh.oob_domain
+                    context["oob_available"] = True
+                    self._emit("info", message=f"OOB detector initialized via interact.sh (domain: {context['oob_domain']})")
+                except Exception:
+                    context["oob_available"] = False
+                    self._emit("info", message="OOB detector unavailable — blind callback verification disabled")
 
         results = []
         urls_with_params = context.get("urls_with_params", [])
@@ -1149,40 +1171,49 @@ class KillChainExecutor:
         return await self._merge_scanner_results(results)
 
     async def _handle_c2(self, target: str, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Phase 6 — C2: OOB callback correlation, exfiltration testing.
+        """Phase 6 — C2: OOB callback correlation, CORS PoC validation, exfiltration testing.
 
-        The OOB detector was initialized in Phase 4 before exploitation scanners
-        ran. This phase polls for any callbacks that arrived during exploitation
-        and converts confirmed interactions into findings.
+        The OOB detector and PoC server were initialized before scanning.
+        This phase:
+        1. Polls for OOB callbacks from exploitation payloads
+        2. Checks if CORS PoC pages collected exfiltrated data
+        3. Reviews token enumeration results for weak nonces
+        4. Converts all confirmed interactions into findings
         """
         results = []
 
-        # OOB detector should already be initialized in Phase 4 (_handle_exploitation).
-        # If it wasn't (e.g., Phase 4 was skipped), initialize it now.
+        # OOB detector should already be initialized.
+        # If it wasn't (e.g., Phase 4 was skipped), try now.
         if not context.get("oob_available"):
-            try:
-                from beatrix.core.oob_detector import InteractshClient
-                interactsh = InteractshClient()
-                await interactsh.__aenter__()
-                context["interactsh_client"] = interactsh
-                context["oob_detector"] = interactsh.detector
+            poc_client = context.get("poc_client")
+            if poc_client and poc_client.detector:
+                context["oob_detector"] = poc_client.detector
                 context["oob_available"] = True
-                self._emit("info", message="OOB detector initialized (late — Phase 4 was skipped)")
-            except Exception:
-                context["oob_available"] = False
+            else:
+                try:
+                    from beatrix.core.oob_detector import InteractshClient
+                    interactsh = InteractshClient()
+                    await interactsh.__aenter__()
+                    context["interactsh_client"] = interactsh
+                    context["oob_detector"] = interactsh.detector
+                    context["oob_available"] = True
+                    self._emit("info", message="OOB detector initialized (late — Phase 4 was skipped)")
+                except Exception:
+                    context["oob_available"] = False
 
-        # ── Poll OOB detector for callbacks from exploitation phase ───────────
+        # ── 1. Poll OOB detector for callbacks from exploitation phase ────────
         oob = context.get("oob_detector")
         if oob and context.get("oob_available"):
             try:
                 interactions = await oob.poll(timeout=10.0)
                 if interactions:
-                    from beatrix.core.types import Finding, Severity
+                    from beatrix.core.types import Finding, Severity, Confidence
                     self._emit("info", message=f"OOB detector received {len(interactions)} callback(s)!")
                     for interaction in interactions:
                         sev = Severity.CRITICAL if interaction.vuln_type in ("rce", "ssrf") else Severity.HIGH
                         results.append({"findings": [Finding(
                             severity=sev,
+                            confidence=Confidence.CONFIRMED,
                             url=interaction.target_url or target,
                             title=f"OOB callback confirmed: {interaction.vuln_type or 'blind'} via {interaction.type.name}",
                             description=(
@@ -1193,14 +1224,86 @@ class KillChainExecutor:
                                 f"Callback from: {interaction.client_ip}\n"
                                 f"This confirms the vulnerability is exploitable — the server made an external request to our canary."
                             ),
+                            impact=(
+                                f"The server-side {interaction.vuln_type or 'blind'} vulnerability is confirmed exploitable. "
+                                f"The target server made an out-of-band {interaction.type.name} request to our controlled endpoint, "
+                                f"proving that an attacker can force the server to make arbitrary external requests."
+                            ),
                             evidence={"interaction_type": interaction.type.name, "client_ip": interaction.client_ip,
                                       "raw": interaction.raw_data, "payload_id": interaction.payload_id},
+                            parameter=interaction.parameter,
                             scanner_module="oob_detector",
                         )], "assets": [], "context": {}, "modules": ["oob_detector"], "requests": 0})
                 else:
                     self._emit("info", message="OOB detector: no callbacks received (clean, or payloads not triggered)")
             except Exception as e:
                 self._emit("scanner_error", scanner="oob_detector", error=str(e))
+
+        # ── 2. Check CORS PoC exfiltration results ───────────────────────────
+        poc_server = context.get("poc_server")
+        if poc_server:
+            try:
+                exfil_data = poc_server.get_exfil_data()
+                if exfil_data:
+                    from beatrix.core.types import Finding, Severity, Confidence
+                    self._emit("info", message=f"CORS PoC collected {len(exfil_data)} exfiltration result(s)!")
+                    for exfil in exfil_data:
+                        results.append({"findings": [Finding(
+                            severity=Severity.HIGH,
+                            confidence=Confidence.CONFIRMED,
+                            url=target,
+                            title=f"CORS Exploitation Validated — Data Exfiltrated",
+                            description=(
+                                f"The CORS PoC page successfully read and exfiltrated data from the target.\n"
+                                f"Finding ID: {exfil.finding_id}\n"
+                                f"Data collected at: {exfil.timestamp.isoformat()}\n"
+                                f"Content-Type: {exfil.content_type}\n"
+                                f"Data length: {len(exfil.data)} bytes\n"
+                                f"This proves that an attacker-controlled page can steal authenticated data cross-origin."
+                            ),
+                            impact=(
+                                "Cross-origin data theft confirmed. A malicious website visited by an authenticated user "
+                                "can silently read and exfiltrate sensitive data from this application's API responses."
+                            ),
+                            evidence=exfil.data[:2000],
+                            scanner_module="cors_poc_validator",
+                        )], "assets": [], "context": {}, "modules": ["cors_poc_validator"], "requests": 0})
+
+                # Check enumeration results for weak tokens
+                for key, enum_result in poc_server._enum_results.items():
+                    if enum_result.predictable and enum_result.tokens:
+                        from beatrix.core.types import Finding, Severity, Confidence
+                        results.append({"findings": [Finding(
+                            severity=Severity.MEDIUM,
+                            confidence=Confidence.FIRM,
+                            url=enum_result.target_url or target,
+                            title="Predictable CSRF/Nonce Tokens Detected",
+                            description=(
+                                f"Token enumeration revealed weak randomness.\n"
+                                f"Tokens collected: {len(enum_result.tokens)}\n"
+                                f"Unique tokens: {len(set(enum_result.tokens))}\n"
+                                f"Entropy score: {enum_result.entropy_score:.2f}\n"
+                                f"Sample tokens: {', '.join(enum_result.tokens[:5])}\n"
+                                f"Predictable tokens allow CSRF attacks or session fixation."
+                            ),
+                            impact=(
+                                "CSRF tokens or session nonces are predictable, enabling an attacker to forge "
+                                "valid tokens and bypass CSRF protections. This allows unauthorized state-changing "
+                                "actions on behalf of authenticated users."
+                            ),
+                            cwe_id="CWE-330",
+                            scanner_module="token_enumerator",
+                        )], "assets": [], "context": {}, "modules": ["token_enumerator"], "requests": 0})
+
+                # Log PoC server summary
+                summary = poc_server.summary()
+                self._emit("info", message=(
+                    f"PoC server summary: {summary['oob_callbacks_received']} callbacks, "
+                    f"{summary['exfil_entries']} exfil entries, "
+                    f"{summary['poc_pages_registered']} PoC pages served"
+                ))
+            except Exception as e:
+                self._emit("scanner_error", scanner="poc_server", error=str(e))
 
         return await self._merge_scanner_results(results)
 
@@ -1374,6 +1477,22 @@ class KillChainExecutor:
         if skip_phases:
             run_phases = [p for p in run_phases if p.value not in skip_phases]
 
+        # ── Start local PoC server before any scanning phases ──
+        # Provides OOB callback receiver, CORS PoC hosting, token enumeration,
+        # and clickjacking validation without needing external services.
+        poc_client = None
+        try:
+            from beatrix.core.oob_detector import LocalPoCClient
+            poc_client = LocalPoCClient()
+            await poc_client.__aenter__()
+            state.context["poc_client"] = poc_client
+            state.context["poc_server"] = poc_client.poc_server
+            state.context["poc_server_url"] = poc_client.poc_server.base_url
+            self._emit("info", message=f"PoC server started on {poc_client.poc_server.base_url}")
+        except Exception as e:
+            self._emit("info", message=f"PoC server unavailable: {e}")
+            state.context["poc_server"] = None
+
         # Execute each phase
         try:
             for phase in run_phases:
@@ -1400,7 +1519,22 @@ class KillChainExecutor:
                 if result.status == PhaseStatus.FAILED and result.errors:
                     break
         finally:
-            # Cleanup OOB / InteractshClient session if one was created
+            # Cleanup local PoC client + server
+            if poc_client:
+                try:
+                    # Log callback summary before shutdown
+                    if poc_client.poc_server:
+                        summary = poc_client.poc_server.summary()
+                        if summary["oob_callbacks_received"] > 0:
+                            self._emit("info", message=(
+                                f"PoC server received {summary['oob_callbacks_received']} OOB callback(s), "
+                                f"{summary['exfil_entries']} exfil entries"
+                            ))
+                    await poc_client.__aexit__(None, None, None)
+                except Exception:
+                    pass
+
+            # Cleanup remote InteractshClient if one was also started
             interactsh = state.context.get("interactsh_client")
             if interactsh:
                 try:

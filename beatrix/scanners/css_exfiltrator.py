@@ -522,7 +522,14 @@ class CSSExfiltrator(BaseModule):
         return results
 
     async def _setup_callback_server(self):
-        """Initialize callback infrastructure (Interactsh or local)"""
+        """Initialize callback infrastructure (Interactsh, PoC server, or local DNS)"""
+        # Prefer the engine-managed PoC server when available via config
+        poc_server = (self.config or {}).get("poc_server")
+        if poc_server and getattr(poc_server, "is_running", False):
+            self.callback_domain = f"{poc_server.host}:{poc_server.port}"
+            self._poc_server = poc_server
+            return
+
         if self.use_interactsh:
             self.interactsh = InteractshClient(server=self.interactsh_server)
             self.callback_domain = await self.interactsh.register()

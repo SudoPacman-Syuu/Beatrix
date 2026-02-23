@@ -344,3 +344,140 @@ class InteractshClient:
         except Exception:
             pass
         return []
+
+
+# =============================================================================
+# LOCAL POC CLIENT — Uses PoCServer instead of interact.sh
+# =============================================================================
+
+class LocalPoCClient:
+    """
+    Local OOB client backed by PoCServer.
+
+    Drop-in replacement for InteractshClient that uses the engine's
+    built-in HTTP server for callback detection. No external dependencies.
+
+    Benefits over InteractshClient:
+    - Works offline / behind firewalls
+    - 100% reliable (no RSA/AES protocol issues)
+    - Also serves CORS PoC pages, clickjacking tests, token enumeration
+    - Zero latency — callbacks are instant
+
+    Limitation:
+    - Only catches HTTP callbacks, not DNS-only callbacks
+    - Target server must be able to reach our local IP
+
+    Usage:
+        async with LocalPoCClient() as client:
+            payload = client.create_payload(vuln_type="ssrf")
+            # payload.url → http://local_ip:port/cb/{uid}
+            # ... inject payload.url into the target ...
+            hits = await client.poll()
+    """
+
+    def __init__(self, host: str = "0.0.0.0", port: int = 0):
+        self._host = host
+        self._port = port
+        self._poc_server = None
+        self._detector: Optional[OOBDetector] = None
+
+    async def __aenter__(self) -> "LocalPoCClient":
+        from beatrix.core.poc_server import PoCServer
+
+        self._poc_server = PoCServer(host=self._host, port=self._port)
+        await self._poc_server.start()
+
+        # Create an OOB detector that uses the poc_server's callback URL as domain
+        base = self._poc_server.base_url  # http://ip:port
+        self._detector = OOBDetector(
+            provider_domain="",  # We override create_payload
+            provider=OOBProvider.CUSTOM,
+            poll_callback=self._poll_local,
+        )
+        # Monkey-patch create_payload to generate local callback URLs
+        original_create = self._detector.create_payload
+
+        def _local_create_payload(**kwargs) -> OOBPayload:
+            uid = secrets.token_hex(6)
+            cb_url = self._poc_server.register_oob_payload(
+                uid=uid,
+                vuln_type=kwargs.get("vuln_type", ""),
+                target_url=kwargs.get("target_url", ""),
+                parameter=kwargs.get("parameter", ""),
+            )
+            payload = OOBPayload(
+                id=uid,
+                domain=self._poc_server._local_ip or "127.0.0.1",
+                url=cb_url,
+                dns_payload=f"{uid}.localhost",
+                vuln_type=kwargs.get("vuln_type", ""),
+                target_url=kwargs.get("target_url", ""),
+                parameter=kwargs.get("parameter", ""),
+                context=kwargs.get("context", {}),
+            )
+            self._detector._payloads[uid] = payload
+            return payload
+
+        self._detector.create_payload = _local_create_payload
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        if self._poc_server:
+            await self._poc_server.stop()
+
+    @property
+    def detector(self) -> Optional[OOBDetector]:
+        return self._detector
+
+    @property
+    def poc_server(self):
+        """Access the underlying PoCServer for CORS PoC, clickjacking, etc."""
+        return self._poc_server
+
+    @property
+    def session_id(self) -> Optional[str]:
+        return "local"
+
+    @property
+    def server(self) -> str:
+        if self._poc_server:
+            return self._poc_server.base_url
+        return "localhost"
+
+    @property
+    def oob_domain(self) -> str:
+        if self._poc_server:
+            ip = self._poc_server._local_ip or "127.0.0.1"
+            return f"{ip}:{self._poc_server.bound_port}"
+        return "localhost"
+
+    def create_payload(self, **kwargs) -> OOBPayload:
+        if not self._detector:
+            raise RuntimeError("Not initialized. Use 'async with'.")
+        return self._detector.create_payload(**kwargs)
+
+    async def poll(self, timeout: float = 5.0) -> List[OOBInteraction]:
+        if not self._detector:
+            return []
+        return await self._detector.poll(timeout=timeout)
+
+    async def _poll_local(self) -> List[Dict]:
+        """
+        Poll the local PoCServer for callbacks.
+
+        Converts PoCServer's OOBCallback objects into the dict format
+        expected by OOBDetector.poll().
+        """
+        if not self._poc_server:
+            return []
+
+        results = []
+        for cb in self._poc_server.all_callbacks:
+            results.append({
+                "subdomain": cb.uid,
+                "type": "http",
+                "client_ip": cb.client_ip,
+                "timestamp": cb.timestamp.isoformat(),
+                "raw_request": f"{cb.method} {cb.path}",
+            })
+        return results

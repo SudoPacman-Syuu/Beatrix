@@ -219,6 +219,39 @@ class SSRFScanner(BaseScanner):
                 return True
         return False
 
+    def _inject_oob_payloads(self, poc_server, target_url: str) -> None:
+        """
+        Add OOB callback payloads using the local PoC server.
+
+        These payloads point to our own HTTP server, so if the target
+        makes the request, we get an instant confirmed callback.
+        """
+        import secrets as _secrets
+
+        oob_payloads = [
+            ("oob_http", "ssrf", "OOB HTTP callback"),
+            ("oob_https", "ssrf", "OOB HTTPS callback"),
+        ]
+
+        for name, vuln_type, desc in oob_payloads:
+            uid = _secrets.token_hex(6)
+            cb_url = poc_server.oob_url(
+                vuln_type=vuln_type,
+                uid=uid,
+                target_url=target_url,
+                parameter="url",
+            )
+
+            self.payloads.append(SSRFPayload(
+                name=f"oob_{name}_{uid}",
+                value=cb_url,
+                target_type="localhost",
+                severity=Severity.HIGH,
+                description=f"{desc} → {cb_url}",
+            ))
+
+        self.log(f"Injected {len(oob_payloads)} OOB callback payloads from PoC server")
+
     def find_ssrf_candidates(self, url: str, body: Optional[Any] = None) -> List[SSRFCandidate]:
         """Identify potential SSRF injection points"""
         candidates = []
@@ -611,6 +644,11 @@ class SSRFScanner(BaseScanner):
         """Main scan method"""
         self.log(f"Starting SSRF scan on {ctx.url}")
         findings = []
+
+        # Inject OOB callback payloads if the PoC server is running
+        poc_server = ctx.extra.get("poc_server") if ctx.extra else None
+        if poc_server and poc_server.is_running:
+            self._inject_oob_payloads(poc_server, ctx.url)
 
         # Find SSRF candidates
         body = None

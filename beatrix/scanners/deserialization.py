@@ -469,8 +469,19 @@ class DeserializationScanner(BaseScanner):
     # MAIN SCAN
     # =========================================================================
 
+    def _inject_poc_server_collaborator(self, context: ScanContext) -> None:
+        """Use local PoC server as collaborator if available and no external one configured."""
+        poc_server = context.extra.get("poc_server") if context.extra else None
+        if poc_server and not self.collaborator_domain:
+            self.collaborator_domain = f"{poc_server.host}:{poc_server.port}"
+            self.canary = "BTRX" + "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
+            poc_server.register_oob_payload(self.canary, {"scanner": "deserialization", "url": context.url})
+
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
         """Full deserialization vulnerability scan"""
+
+        # Automatically use local PoC server for OOB detection
+        self._inject_poc_server_collaborator(context)
 
         all_blobs: List[SerializedBlob] = []
 

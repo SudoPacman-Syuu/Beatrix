@@ -569,8 +569,21 @@ class XXEScanner(BaseScanner):
     # SCAN LOGIC
     # =========================================================================
 
+    def _inject_poc_server_collaborator(self, context: ScanContext) -> None:
+        """Use local PoC server as collaborator if available and no external one configured."""
+        poc_server = context.extra.get("poc_server") if context.extra else None
+        if poc_server and not self.collaborator_domain:
+            # Use the PoC server's host:port as the collaborator domain
+            self.collaborator_domain = f"{poc_server.host}:{poc_server.port}"
+            self.canary = self._generate_canary()
+            # Register the OOB callback so the server knows to expect it
+            poc_server.register_oob_payload(self.canary, {"scanner": "xxe", "url": context.url})
+
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
         """Main scan: test for XXE on XML-accepting endpoints"""
+
+        # Automatically use local PoC server for OOB detection
+        self._inject_poc_server_collaborator(context)
 
         # Phase 1: Detect if endpoint accepts XML
         accepts_xml = await self._probe_xml_acceptance(context)

@@ -161,6 +161,8 @@ class CORSScanner(BaseScanner):
 
         for result in results:
             if isinstance(result, Finding):
+                # Register live PoC with the PoC server if running
+                self._register_live_poc(result, context)
                 yield result
             elif isinstance(result, Exception):
                 self.log(f"Error during scan: {result}")
@@ -187,11 +189,55 @@ class CORSScanner(BaseScanner):
                 auth_results = await asyncio.gather(*auth_tasks, return_exceptions=True)
                 for result in auth_results:
                     if isinstance(result, Finding):
+                        self._register_live_poc(result, context)
                         yield result
 
         # Test OPTIONS preflight
         async for finding in self._test_preflight(context.url, tests):
             yield finding
+
+    def _register_live_poc(self, finding: Finding, context: ScanContext) -> None:
+        """Register a live PoC page with the running PoC server if available."""
+        poc_server = context.extra.get("poc_server") if context.extra else None
+        if not poc_server or not poc_server.is_running:
+            return
+
+        try:
+            import secrets as _secrets
+            fid = _secrets.token_hex(6)
+
+            # Extract origin from the finding evidence/description
+            origin = "https://evil.com"
+            if finding.request:
+                for line in finding.request.split("\n"):
+                    if line.lower().startswith("origin:"):
+                        origin = line.split(":", 1)[1].strip()
+                        break
+
+            poc_url = poc_server.register_cors_poc(
+                finding_id=fid,
+                target_url=finding.url,
+                origin=origin,
+                title=finding.title,
+            )
+
+            # Also register a clickjacking test for the same URL
+            clickjack_url = poc_server.register_clickjack_poc(
+                finding_id=f"cj_{fid}",
+                target_url=finding.url,
+            )
+
+            # Enrich the finding with the live PoC URL
+            if finding.evidence:
+                finding.evidence = str(finding.evidence) + f"\n\nLive PoC: {poc_url}\nClickjacking PoC: {clickjack_url}"
+            if not finding.poc_python:
+                finding.poc_python = (
+                    f"# Open {poc_url} in a browser with the target's auth cookies to validate.\n"
+                    f"# The page will make a credentialed cross-origin request and exfiltrate the response.\n"
+                    f"import webbrowser; webbrowser.open('{poc_url}')"
+                )
+        except Exception:
+            pass  # PoC registration is best-effort
 
     async def _test_origin_with_auth(self, url: str, test: dict,
                                       auth_headers: Dict[str, str]) -> Optional[Finding]:
