@@ -7,6 +7,9 @@ A command-line bug bounty hunting framework. 29 scanner modules, 13 external too
 Globally installable on any Linux system. Call it from anywhere.
 
 ---
+<img src="beatrix.gif" width="1920" alt="Demo GIF">
+
+---
 
 ## 📖 The Manual
 
