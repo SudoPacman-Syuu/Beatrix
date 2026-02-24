@@ -64,6 +64,7 @@ make install-dev
 ```bash
 beatrix                              # show all commands
 beatrix hunt example.com             # scan a target
+beatrix hunt -f targets.txt          # hunt all URLs from a file
 beatrix strike api.com -m cors       # single module attack
 beatrix help hunt                    # detailed command help
 beatrix arsenal                      # full module reference
@@ -76,6 +77,7 @@ beatrix arsenal                      # full module reference
 | Command | Description | Example |
 |---------|-------------|---------|
 | `hunt TARGET` | Full vulnerability scan | `beatrix hunt example.com` |
+| `hunt -f FILE` | Hunt targets from file | `beatrix hunt -f targets.txt` |
 | `strike TARGET -m MOD` | Single module attack | `beatrix strike api.com -m cors` |
 | `probe TARGET` | Quick alive check | `beatrix probe example.com` |
 | `recon DOMAIN` | Reconnaissance | `beatrix recon example.com --deep` |
@@ -257,6 +259,12 @@ beatrix hunt example.com --preset full
 
 # AI-assisted
 beatrix hunt example.com --preset full --ai
+
+# Hunt all targets from a .txt file (one URL per line)
+beatrix hunt -f targets.txt
+
+# File-based hunt with full preset and reports
+beatrix hunt -f targets.txt --preset full -o ./reports
 ```
 
 ### Targeted Strikes
@@ -288,12 +296,18 @@ beatrix recon example.com --deep -j -o recon.json
 ### Batch Scanning
 
 ```bash
-# Create a targets file
+# Create a targets file (one URL per line, # for comments)
 echo "https://api.target1.com
 https://api.target2.com
 https://api.target3.com" > targets.txt
 
-# Scan all for CORS
+# Hunt all targets through the full kill chain
+beatrix hunt -f targets.txt
+
+# Hunt with specific preset and output
+beatrix hunt -f targets.txt --preset full --ai -o ./reports
+
+# Single-module batch scan (CORS only)
 beatrix batch targets.txt -m cors -o ./reports
 ```
 

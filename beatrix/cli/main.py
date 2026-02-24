@@ -84,6 +84,7 @@ Think of it as unleashing the Bride on a room full of Crazy 88s.
 
 [bold cyan]USAGE:[/bold cyan]
   beatrix hunt TARGET [OPTIONS]
+  beatrix hunt -f TARGETS_FILE [OPTIONS]
 
 [bold cyan]ARGUMENTS:[/bold cyan]
   TARGET    Domain, URL, or IP to hunt. Examples:
@@ -92,6 +93,8 @@ Think of it as unleashing the Bride on a room full of Crazy 88s.
               192.168.1.1
 
 [bold cyan]OPTIONS:[/bold cyan]
+  -f, --file PATH    Text file with URLs/domains to hunt (one per line).
+                       Lines starting with # are ignored.
   -p, --preset TEXT    Scan intensity preset:
                          [green]quick[/green]      — Surface scan, ~5 min (recon only)
                          [yellow]standard[/yellow]  — Balanced scan, ~15 min (DEFAULT)
@@ -114,8 +117,21 @@ Think of it as unleashing the Bride on a room full of Crazy 88s.
   [dim]# Just CORS and IDOR modules[/dim]
   beatrix hunt api.example.com -m cors -m idor
 
+  [dim]# Hunt all targets from a file[/dim]
+  beatrix hunt -f targets.txt
+
+  [dim]# Hunt targets from a file with full preset and reports[/dim]
+  beatrix hunt -f targets.txt --preset full -o ./reports
+
   [dim]# Save results[/dim]
   beatrix hunt example.com -o ./results
+
+[bold cyan]TARGETS FILE FORMAT:[/bold cyan]
+  # My bug bounty targets
+  https://api.example.com
+  https://app.example.com
+  example.com
+  # Lines starting with # are comments
 
 [bold cyan]KILL CHAIN PHASES:[/bold cyan]
   1. 🔍 Reconnaissance  — Subdomain enum, port scan, service detection
@@ -734,6 +750,7 @@ def _show_quick_reference():
     table.add_column("Example", style="dim")
 
     table.add_row("hunt TARGET", "Full vulnerability scan", "beatrix hunt example.com")
+    table.add_row("hunt -f FILE", "Hunt targets from file", "beatrix hunt -f targets.txt")
     table.add_row("strike TARGET -m MOD", "Single module attack", "beatrix strike api.com -m cors")
     table.add_row("probe TARGET", "Quick alive check", "beatrix probe example.com")
     table.add_row("recon DOMAIN", "Reconnaissance", "beatrix recon example.com --deep")
@@ -1101,7 +1118,7 @@ def setup_cmd(ctx, check):
 # =============================================================================
 
 @cli.command()
-@click.argument("target")
+@click.argument("target", required=False, default=None)
 @click.option(
     "--preset", "-p",
     type=click.Choice(["quick", "standard", "full", "stealth", "injection", "api", "web", "recon"]),
@@ -1111,22 +1128,122 @@ def setup_cmd(ctx, check):
 @click.option("--ai", is_flag=True, help="Enable AI analysis (Claude Haiku)")
 @click.option("--modules", "-m", multiple=True, help="Specific modules to run (repeatable)")
 @click.option("--output", "-o", type=click.Path(), help="Output directory")
+@click.option("--file", "-f", "targets_file", type=click.Path(exists=True),
+              help="Text file with URLs/domains to hunt (one per line)")
 @click.pass_context
-def hunt(ctx, target, preset, ai, modules, output):
+def hunt(ctx, target, preset, ai, modules, output, targets_file):
     """
-    Hunt for vulnerabilities on TARGET.
+    Hunt for vulnerabilities on TARGET or a file of targets.
 
     \b
     Examples:
         beatrix hunt example.com
         beatrix hunt example.com --preset full --ai
         beatrix hunt api.example.com -m cors -m idor
+        beatrix hunt -f targets.txt
+        beatrix hunt -f targets.txt --preset full -o ./reports
 
     \b
     Run 'beatrix help hunt' for full documentation.
     """
     from datetime import datetime
 
+    # ── Resolve target list ───────────────────────────────────────────────
+    if targets_file:
+        raw_lines = Path(targets_file).read_text().strip().splitlines()
+        target_list = [
+            line.strip() for line in raw_lines
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        if not target_list:
+            console.print("[red]✗ No valid targets found in file.[/red]")
+            sys.exit(1)
+    elif target:
+        target_list = [target]
+    else:
+        console.print("[red]✗ Provide a TARGET argument or --file/-f with a targets file.[/red]")
+        console.print("[dim]  beatrix hunt example.com[/dim]")
+        console.print("[dim]  beatrix hunt -f targets.txt[/dim]")
+        sys.exit(1)
+
+    # ── Multi-target mode ─────────────────────────────────────────────────
+    if len(target_list) > 1:
+        console.print(f"\n[bright_yellow]📋 Batch hunt — {len(target_list)} targets from [bold]{targets_file}[/bold][/bright_yellow]")
+        console.print(f"[dim]   Preset: {preset} | AI: {'enabled' if ai else 'disabled'}[/dim]\n")
+
+        all_findings = []
+        hunt_ids = []
+        failed_targets = []
+
+        for idx, t in enumerate(target_list, 1):
+            console.print(Panel.fit(
+                f"[bold]{t}[/bold]  ({idx}/{len(target_list)})",
+                title=f"[bright_green]⚔️  Target {idx}[/bright_green]",
+                border_style="green",
+            ))
+            try:
+                h_id, h_findings = _hunt_single_target(
+                    t, preset=preset, ai=ai,
+                    modules=list(modules) if modules else None,
+                    output=output,
+                )
+                all_findings.extend(h_findings)
+                if h_id:
+                    hunt_ids.append((t, h_id))
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Hunt interrupted. Showing partial results.[/yellow]")
+                break
+            except Exception as e:
+                console.print(f"[red]  ✗ Failed: {e}[/red]")
+                failed_targets.append((t, str(e)))
+
+        # ── Aggregate summary ─────────────────────────────────────────────
+        console.print()
+        sev_counts = {}
+        for f in all_findings:
+            sev_counts[f.severity.value] = sev_counts.get(f.severity.value, 0) + 1
+
+        summary_lines = [
+            f"[bold]Targets:[/bold]    {len(target_list)} ({len(target_list) - len(failed_targets)} succeeded, {len(failed_targets)} failed)",
+            f"[bold]Findings:[/bold]   {len(all_findings)} total",
+        ]
+        for sev in Severity:
+            cnt = sev_counts.get(sev.value, 0)
+            if cnt:
+                summary_lines.append(f"  {sev.icon} {sev.value.upper()}: {cnt}")
+        if hunt_ids:
+            summary_lines.append("")
+            summary_lines.append("[bold]Hunt IDs:[/bold]")
+            for t, hid in hunt_ids:
+                summary_lines.append(f"  #{hid}  {t}")
+
+        console.print(Panel(
+            "\n".join(summary_lines),
+            title="[bright_yellow]📋 Batch Hunt Complete[/bright_yellow]",
+            border_style="yellow",
+        ))
+
+        # ── Save aggregate JSON if output specified ───────────────────────
+        if output and all_findings:
+            output_path = Path(output)
+            if output_path.suffix == ".json" or str(output) == "-":
+                _export_json(all_findings, output_path if str(output) != "-" else None, target=targets_file)
+            else:
+                output_path.mkdir(parents=True, exist_ok=True)
+                from beatrix.reporters import ReportGenerator
+                reporter = ReportGenerator(output_dir=output_path)
+                batch_path = reporter.generate_batch_report(
+                    all_findings, targets_file, program="Beatrix Batch Hunt"
+                )
+                console.print(f"\n[green]📄 Batch report saved: {batch_path}[/green]")
+                json_path = output_path / "findings.json"
+                reporter.export_json(all_findings, json_path, target=targets_file)
+                console.print(f"[green]📦 JSON export saved: {json_path}[/green]")
+
+        return
+
+    # ── Single target mode (original behavior) ────────────────────────────
+    target = target_list[0]
 
     console.print(f"\n[bright_green]⚔️  Initiating hunt on [bold]{target}[/bold][/bright_green]")
     console.print(f"[dim]   Preset: {preset} | AI: {'enabled' if ai else 'disabled'}[/dim]")
@@ -1315,6 +1432,121 @@ def hunt(ctx, target, preset, ai, modules, output):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+def _hunt_single_target(target, preset="standard", ai=False, modules=None,
+                        output=None):
+    """
+    Run a full hunt on a single target. Used by both single-target and
+    multi-target (--file) modes.
+
+    Returns:
+        (hunt_id, findings) — hunt_id may be None if DB save fails.
+    """
+    import threading
+    from datetime import datetime
+
+    progress_state = {
+        "phase": "", "phase_icon": "", "scanner": "",
+        "status": "Initializing...", "findings_count": 0,
+        "crawl_stats": None, "log": [], "start_time": datetime.now(),
+    }
+    _printed_count = [0]
+    _stop_printer = threading.Event()
+
+    def _on_event(event: str, data: dict) -> None:
+        if event == "phase_start":
+            progress_state["log"].append(
+                f"{data.get('icon', '🔧')} [bold]{data.get('phase', '')}[/bold] — {data.get('description', '')}"
+            )
+        elif event == "phase_done":
+            n = data.get("findings", 0)
+            dur = data.get("duration", 0)
+            progress_state["log"].append(
+                f"  ✓ {data.get('phase', '')} complete — {n} finding{'s' if n != 1 else ''} ({dur:.1f}s)"
+            )
+        elif event == "crawl_done":
+            stats = data
+            progress_state["log"].append(
+                f"  🕷️  Crawl complete — {stats.get('pages', 0)} pages, "
+                f"{stats.get('urls', 0)} URLs, {stats.get('params_urls', 0)} with params"
+            )
+        elif event == "scanner_start":
+            progress_state["log"].append(f"  ▸ {data.get('scanner', '')} → {data.get('target', '')}")
+        elif event == "scanner_done":
+            n = data.get("findings", 0)
+            if n > 0:
+                progress_state["log"].append(
+                    f"  [yellow]  ⚡ {data.get('scanner', '')} found {n} issue{'s' if n != 1 else ''}[/yellow]"
+                )
+        elif event == "scanner_error":
+            progress_state["log"].append(
+                f"  [dim]  ✗ {data.get('scanner', '')}: {data.get('error', '')}[/dim]"
+            )
+        elif event == "finding":
+            progress_state["findings_count"] += 1
+            f = data.get("finding")
+            if f:
+                sev = getattr(f, 'severity', None)
+                icon = sev.icon if sev else "•"
+                color = sev.color if sev else "white"
+                progress_state["log"].append(
+                    f"    {icon} [{color}]{getattr(f, 'title', 'Finding')}[/{color}]"
+                )
+        elif event == "info":
+            progress_state["log"].append(f"  ℹ  {data.get('message', '')}")
+
+        if len(progress_state["log"]) > 50:
+            excess = len(progress_state["log"]) - 50
+            del progress_state["log"][:excess]
+            _printed_count[0] = max(_printed_count[0] - excess, 0)
+
+    engine = BeatrixEngine(on_event=_on_event)
+
+    def _printer():
+        while not _stop_printer.is_set():
+            while _printed_count[0] < len(progress_state["log"]):
+                console.print(progress_state["log"][_printed_count[0]])
+                _printed_count[0] += 1
+            _stop_printer.wait(0.1)
+        while _printed_count[0] < len(progress_state["log"]):
+            console.print(progress_state["log"][_printed_count[0]])
+            _printed_count[0] += 1
+
+    printer_thread = threading.Thread(target=_printer, daemon=True)
+    printer_thread.start()
+
+    try:
+        state = asyncio.run(engine.hunt(
+            target=target, preset=preset, ai=ai, modules=modules,
+        ))
+    finally:
+        _stop_printer.set()
+        printer_thread.join(timeout=2)
+
+    console.print()
+
+    duration = (datetime.now() - state.started_at).total_seconds()
+    modules_run = set()
+    for pr in state.phase_results.values():
+        modules_run.update(pr.modules_run)
+
+    hunt_id = None
+    try:
+        from beatrix.core.findings_db import FindingsDB
+        with FindingsDB() as db:
+            hunt_id = db.save_hunt(
+                target=target, preset=preset,
+                findings=engine.findings, duration=duration,
+                modules_run=sorted(modules_run), ai_enabled=ai,
+                started_at=state.started_at,
+            )
+    except Exception:
+        pass
+
+    _display_hunt_results(state, engine, hunt_id=hunt_id)
+
+    return hunt_id, list(engine.findings)
 
 
 def _display_hunt_results(state, engine, hunt_id=None):

@@ -28,7 +28,7 @@
 ## CLI Commands (20 total)
 
 ```
-beatrix hunt          # Full hunt with kill chain
+beatrix hunt          # Full hunt with kill chain (single target or -f file)
 beatrix probe         # Quick target alive check
 beatrix strike        # Single scanner module attack
 beatrix recon         # Subdomain/tech/JS/endpoint recon
@@ -313,6 +313,7 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - [ ] Move `bounty_hunter.py` into `beatrix/hunters/bounty.py` (proper framework module)
 - [ ] Move `hunt.py` pipeline into a CLI command (`beatrix full-hunt`)
 - [ ] Add unit tests for GHOST agent
+- [x] `hunt --file` / `-f` — hunt multiple targets from a .txt file (full kill chain per target, aggregate summary)
 - [ ] Add unit tests for scanner modules
 - [ ] Integration test: full kill chain on a test target
 - [ ] GHOST: add Bedrock Sonnet support for complex investigations

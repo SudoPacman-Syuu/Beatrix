@@ -10,7 +10,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              BEATRIX CLI                                    │
-│                 beatrix hunt / strike / ghost / recon / batch               │
+│            beatrix hunt [-f file] / strike / ghost / recon / batch          │
 │                         (Click + Rich terminal UI)                          │
 └─────────────────────────────────────────┬───────────────────────────────────┘
                                           │

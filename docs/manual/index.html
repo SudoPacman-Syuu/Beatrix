@@ -861,9 +861,11 @@ beatrix strike https://shop.example.com/search?q=test -m injection</code></pre>
                 <details id="cmd-hunt">
                     <summary>hunt — Full Vulnerability Scan (Kill Chain)</summary>
                     <div class="detail-body">
-                        <pre><code>beatrix hunt TARGET [OPTIONS]</code></pre>
-                        <p>The main event. Runs the full kill chain methodology against a target.</p>
+                        <pre><code>beatrix hunt TARGET [OPTIONS]
+beatrix hunt -f TARGETS_FILE [OPTIONS]</code></pre>
+                        <p>The main event. Runs the full kill chain methodology against a single target or every URL in a file.</p>
                         <table class="flag-table">
+                            <tr><td>-f, --file PATH</td><td>Text file with URLs/domains to hunt (one per line, # for comments)</td></tr>
                             <tr><td>-p, --preset PRESET</td><td>Scan intensity (default: standard)</td></tr>
                             <tr><td>--ai</td><td>Enable AI analysis (Claude Haiku via Bedrock)</td></tr>
                             <tr><td>-m, --modules MOD</td><td>Run specific modules only (repeatable)</td></tr>
@@ -891,7 +893,13 @@ beatrix hunt example.com --preset full --ai
 beatrix hunt https://api.target.com -m injection -m ssti -m xxe
 
 # Stealth scan with output
-beatrix hunt target.com --preset stealth -o ./reports</code></pre>
+beatrix hunt target.com --preset stealth -o ./reports
+
+# Hunt all targets from a file
+beatrix hunt -f targets.txt
+
+# File-based hunt with full preset and reports
+beatrix hunt -f targets.txt --preset full -o ./reports</code></pre>
                     </div>
                 </details>
 
@@ -1693,7 +1701,8 @@ beatrix h1 submit shopify -t "CORS" -f report.md -i "ATO" -s high --dry-run</cod
                 <ol>
                     <li>Run <code>beatrix recon target.com --deep -o recon.json</code> to find all subdomains and endpoints.</li>
                     <li>Extract the live URLs from <code>recon.json</code> into a <code>targets.txt</code> file.</li>
-                    <li>Run <code>beatrix rapid -t targets.txt -o rapid_findings.json</code> to quickly sweep for low-hanging fruit (Takeovers, CORS, Debug pages).</li>
+                    <li>Run <code>beatrix hunt -f targets.txt -o ./reports</code> to hunt all targets through the full kill chain.</li>
+                    <li>Or run <code>beatrix rapid -t targets.txt -o rapid_findings.json</code> for a quick sweep (Takeovers, CORS, Debug pages).</li>
                 </ol>
 
                 <h4>Workflow 2: The Surgical Strike</h4>
