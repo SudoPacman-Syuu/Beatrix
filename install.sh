@@ -60,7 +60,7 @@ version_gte() {
 check_python() {
     local py=""
 
-    for candidate in python3.13 python3.12 python3.11 python3; do
+    for candidate in python3.14 python3.13 python3.12 python3.11 python3; do
         if command_exists "$candidate"; then
             local ver
             ver="$($candidate --version 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)"
@@ -84,12 +84,61 @@ check_python() {
 }
 
 check_pip() {
-    if ! $PYTHON -m pip --version &>/dev/null; then
-        warn "pip not found. Installing..."
-        $PYTHON -m ensurepip --upgrade 2>/dev/null || \
-            fail "Cannot install pip. Run: ${DIM}sudo apt install python3-pip${RESET}"
+    if $PYTHON -m pip --version &>/dev/null; then
+        success "pip available"
+        HAS_SYSTEM_PIP=true
+        return 0
     fi
-    success "pip available"
+
+    warn "pip not found in system Python. Attempting to install..."
+
+    # Try ensurepip with --break-system-packages (PEP 668 / externally-managed)
+    if $PYTHON -m ensurepip --upgrade --break-system-packages &>/dev/null 2>&1; then
+        success "pip installed via ensurepip"
+        HAS_SYSTEM_PIP=true
+        return 0
+    fi
+
+    # Try plain ensurepip
+    if $PYTHON -m ensurepip --upgrade &>/dev/null 2>&1; then
+        success "pip installed via ensurepip"
+        HAS_SYSTEM_PIP=true
+        return 0
+    fi
+
+    # On externally-managed Pythons (Arch, Fedora 38+, Ubuntu 24.04+,
+    # Codespaces, etc.) pip may not be installable system-wide.
+    # That's OK — we'll use a venv instead.
+    if $PYTHON -c 'import venv' &>/dev/null; then
+        warn "System pip unavailable (PEP 668 externally-managed environment)"
+        info "Will install Beatrix in an isolated venv instead"
+        HAS_SYSTEM_PIP=false
+        return 0
+    fi
+
+    # On Debian/Ubuntu, python3-venv is a separate package — try to install it
+    warn "venv module not available, attempting to install it..."
+    if command_exists apt-get; then
+        local pyver
+        pyver="$($PYTHON --version 2>&1 | grep -oP '\d+\.\d+' | head -1)"
+        sudo apt-get update -qq 2>/dev/null
+        sudo apt-get install -y -qq "python${pyver}-venv" 2>/dev/null || \
+            sudo apt-get install -y -qq python3-venv 2>/dev/null || true
+    elif command_exists pacman; then
+        sudo pacman -S --noconfirm --needed python 2>/dev/null || true
+    elif command_exists dnf; then
+        sudo dnf install -y -q python3-libs 2>/dev/null || true
+    fi
+
+    if $PYTHON -c 'import venv' &>/dev/null; then
+        success "venv module installed"
+        warn "System pip unavailable (PEP 668 externally-managed environment)"
+        info "Will install Beatrix in an isolated venv instead"
+        HAS_SYSTEM_PIP=false
+        return 0
+    fi
+
+    fail "Cannot install pip and venv module is missing.\n         Install pip or venv for your Python:\n         ${DIM}sudo pacman -S python-pip   # Arch\n         sudo apt install python3-pip python3-venv  # Debian/Ubuntu${RESET}"
 }
 
 # ── Install Methods ──────────────────────────────────────────
@@ -99,7 +148,9 @@ install_with_pipx() {
 
     if ! command_exists pipx; then
         info "Installing pipx first..."
-        $PYTHON -m pip install --user pipx 2>/dev/null || \
+        $PYTHON -m pip install --user --break-system-packages pipx 2>/dev/null || \
+            $PYTHON -m pip install --user pipx 2>/dev/null || \
+            sudo $PYTHON -m pip install --break-system-packages pipx 2>/dev/null || \
             sudo $PYTHON -m pip install pipx 2>/dev/null || \
             { warn "Could not install pipx, falling back to pip"; return 1; }
         $PYTHON -m pipx ensurepath 2>/dev/null || true
@@ -132,8 +183,8 @@ install_with_pip_system() {
     info "Installing system-wide (requires sudo)..."
     sudo $PYTHON -m pip install --break-system-packages ".[extended]" 2>/dev/null || \
         sudo $PYTHON -m pip install --break-system-packages . 2>/dev/null || \
-        sudo $PYTHON -m pip install . || \
-        fail "System install failed. Try: pipx install ."
+        sudo $PYTHON -m pip install . 2>/dev/null || \
+        { warn "System pip install failed, falling back to venv..."; return 1; }
 
     success "Installed system-wide"
     return 0
@@ -143,6 +194,20 @@ install_with_venv() {
     info "Installing with dedicated venv + symlink..."
 
     local venv_dir="$HOME/.beatrix"
+
+    # Ensure venv module is available (Debian/Ubuntu split it into python3-venv)
+    if ! $PYTHON -c 'import venv' &>/dev/null; then
+        warn "venv module missing, attempting to install..."
+        if command_exists apt-get; then
+            local pyver
+            pyver="$($PYTHON --version 2>&1 | grep -oP '\d+\.\d+' | head -1)"
+            sudo apt-get install -y -qq "python${pyver}-venv" 2>/dev/null || \
+                sudo apt-get install -y -qq python3-venv 2>/dev/null || true
+        fi
+        $PYTHON -c 'import venv' &>/dev/null || \
+            fail "Cannot create venv — install python3-venv: ${DIM}sudo apt install python3-venv${RESET}"
+    fi
+
     $PYTHON -m venv "$venv_dir"
     "$venv_dir/bin/pip" install --upgrade pip
     "$venv_dir/bin/pip" install ".[extended]" || "$venv_dir/bin/pip" install .
@@ -614,13 +679,19 @@ declare -A IMPORT_MAP=(
 )
 
 verify_python_deps() {
+    # Use the venv Python if we installed into one, otherwise system Python
+    local VERIFY_PYTHON="$PYTHON"
+    if [[ -x "$HOME/.beatrix/bin/python" ]]; then
+        VERIFY_PYTHON="$HOME/.beatrix/bin/python"
+    fi
+
     local missing=()
     local ok=0
     local total=${#IMPORT_MAP[@]}
 
     for pkg in "${!IMPORT_MAP[@]}"; do
         local mod="${IMPORT_MAP[$pkg]}"
-        if $PYTHON -c "import ${mod}" &>/dev/null; then
+        if $VERIFY_PYTHON -c "import ${mod}" &>/dev/null; then
             ((ok++))
         else
             missing+=("$pkg")
@@ -635,6 +706,14 @@ verify_python_deps() {
     warn "${#missing[@]} Python dependencies missing: ${missing[*]}"
     info "Installing missing dependencies..."
 
+    # Use the venv pip if available
+    local PIP_CMD="$VERIFY_PYTHON -m pip install"
+    if [[ "$VERIFY_PYTHON" == */.beatrix/* ]]; then
+        PIP_CMD="$VERIFY_PYTHON -m pip install"
+    else
+        PIP_CMD="$VERIFY_PYTHON -m pip install --break-system-packages"
+    fi
+
     local repaired=0
     for pkg in "${missing[@]}"; do
         # Find the versioned spec from CORE_PYTHON_DEPS
@@ -647,8 +726,7 @@ verify_python_deps() {
         done
 
         info "  Installing $spec..."
-        if $PYTHON -m pip install --break-system-packages "$spec" &>/dev/null 2>&1 || \
-           $PYTHON -m pip install "$spec" &>/dev/null 2>&1; then
+        if $PIP_CMD "$spec" &>/dev/null 2>&1; then
             success "  $pkg"
             ((repaired++))
         else
@@ -659,7 +737,7 @@ verify_python_deps() {
     if [[ $repaired -eq ${#missing[@]} ]]; then
         success "All missing dependencies repaired ($repaired installed)"
     else
-        warn "Some dependencies could not be installed. Run: $PYTHON -m pip install \".[extended]\""
+        warn "Some dependencies could not be installed. Run: $VERIFY_PYTHON -m pip install \".[extended]\""
     fi
 }
 
@@ -687,10 +765,15 @@ main() {
     echo -e "${BOLD}Installing Beatrix CLI...${RESET}"
 
     # Try install methods in order of preference
-    install_with_pipx || \
-    install_with_pip_user || \
-    install_with_pip_system || \
-    install_with_venv
+    # If system pip is unavailable (PEP 668), skip pipx/pip and go to venv
+    if [[ "${HAS_SYSTEM_PIP:-true}" == "true" ]]; then
+        install_with_pipx || \
+        install_with_pip_user || \
+        install_with_pip_system || \
+        install_with_venv
+    else
+        install_with_venv
+    fi
 
     # ── Verify & repair Python dependencies ──────────────
     echo ""
