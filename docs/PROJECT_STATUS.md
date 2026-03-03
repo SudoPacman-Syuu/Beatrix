@@ -2,9 +2,9 @@
 
 **Codename:** The Omega Project
 **Version:** 1.0.0 "The Bride"
-**Last Updated:** February 24, 2026
-**Current Phase:** Stable — Full audit complete, unused modules wired in
-**Framework LOC:** ~58,957 (89 Python files across inner package)
+**Last Updated:** March 3, 2026
+**Current Phase:** Stable — Install script future-proofed, standalone modules CLI-wired
+**Framework LOC:** ~59,300 (89 Python files across inner package)
 
 ---
 
@@ -14,7 +14,7 @@
 |-----------|-------|-------|--------|-------|
 | Core Engine | 18,132 | 22 | ✅ Working | Engine, kill chain, types, methodology, external tools, fuzzer, OOB, correlation, **seclists_manager (dynamic wordlists)**, **poc_server (PoC validation HTTP server)** |
 | Scanner Modules | 28,353 | 39 | ✅ Working | 27 BaseScanner + 2 BaseModule subclasses + support modules |
-| CLI Framework | 2,993 | 2 | ✅ Working | 20 commands via Click + Rich |
+| CLI Framework | ~3,700 | 2 | ✅ Working | 25 commands via Click + Rich |
 | AI Integration | 1,828 | 4 | ✅ Working | GHOST agent, HaikuGrunt, Bedrock/Anthropic |
 | Recon Module | 472 | 1 | ✅ Working | Subdomain enum, tech detect, JS analysis |
 | Hunters | 474 | 3 | ✅ Working | RapidHunter, HaikuHunter |
@@ -25,7 +25,7 @@
 
 ---
 
-## CLI Commands (20 total)
+## CLI Commands (25 total)
 
 ```
 beatrix hunt          # Full hunt with kill chain (single target or -f file)
@@ -40,6 +40,11 @@ beatrix validate      # Validate findings from JSON
 beatrix github-recon  # GitHub org/user secret scanning
 beatrix h1            # HackerOne operations (programs/dupecheck/submit)
 beatrix mobile        # Mobile app traffic interception
+beatrix browser       # Playwright-based browser scanning (DOM XSS, WAF evasion)
+beatrix creds         # Credential validation (JWT, API keys, AWS, GitHub, Stripe)
+beatrix origin-ip     # Origin IP discovery behind CDN/WAF
+beatrix inject        # Deep parameter injection (SQLi, XSS, SSTI, CMDi)
+beatrix polyglot      # XSS polyglot generation, mXSS, DOM clobbering payloads
 beatrix batch         # Batch scan from file
 beatrix config        # Configuration management
 beatrix list          # List available modules/presets
@@ -159,8 +164,8 @@ beatrix/                       # Inner framework package
 │   ├── assistant.py           # AIAssistant, HaikuGrunt, Bedrock/Anthropic
 │   ├── ghost.py               # GHOST autonomous pentesting agent (10 tools)
 │   └── tasks.py               # TaskRouter, model selection
-├── cli/                       # Click CLI (3K LOC, 2 files)
-│   └── main.py                # 20 commands
+├── cli/                       # Click CLI (~3.7K LOC, 2 files)
+│   └── main.py                # 25 commands
 ├── recon/                     # Recon module (472 LOC)
 │   └── __init__.py            # ReconRunner, ReconResult
 ├── hunters/                   # Hunting workflows (474 LOC, 3 files)
@@ -485,6 +490,39 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - `ssh_auditor.py` — Specialized SSH target auditing
 
 **All integrations use lazy imports** with `try/except ImportError` + `HAS_*` flags — nothing breaks if a module fails to load.
+
+---
+
+### Session 10 — March 3, 2026
+
+**Focus:** Install script future-proofing, standalone module CLI wiring, documentation sync
+
+**Install script (`install.sh`) — Complete rewrite for Python compatibility:**
+- Dynamic Python discovery via `compgen -c python3.` sorted newest-first — no more hardcoded version list
+- New install order: uv → venv → pipx → pip --user (was: pipx → pip → venv)
+- New `install_with_uv()` function — auto-installs uv if missing, fastest install method
+- `install_with_venv()` rewritten with error handling for missing `python3-venv` package
+- `install_with_pip_system()` REMOVED — eliminated PEP 668 externally-managed-environment conflicts
+- `VENV_DIR="${BEATRIX_VENV:-$HOME/.beatrix}"` — customizable venv location
+- `check_pip()` now non-fatal (warns, doesn't abort)
+- `verify_python_deps()` uses venv pip for repairs
+- `install_external_tools` Python section uses `$PIP_CMD` that prefers venv pip
+- jwt_tool wrapper uses venv Python
+
+**Standalone module CLI wiring (5 new command groups, ~340 LOC added to main.py):**
+1. `beatrix browser scan` — wraps `quick_browser_scan()` with --login-url, --email, --password, --visible
+2. `beatrix creds validate|batch` — wraps `CredentialValidator` with type choices (jwt_secret, api_key, aws_key, github_token, stripe_key, etc.)
+3. `beatrix origin-ip` — wraps `run_origin_discovery()` with multiple domains, --verbose, --output
+4. `beatrix inject` — wraps `PowerInjector.scan()` with --deep, --types, --timeout, --concurrency, --ai, --output
+5. `beatrix polyglot generate|mxss|clobber` — wraps `get_xss_payloads()`, `get_mxss_payloads()`, `get_dom_clobbering_payloads()`
+
+**Documentation updates:**
+- README.md: Added 5 new commands to command reference table, updated install methods section (uv/venv priority), updated architecture command count
+- ARCHITECTURE.md: Updated date, command count (20 → 25), data flow section
+- PROJECT_STATUS.md: Updated CLI stats (~3,700 LOC, 25 commands), added 5 new commands to listing, added Session 10 log
+- Manual (index.html): Added sidebar TOC entries, command detail sections, and install method updates for all 5 new commands
+
+**CLI stats:** 20 → 25 top-level commands/groups
 
 ---
 

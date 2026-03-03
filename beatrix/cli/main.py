@@ -2874,6 +2874,444 @@ def mobile_analyze(ctx, capture_file, secrets):
 
 
 # =============================================================================
+# BROWSER SCANNER COMMANDS
+# =============================================================================
+
+@cli.group("browser")
+@click.pass_context
+def browser(ctx):
+    """
+    Playwright-based browser scanning (DOM XSS, clickjacking).
+
+    \b
+    Requires: pip install playwright && playwright install chromium
+    Run 'beatrix help browser' for details.
+    """
+    pass
+
+
+@browser.command("scan")
+@click.argument("url")
+@click.option("--login-url", help="Login page URL for authenticated scanning")
+@click.option("--email", help="Login email/username")
+@click.option("--password", help="Login password")
+@click.option("--visible", is_flag=True, help="Show browser window (non-headless)")
+@click.pass_context
+def browser_scan(ctx, url, login_url, email, password, visible):
+    """Run browser-based security scan against a URL."""
+    from beatrix.scanners.browser_scanner import quick_browser_scan
+
+    console.print(Panel.fit(
+        f"[bold]Target:[/bold]  {url}\n"
+        f"[bold]Auth:[/bold]    {'Yes' if email else 'No'}\n"
+        f"[bold]Mode:[/bold]    {'Visible' if visible else 'Headless'}",
+        title="[bold bright_cyan]🌐 Browser Scanner[/bold bright_cyan]",
+        border_style="cyan",
+    ))
+
+    findings = asyncio.run(quick_browser_scan(
+        url=url, email=email, password=password,
+        login_url=login_url, headless=not visible,
+    ))
+
+    if findings:
+        table = Table(title=f"Browser Findings ({len(findings)})")
+        table.add_column("Severity", style="bold")
+        table.add_column("Title")
+        table.add_column("URL", style="dim")
+        for f_item in findings:
+            sev_color = {"critical": "red", "high": "bright_red", "medium": "yellow", "low": "blue"}.get(f_item.severity, "white")
+            table.add_row(f"[{sev_color}]{f_item.severity.upper()}[/{sev_color}]", f_item.title, f_item.url)
+        console.print(table)
+    else:
+        console.print("[green]No browser-based vulnerabilities found.[/green]")
+
+
+# =============================================================================
+# CREDENTIAL VALIDATOR COMMANDS
+# =============================================================================
+
+@cli.group("creds")
+@click.pass_context
+def creds(ctx):
+    """
+    Validate leaked credentials (AWS, GitHub, Stripe, JWT, etc.).
+
+    \b
+    Run 'beatrix help creds' for details.
+    """
+    pass
+
+
+@creds.command("validate")
+@click.argument("cred_type", type=click.Choice([
+    "jwt_secret", "api_key", "aws_key", "github_token", "stripe_key",
+    "sendgrid_key", "slack_webhook", "mongodb_uri", "redis_password", "generic",
+], case_sensitive=False))
+@click.argument("value")
+@click.option("--host", help="Service host (for DB credentials)")
+@click.option("--port", type=int, help="Service port (for DB credentials)")
+@click.option("--username", "-u", help="Associated username")
+@click.option("--service-url", help="API endpoint to test against")
+@click.pass_context
+def creds_validate(ctx, cred_type, value, host, port, username, service_url):
+    """Validate a single credential against its target service."""
+    from beatrix.scanners.credential_validator import CredentialTest, CredentialType, CredentialValidator
+
+    type_map = {
+        "jwt_secret": CredentialType.JWT_SECRET,
+        "api_key": CredentialType.API_KEY,
+        "aws_key": CredentialType.AWS_KEY,
+        "github_token": CredentialType.GITHUB_TOKEN,
+        "stripe_key": CredentialType.STRIPE_KEY,
+        "sendgrid_key": CredentialType.SENDGRID_KEY,
+        "slack_webhook": CredentialType.SLACK_WEBHOOK,
+        "mongodb_uri": CredentialType.MONGODB_URI,
+        "redis_password": CredentialType.REDIS_PASSWORD,
+        "generic": CredentialType.GENERIC,
+    }
+
+    context = {}
+    if host:
+        context["host"] = host
+    if port:
+        context["port"] = port
+    if username:
+        context["username"] = username
+    if service_url:
+        context["service_url"] = service_url
+
+    cred = CredentialTest(
+        credential_type=type_map[cred_type.lower()],
+        value=value,
+        context=context,
+    )
+
+    console.print(Panel.fit(
+        f"[bold]Type:[/bold]  {cred_type}\n"
+        f"[bold]Value:[/bold] {value[:20]}{'...' if len(value) > 20 else ''}",
+        title="[bold bright_yellow]🔑 Credential Validator[/bold bright_yellow]",
+        border_style="yellow",
+    ))
+
+    validator = CredentialValidator()
+    report = asyncio.run(validator.validate(cred))
+
+    result_color = "green" if report.is_live else "red" if report.result.value == "invalid" else "yellow"
+    console.print(f"\n  Result: [{result_color}]{report.result.value.upper()}[/{result_color}]")
+    console.print(f"  Details: {report.details}")
+    if report.access_level:
+        console.print(f"  Access Level: [bold]{report.access_level}[/bold]")
+    if report.service_info:
+        console.print(f"  Service Info: {report.service_info}")
+    console.print(f"  Risk: {report.risk_level.value}")
+
+
+@creds.command("batch")
+@click.argument("creds_file", type=click.Path(exists=True))
+@click.option("--output", "-o", type=click.Path(), help="Save results to JSON file")
+@click.pass_context
+def creds_batch(ctx, creds_file, output):
+    """Validate credentials from a JSON file.
+
+    \b
+    File format: [{"type": "github_token", "value": "ghp_...", "context": {...}}, ...]
+    """
+    import json as _json
+
+    from beatrix.scanners.credential_validator import CredentialTest, CredentialType, CredentialValidator
+
+    with open(creds_file) as f:
+        cred_list = _json.load(f)
+
+    console.print(f"\n[cyan]Validating {len(cred_list)} credentials from {creds_file}[/cyan]\n")
+
+    type_map = {e.value: e for e in CredentialType}
+    validator = CredentialValidator()
+
+    async def _run():
+        results = []
+        for item in cred_list:
+            ct = type_map.get(item.get("type", ""), CredentialType.GENERIC)
+            cred = CredentialTest(
+                credential_type=ct,
+                value=item["value"],
+                context=item.get("context", {}),
+            )
+            report = await validator.validate(cred)
+            results.append(report)
+
+            icon = "✅" if report.is_live else "❌"
+            console.print(f"  {icon} [{ct.value}] {item['value'][:30]}... → {report.result.value}")
+        return results
+
+    results = asyncio.run(_run())
+
+    live = sum(1 for r in results if r.is_live)
+    console.print(f"\n[bold]Results: {live}/{len(results)} credentials confirmed live[/bold]")
+
+    if output:
+        data = [{"type": r.credential_type.value, "result": r.result.value,
+                 "details": r.details, "risk": r.risk_level.value,
+                 "access_level": r.access_level} for r in results]
+        with open(output, "w") as fp:
+            _json.dump(data, fp, indent=2)
+        console.print(f"[green]Results saved to {output}[/green]")
+
+
+# =============================================================================
+# ORIGIN IP DISCOVERY COMMANDS
+# =============================================================================
+
+@cli.command("origin-ip")
+@click.argument("domains", nargs=-1, required=True)
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--output", "-o", type=click.Path(), help="Save results to JSON file")
+@click.pass_context
+def origin_ip(ctx, domains, verbose, output):
+    """
+    Discover real origin IPs behind CDN/WAF (Cloudflare, Akamai, etc.).
+
+    \b
+    Uses DNS history, SSL certs, subdomain correlation, mail servers, and more.
+
+    Examples:
+        beatrix origin-ip example.com
+        beatrix origin-ip example.com target.com -v
+    """
+    from beatrix.scanners.origin_ip_discovery import run_origin_discovery
+
+    console.print(Panel.fit(
+        f"[bold]Domains:[/bold] {', '.join(domains)}\n"
+        f"[bold]Verbose:[/bold] {verbose}",
+        title="[bold bright_magenta]🎯 Origin IP Discovery[/bold bright_magenta]",
+        border_style="magenta",
+    ))
+
+    results = asyncio.run(run_origin_discovery(
+        domains=list(domains), verbose=verbose,
+    ))
+
+    for domain_result in results.get("domains", []):
+        domain = domain_result.get("domain", "?")
+        cdn = domain_result.get("cdn_detected", "Unknown")
+        top_ips = domain_result.get("top_ips", [])
+
+        console.print(f"\n[bold cyan]{domain}[/bold cyan] — CDN: {cdn}")
+
+        if top_ips:
+            table = Table(title=f"Origin IPs for {domain}")
+            table.add_column("IP", style="bold")
+            table.add_column("Confidence")
+            table.add_column("Source", style="dim")
+            table.add_column("Validated")
+            for ip_info in top_ips:
+                conf = ip_info.get("confidence", 0) * 100
+                validated = "[green]✓[/green]" if ip_info.get("validated") else "[dim]?[/dim]"
+                conf_color = "green" if conf >= 70 else "yellow" if conf >= 40 else "red"
+                table.add_row(
+                    ip_info.get("ip", "?"),
+                    f"[{conf_color}]{conf:.0f}%[/{conf_color}]",
+                    ip_info.get("source", "unknown"),
+                    validated,
+                )
+            console.print(table)
+        else:
+            console.print("  [dim]No origin IPs discovered[/dim]")
+
+    if output:
+        import json as _json
+        with open(output, "w") as fp:
+            _json.dump(results, fp, indent=2)
+        console.print(f"\n[green]Results saved to {output}[/green]")
+
+
+# =============================================================================
+# POWER INJECTOR COMMANDS
+# =============================================================================
+
+@cli.command("inject")
+@click.argument("url")
+@click.option("--deep", "-d", is_flag=True, help="Enable extended payload sets")
+@click.option("--no-waf-bypass", is_flag=True, help="Skip WAF bypass payloads")
+@click.option("--types", "-t", multiple=True,
+              type=click.Choice(["sqli", "xss", "ssti", "cmdi", "ssrf", "lfi", "nosqli"], case_sensitive=False),
+              help="Specific vulnerability types to test (default: all)")
+@click.option("--timeout", type=int, default=15, help="Request timeout in seconds")
+@click.option("--concurrency", "-c", type=int, default=10, help="Max concurrent requests")
+@click.option("--ai", is_flag=True, help="Enable AI false-positive analysis")
+@click.option("--output", "-o", type=click.Path(), help="Save findings to JSON file")
+@click.pass_context
+def inject(ctx, url, deep, no_waf_bypass, types, timeout, concurrency, ai, output):
+    """
+    Advanced injection scanner with 2000+ payloads (SQLi/XSS/CMDi/SSTI/SSRF/LFI).
+
+    \b
+    URL must include parameters, e.g.:
+        beatrix inject "https://target.com/page?id=1&name=test"
+        beatrix inject "https://target.com/api/search?q=test" --deep --types sqli xss
+    """
+    from beatrix.scanners.power_injector import PowerInjector, VulnType
+
+    type_map = {
+        "sqli": VulnType.SQLI, "xss": VulnType.XSS, "ssti": VulnType.SSTI,
+        "cmdi": VulnType.CMDI, "ssrf": VulnType.SSRF, "lfi": VulnType.LFI,
+        "nosqli": VulnType.NOSQLI,
+    }
+
+    vuln_types = [type_map[t.lower()] for t in types] if types else None
+
+    console.print(Panel.fit(
+        f"[bold]Target:[/bold]      {url}\n"
+        f"[bold]Deep:[/bold]        {deep}\n"
+        f"[bold]WAF Bypass:[/bold]  {not no_waf_bypass}\n"
+        f"[bold]Types:[/bold]       {', '.join(types) if types else 'all'}\n"
+        f"[bold]Concurrency:[/bold] {concurrency}\n"
+        f"[bold]AI:[/bold]          {ai}",
+        title="[bold bright_red]💉 PowerInjector[/bold bright_red]",
+        border_style="red",
+    ))
+
+    injector = PowerInjector(timeout=timeout, max_concurrent=concurrency, use_ai=ai)
+    findings = asyncio.run(injector.scan(
+        url=url, vuln_types=vuln_types, deep=deep, waf_bypass=not no_waf_bypass,
+    ))
+
+    if findings:
+        table = Table(title=f"Injection Findings ({len(findings)})")
+        table.add_column("Severity", style="bold")
+        table.add_column("Type")
+        table.add_column("Parameter")
+        table.add_column("Technique", style="dim")
+        table.add_column("Evidence", max_width=40)
+        for f_item in findings:
+            sev_color = {"Critical": "red", "High": "bright_red", "Medium": "yellow", "Low": "blue"}.get(f_item.severity, "white")
+            table.add_row(
+                f"[{sev_color}]{f_item.severity}[/{sev_color}]",
+                f_item.vuln_type.value,
+                f_item.parameter,
+                f_item.technique,
+                f_item.evidence[:40],
+            )
+        console.print(table)
+    else:
+        console.print("[green]No injection vulnerabilities found.[/green]")
+
+    if output:
+        import json as _json
+        data = [{"severity": f_item.severity, "type": f_item.vuln_type.value,
+                 "url": f_item.url, "parameter": f_item.parameter,
+                 "payload": f_item.payload, "evidence": f_item.evidence,
+                 "technique": f_item.technique, "confidence": f_item.confidence}
+                for f_item in findings]
+        with open(output, "w") as fp:
+            _json.dump(data, fp, indent=2)
+        console.print(f"\n[green]Results saved to {output}[/green]")
+
+
+# =============================================================================
+# POLYGLOT GENERATOR COMMANDS
+# =============================================================================
+
+@cli.group("polyglot")
+@click.pass_context
+def polyglot(ctx):
+    """
+    Generate XSS polyglot, mXSS, and DOM clobbering payloads.
+
+    \b
+    Run 'beatrix help polyglot' for details.
+    """
+    pass
+
+
+@polyglot.command("generate")
+@click.option("--context", "-c", "xss_context",
+              type=click.Choice([
+                  "html_text", "html_attr_double", "html_attr_single", "html_attr_unquoted",
+                  "script_string_double", "script_string_single", "script_template",
+                  "script_block", "url_href", "url_src", "svg_context", "unknown",
+              ], case_sensitive=False),
+              default="html_text", help="Injection context")
+@click.option("--waf", help="Target WAF for specific bypasses (e.g. cloudflare, akamai)")
+@click.option("--no-bypass", is_flag=True, help="Exclude filter bypass payloads")
+@click.option("--limit", "-n", type=int, help="Limit number of payloads")
+@click.pass_context
+def polyglot_generate(ctx, xss_context, waf, no_bypass, limit):
+    """Generate context-aware XSS payloads."""
+    from beatrix.scanners.polyglot_generator import XSSContext, get_xss_payloads
+
+    context_map = {
+        "html_text": XSSContext.HTML_TEXT,
+        "html_attr_double": XSSContext.HTML_ATTR_DOUBLE,
+        "html_attr_single": XSSContext.HTML_ATTR_SINGLE,
+        "html_attr_unquoted": XSSContext.HTML_ATTR_UNQUOTED,
+        "script_string_double": XSSContext.SCRIPT_STRING_DOUBLE,
+        "script_string_single": XSSContext.SCRIPT_STRING_SINGLE,
+        "script_template": XSSContext.SCRIPT_TEMPLATE,
+        "script_block": XSSContext.SCRIPT_BLOCK,
+        "url_href": XSSContext.URL_HREF,
+        "url_src": XSSContext.URL_SRC,
+        "svg_context": XSSContext.SVG_CONTEXT,
+        "unknown": XSSContext.UNKNOWN,
+    }
+
+    context_enum = context_map[xss_context.lower()]
+    payloads = get_xss_payloads(context=context_enum, include_bypass=not no_bypass, waf=waf)
+
+    if limit:
+        payloads = payloads[:limit]
+
+    console.print(Panel.fit(
+        f"[bold]Context:[/bold]    {xss_context}\n"
+        f"[bold]WAF:[/bold]        {waf or 'generic'}\n"
+        f"[bold]Payloads:[/bold]   {len(payloads)}",
+        title="[bold bright_green]🧬 Polyglot Generator[/bold bright_green]",
+        border_style="green",
+    ))
+
+    for i, payload in enumerate(payloads, 1):
+        console.print(f"  [dim]{i:3d}.[/dim] {payload}")
+
+
+@polyglot.command("mxss")
+@click.option("--limit", "-n", type=int, help="Limit number of payloads")
+@click.pass_context
+def polyglot_mxss(ctx, limit):
+    """Generate mutation XSS (mXSS) payloads."""
+    from beatrix.scanners.polyglot_generator import get_mxss_payloads
+
+    payloads = get_mxss_payloads()
+    if limit:
+        payloads = payloads[:limit]
+
+    console.print(f"\n[bold]mXSS Payloads ({len(payloads)}):[/bold]\n")
+    for i, payload in enumerate(payloads, 1):
+        console.print(f"  [dim]{i:3d}.[/dim] {payload}")
+
+
+@polyglot.command("clobber")
+@click.option("--limit", "-n", type=int, help="Limit number of payloads")
+@click.pass_context
+def polyglot_clobber(ctx, limit):
+    """Generate DOM clobbering payloads."""
+    from beatrix.scanners.polyglot_generator import get_dom_clobbering_payloads
+
+    payloads = get_dom_clobbering_payloads()
+    if limit:
+        payloads = payloads[:limit]
+
+    console.print(f"\n[bold]DOM Clobbering Payloads ({len(payloads)}):[/bold]\n")
+    for i, item in enumerate(payloads, 1):
+        if isinstance(item, dict):
+            console.print(f"  [dim]{i:3d}.[/dim] {item.get('payload', item)}")
+            if item.get('description'):
+                console.print(f"       [dim]{item['description']}[/dim]")
+        else:
+            console.print(f"  [dim]{i:3d}.[/dim] {item}")
+
+
+# =============================================================================
 # BOUNTY-HUNT — Full bounty pipeline
 # =============================================================================
 

@@ -31,21 +31,25 @@ git clone https://github.com/SudoPacman-Syuu/Beatrix.git && cd Beatrix && ./inst
 
 That's it. The installer auto-detects your Python, picks the best install method, puts `beatrix` on your PATH, and **automatically installs all 21 external security tools** (nuclei, nmap, sqlmap, subfinder, ffuf, etc.).
 
-### Other Install Methods
+### Install Method Priority
+
+The installer automatically selects the best method in this order:
+
+1. **uv** (fastest, recommended) — auto-installed if missing
+2. **venv** — Python built-in virtual environment at `~/.beatrix`
+3. **pipx** — isolated app install
+4. **pip --user** — user-level fallback
 
 ```bash
 # Using make
 git clone https://github.com/SudoPacman-Syuu/Beatrix.git && cd Beatrix
 make install
 
-# Using pipx (recommended for isolation)
+# Using uv directly
+uv tool install .
+
+# Using pipx
 pipx install .
-
-# Using pip (user-level, no sudo)
-pip install --user .
-
-# System-wide
-sudo pip install .
 
 # Dedicated venv + symlink to /usr/local/bin
 make install-venv
@@ -53,6 +57,8 @@ make install-venv
 # For development
 make install-dev
 ```
+
+Customize the venv location: `BEATRIX_VENV=~/my-venv ./install.sh`
 
 ### Uninstall
 
@@ -93,6 +99,11 @@ beatrix arsenal                      # full module reference
 | `validate FILE` | Validate findings | `beatrix validate report.json` |
 | `h1 [sub]` | HackerOne operations | `beatrix h1 programs` |
 | `mobile [sub]` | Mobile traffic intercept | `beatrix mobile intercept` |
+| `browser [sub]` | Playwright browser scanning | `beatrix browser scan https://app.com` |
+| `creds [sub]` | Credential validation | `beatrix creds validate jwt_secret TOKEN` |
+| `origin-ip DOMAIN` | Origin IP behind CDN | `beatrix origin-ip example.com` |
+| `inject TARGET` | Deep parameter injection | `beatrix inject https://api.com --deep` |
+| `polyglot [sub]` | XSS polyglot generation | `beatrix polyglot generate` |
 | `config` | Configuration | `beatrix config --show` |
 | `list` | List modules/presets | `beatrix list --modules` |
 | `arsenal` | Full module reference | `beatrix arsenal` |
@@ -469,7 +480,7 @@ beatrix list --presets
 
 ```
 beatrix/
-├── cli/main.py              # CLI entry point — 20 commands via Click + Rich
+├── cli/main.py              # CLI entry point — 25 commands via Click + Rich
 ├── core/
 │   ├── engine.py            # BeatrixEngine — orchestrates everything, 29 modules
 │   ├── kill_chain.py        # 7-phase kill chain executor

@@ -561,6 +561,11 @@
                 <li class="sub-item"><a href="#cmd-findings">findings</a></li>
                 <li class="sub-item"><a href="#cmd-h1">h1 (HackerOne)</a></li>
                 <li class="sub-item"><a href="#cmd-mobile">mobile</a></li>
+                <li class="sub-item"><a href="#cmd-browser">browser</a></li>
+                <li class="sub-item"><a href="#cmd-creds">creds</a></li>
+                <li class="sub-item"><a href="#cmd-origin-ip">origin-ip</a></li>
+                <li class="sub-item"><a href="#cmd-inject">inject</a></li>
+                <li class="sub-item"><a href="#cmd-polyglot">polyglot</a></li>
                 <li class="sub-item"><a href="#cmd-manual">manual</a></li>
                 <li class="sub-item"><a href="#cmd-setup">setup</a></li>
                 
@@ -611,17 +616,18 @@
                 <p>The installer auto-detects your Python environment, selects the best installation method, and places <code>beatrix</code> on your PATH.</p>
 
                 <h3>Alternative Methods</h3>
-                <pre><code># Using pipx (Recommended for isolation)
+                <pre><code># Using uv (fastest, auto-installed by install.sh)
+uv tool install .
+
+# Using pipx
 pipx install .
 
 # Using make
 make install
 
 # Dedicated venv + symlink to /usr/local/bin
-make install-venv
-
-# System-wide (Use with caution)
-sudo pip install .</code></pre>
+make install-venv</code></pre>
+                <p>The installer automatically selects the best method in this order: <strong>uv</strong> → <strong>venv</strong> → <strong>pipx</strong> → <strong>pip --user</strong>. Customize the venv location with <code>BEATRIX_VENV=~/my-venv ./install.sh</code>.</p>
 
                 <h3 id="dependencies">External Dependencies</h3>
                 <p>While Beatrix's core engine is pure Python, maximum lethality requires 21 external binaries and tools. <strong>All of these are automatically installed</strong> when you run <code>./install.sh</code> or <code>beatrix setup</code>.</p>
@@ -1150,6 +1156,137 @@ beatrix mobile intercept --apk target_app.apk -p com.target.app -d 600
 
 # Analyze captured traffic with known secrets
 beatrix mobile analyze capture.json --secrets known_keys.json</code></pre>
+                    </div>
+                </details>
+
+                <!-- ═══════════ TIER 8: Standalone Module Commands ═══════════ -->
+                <h3>Tier 8: Standalone Module Commands</h3>
+
+                <details id="cmd-browser">
+                    <summary>browser — Playwright-Based Browser Scanning</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix browser scan TARGET [OPTIONS]</code></pre>
+                        <p>Launch a headless (or visible) Chromium browser to scan for DOM XSS, client-side vulnerabilities, and WAF-evading payloads using Playwright.</p>
+                        <table class="flag-table">
+                            <tr><td>--login-url URL</td><td>Login page URL for authenticated scanning</td></tr>
+                            <tr><td>--email TEXT</td><td>Login email/username</td></tr>
+                            <tr><td>--password TEXT</td><td>Login password</td></tr>
+                            <tr><td>--visible</td><td>Show browser window (non-headless)</td></tr>
+                        </table>
+                        <pre><code># Basic browser scan
+beatrix browser scan https://app.example.com
+
+# Authenticated scan
+beatrix browser scan https://app.example.com \
+  --login-url https://app.example.com/login \
+  --email user@test.com --password secret
+
+# Visible browser (for debugging)
+beatrix browser scan https://target.com --visible</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-creds">
+                    <summary>creds — Credential Validation</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix creds validate TYPE VALUE [OPTIONS]
+beatrix creds batch FILE [OPTIONS]</code></pre>
+                        <p>Validate leaked or discovered credentials against their respective services. Supports JWT secrets, API keys, AWS keys, GitHub tokens, Stripe keys, and more.</p>
+
+                        <table>
+                            <tr><th>Subcommand</th><th>Usage</th><th>Description</th></tr>
+                            <tr><td><code>validate</code></td><td><code>beatrix creds validate jwt_secret TOKEN</code></td><td>Validate a single credential</td></tr>
+                            <tr><td><code>batch</code></td><td><code>beatrix creds batch creds.json</code></td><td>Validate credentials from JSON file</td></tr>
+                        </table>
+
+                        <p><strong>Supported credential types:</strong></p>
+                        <table class="flag-table">
+                            <tr><td>jwt_secret</td><td>JWT signing secret or key</td></tr>
+                            <tr><td>api_key</td><td>Generic API key</td></tr>
+                            <tr><td>aws_key</td><td>AWS access key + secret</td></tr>
+                            <tr><td>github_token</td><td>GitHub personal access token</td></tr>
+                            <tr><td>stripe_key</td><td>Stripe API key</td></tr>
+                            <tr><td>slack_token</td><td>Slack bot/user token</td></tr>
+                            <tr><td>gcp_key</td><td>Google Cloud Platform key</td></tr>
+                            <tr><td>firebase</td><td>Firebase API key</td></tr>
+                            <tr><td>twilio</td><td>Twilio account SID + auth token</td></tr>
+                            <tr><td>sendgrid</td><td>SendGrid API key</td></tr>
+                        </table>
+                        <pre><code># Validate a JWT secret
+beatrix creds validate jwt_secret "my-weak-secret"
+
+# Validate a GitHub token
+beatrix creds validate github_token ghp_xxxxxxxxxxxx
+
+# Batch validate from file
+beatrix creds batch found_credentials.json -o results.json</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-origin-ip">
+                    <summary>origin-ip — Origin IP Discovery</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix origin-ip DOMAIN [DOMAIN...] [OPTIONS]</code></pre>
+                        <p>Discover the real origin IP address behind CDNs and WAFs (Cloudflare, Akamai, Fastly, etc.) using DNS history, certificate transparency, and other OSINT techniques.</p>
+                        <table class="flag-table">
+                            <tr><td>-v, --verbose</td><td>Show detailed discovery progress</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Save results to JSON file</td></tr>
+                        </table>
+                        <pre><code># Discover origin IP for a single domain
+beatrix origin-ip example.com
+
+# Multiple domains
+beatrix origin-ip target1.com target2.com target3.com
+
+# With verbose output and save results
+beatrix origin-ip example.com -v -o origin_results.json</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-inject">
+                    <summary>inject — Deep Parameter Injection</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix inject TARGET [OPTIONS]</code></pre>
+                        <p>Advanced injection scanner that discovers and tests all insertion points (query params, headers, cookies, JSON bodies, XML, multipart) with intelligent payload selection.</p>
+                        <table class="flag-table">
+                            <tr><td>-d, --deep</td><td>Enable deep scanning mode (more payloads, slower)</td></tr>
+                            <tr><td>-t, --types TYPES</td><td>Comma-separated injection types (sqli,xss,ssti,cmdi,xxe)</td></tr>
+                            <tr><td>--timeout SECS</td><td>Request timeout in seconds (default: 10)</td></tr>
+                            <tr><td>-c, --concurrency N</td><td>Concurrent requests (default: 10)</td></tr>
+                            <tr><td>--ai</td><td>Enable AI-assisted analysis</td></tr>
+                            <tr><td>-o, --output PATH</td><td>Save findings to JSON file</td></tr>
+                        </table>
+                        <pre><code># Quick injection scan
+beatrix inject https://api.example.com/search?q=test
+
+# Deep scan with specific types
+beatrix inject https://target.com/api -d --types sqli,ssti
+
+# Full scan with AI analysis
+beatrix inject https://target.com/endpoint --deep --ai -o inject_results.json</code></pre>
+                    </div>
+                </details>
+
+                <details id="cmd-polyglot">
+                    <summary>polyglot — XSS Polyglot &amp; Payload Generation</summary>
+                    <div class="detail-body">
+                        <pre><code>beatrix polyglot generate|mxss|clobber [OPTIONS]</code></pre>
+                        <p>Generate multi-context XSS polyglot payloads, mutation XSS (mXSS) payloads, and DOM clobbering payloads for manual testing or integration with other tools.</p>
+
+                        <table>
+                            <tr><th>Subcommand</th><th>Usage</th><th>Description</th></tr>
+                            <tr><td><code>generate</code></td><td><code>beatrix polyglot generate</code></td><td>Generate XSS polyglot payloads</td></tr>
+                            <tr><td><code>mxss</code></td><td><code>beatrix polyglot mxss</code></td><td>Generate mutation XSS payloads</td></tr>
+                            <tr><td><code>clobber</code></td><td><code>beatrix polyglot clobber</code></td><td>Generate DOM clobbering payloads</td></tr>
+                        </table>
+                        <pre><code># Generate XSS polyglots
+beatrix polyglot generate
+
+# Get mXSS payloads (for DOMPurify/sanitizer bypass)
+beatrix polyglot mxss
+
+# Get DOM clobbering payloads
+beatrix polyglot clobber</code></pre>
                     </div>
                 </details>
             </section>

@@ -1,7 +1,7 @@
 # BEATRIX Architecture
 
 **Version:** 1.0.0  
-**Last Updated:** February 24, 2026
+**Last Updated:** March 3, 2026
 
 ---
 
@@ -175,7 +175,7 @@ Beatrix includes a **built-in PoC validation server** — a pure `asyncio` HTTP 
 beatrix/
 ├── __init__.py                    # v1.0.0
 ├── cli/
-│   └── main.py                    # 20 CLI commands (Click + Rich)
+│   └── main.py                    # 25 CLI commands (Click + Rich)
 ├── core/
 │   ├── engine.py                  # BeatrixEngine — 29 module registry, presets
 │   ├── kill_chain.py              # KillChainExecutor — 7-phase state machine
@@ -267,6 +267,7 @@ beatrix/
                 ▼
 2. CLI (cli/main.py)
    Parses args → creates BeatrixEngine → selects preset → calls engine.hunt()
+   (25 Click commands: hunt, strike, ghost, recon, probe, browser, creds, inject, etc.)
                 │
                 ▼
 3. ENGINE (core/engine.py)
