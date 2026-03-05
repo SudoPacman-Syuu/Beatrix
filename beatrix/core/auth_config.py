@@ -82,7 +82,7 @@ class AuthCredentials:
     bearer_token: Optional[str] = None
 
     # Login credentials — Beatrix performs the login and captures the session
-    login_url: Optional[str] = None        # e.g. https://kick.com/login
+    login_url: Optional[str] = None        # e.g. https://example.com/login
     login_username: Optional[str] = None   # email or username
     login_password: Optional[str] = None   # password
     login_method: Optional[str] = None     # "form" | "json" | "auto" (default: auto)

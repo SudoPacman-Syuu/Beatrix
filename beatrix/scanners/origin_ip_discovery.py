@@ -841,7 +841,7 @@ class OriginIPDiscovery:
     def _is_third_party_subdomain(self, subdomain: str, base_domain: str) -> bool:
         """Check if a subdomain likely points to third-party SaaS, not origin.
 
-        e.g. shop.kick.com → Shopify, mail.kick.com → Google/O365
+        e.g. shop.example.com → Shopify, mail.example.com → Google/O365
         """
         # Strip the base domain to get the prefix
         sub = subdomain.lower().replace(f".{base_domain}", "").strip(".")

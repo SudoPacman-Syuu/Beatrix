@@ -3268,7 +3268,7 @@ def auth_login_wizard(target):
     \b
     Examples:
         beatrix auth login              # General credentials
-        beatrix auth login kick.com     # Target-specific credentials
+        beatrix auth login example.com   # Target-specific credentials
     """
     import getpass
     from pathlib import Path
@@ -3287,7 +3287,7 @@ def auth_login_wizard(target):
     # ── Step 1: Target ─────────────────────────────────────────────────
     if not target:
         target = Prompt.ask(
-            "[bold]Target domain[/bold] [dim](e.g. kick.com, blank for all)[/dim]",
+            "[bold]Target domain[/bold] [dim](e.g. example.com, blank for all)[/dim]",
             default="",
         ).strip()
 
@@ -3543,7 +3543,7 @@ def auth_browser(target):
 
     \b
     Examples:
-        beatrix auth browser kick.com
+        beatrix auth browser example.com
         beatrix auth browser https://app.example.com
     """
     from beatrix.core.auto_login import browser_interactive_login, save_session
@@ -3580,6 +3580,158 @@ def auth_browser(target):
         console.print(f'[dim]  beatrix hunt {target} --cookie "session=YOUR_SESSION_VALUE"[/dim]')
 
 
+@auth_group.command("idor")
+@click.argument("target", required=False)
+def auth_idor_wizard(target):
+    """Interactive wizard to set up dual credentials for IDOR scanning.
+
+    \b
+    IDOR testing needs TWO user accounts to compare access.
+    This wizard runs the same login flow twice — once per account —
+    and saves both to ~/.beatrix/auth.yaml automatically.
+
+    \b
+    Examples:
+        beatrix auth idor              # Prompted for target
+        beatrix auth idor example.com  # Target-specific IDOR setup
+    """
+    import getpass
+    from pathlib import Path
+    from rich.prompt import Prompt, Confirm
+
+    console.print()
+    console.print(Panel.fit(
+        "[bold]IDOR Dual-Account Setup[/bold]\n"
+        "[dim]Enter login credentials for two different user accounts.\n"
+        "Beatrix will auto-login as both users, then use User 2's session\n"
+        "to access User 1's resources to detect IDOR vulnerabilities.[/dim]",
+        title="[bold bright_cyan]🔐 Beatrix IDOR Auth[/bold bright_cyan]",
+        border_style="cyan",
+    ))
+    console.print()
+
+    # ── Target ─────────────────────────────────────────────────────────
+    if not target:
+        target = Prompt.ask(
+            "[bold]Target domain[/bold] [dim](e.g. example.com)[/dim]",
+        ).strip()
+        if not target:
+            console.print("[red]Target domain is required for IDOR setup.[/red]")
+            return
+
+    console.print(f"  [dim]Target: {target}[/dim]\n")
+
+    users = {}
+    for user_num in [1, 2]:
+        label = f"User {user_num}"
+        console.print(f"[bold cyan]── {label} ──[/bold cyan]\n")
+
+        # ── Username / Email ───────────────────────────────────────────
+        username = Prompt.ask(
+            f"  [bold]Username or email[/bold]",
+        ).strip()
+        if not username:
+            console.print("[red]Username is required.[/red]")
+            return
+        console.print()
+
+        # ── Password (masked) ─────────────────────────────────────────
+        password = getpass.getpass("    Password: ")
+        if not password:
+            console.print("[red]Password is required.[/red]")
+            return
+        console.print()
+
+        users[f"user{user_num}"] = {"username": username, "password": password}
+        console.print(f"  [green]✓ {label} credentials captured[/green]\n")
+
+    # ── Save to auth.yaml ──────────────────────────────────────────────
+    config_path = Path.home() / ".beatrix" / "auth.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import yaml
+        has_yaml = True
+    except ImportError:
+        has_yaml = False
+
+    if has_yaml:
+        existing = {}
+        if config_path.exists():
+            try:
+                existing = yaml.safe_load(config_path.read_text()) or {}
+            except Exception:
+                existing = {}
+
+        # Save user1 as the primary per-target login (same as auth login)
+        targets_cfg = existing.get("targets") or {}
+        existing["targets"] = targets_cfg
+        target_cfg = targets_cfg.get(target) or {}
+        targets_cfg[target] = target_cfg
+        target_cfg["login"] = {
+            "username": users["user1"]["username"],
+            "password": users["user1"]["password"],
+        }
+
+        # IDOR section with both users' login creds
+        existing["idor"] = {
+            "user1": {
+                "login": {
+                    "username": users["user1"]["username"],
+                    "password": users["user1"]["password"],
+                }
+            },
+            "user2": {
+                "login": {
+                    "username": users["user2"]["username"],
+                    "password": users["user2"]["password"],
+                }
+            },
+        }
+
+        config_path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False))
+    else:
+        # Fallback: append raw YAML
+        lines = []
+        if config_path.exists():
+            in_idor = False
+            for line in config_path.read_text().splitlines():
+                if line.strip().startswith("idor:"):
+                    in_idor = True
+                    continue
+                if in_idor and (line.startswith("  ") or line.strip() == ""):
+                    continue
+                in_idor = False
+                lines.append(line)
+
+        lines.append("")
+        lines.append("idor:")
+        for ukey in ["user1", "user2"]:
+            lines.append(f"  {ukey}:")
+            lines.append(f"    login:")
+            lines.append(f'      username: "{users[ukey]["username"]}"')
+            lines.append(f'      password: "{users[ukey]["password"]}"')
+
+        config_path.write_text("\n".join(lines) + "\n")
+
+    # ── Summary ────────────────────────────────────────────────────────
+    table = Table(title="IDOR Dual Accounts Saved", border_style="green", show_header=False)
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Target", target)
+    table.add_row("User 1", users["user1"]["username"])
+    table.add_row("Password", "•" * min(len(users["user1"]["password"]), 12))
+    table.add_row("User 2", users["user2"]["username"])
+    table.add_row("Password", "•" * min(len(users["user2"]["password"]), 12))
+    table.add_row("Config", str(config_path))
+    console.print(table)
+
+    console.print()
+    console.print("[green]✓ Ready! Beatrix will auto-login both accounts before scanning.[/green]")
+    console.print(f"[dim]  Run: beatrix hunt {target}[/dim]")
+    console.print()
+
+
 @auth_group.command("sessions")
 @click.option("--clear", "-c", help="Clear saved session for a domain")
 @click.option("--clear-all", is_flag=True, help="Clear all saved sessions")
@@ -3593,7 +3745,7 @@ def auth_sessions(clear, clear_all):
     \b
     Examples:
         beatrix auth sessions              # List all saved sessions
-        beatrix auth sessions --clear kick.com  # Clear one session
+        beatrix auth sessions --clear example.com  # Clear one session
         beatrix auth sessions --clear-all  # Clear all sessions
     """
     from beatrix.core.auto_login import clear_session, list_sessions, SESSIONS_DIR

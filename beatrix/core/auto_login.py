@@ -53,6 +53,8 @@ WAF_SIGNATURES = [
     "jschl_vc", "cf_chl_opt", "just a moment", "checking your browser",
     "ddos-guard", "sucuri", "incapsula", "imperva", "akamai",
     "cf-ray",  # Cloudflare header value often in body too
+    "blocked by security policy", "request blocked", "security challenge",
+    "access denied", "bot detection",
 ]
 
 
@@ -1406,6 +1408,10 @@ class AutoLoginEngine:
             result = self._analyze_login_response(resp, pre_cookies, dict(client.cookies))
             result.login_url = url
             result.method_used = "json"
+
+            # Log the raw response for debugging login issues
+            logger.debug(f"Login response from {url}: HTTP {resp.status_code}, "
+                        f"body={resp.text[:500] if resp.text else '(empty)'}")
 
             if result.success:
                 logger.info(f"JSON login succeeded at {url} ({user_field}, {pass_field})")
