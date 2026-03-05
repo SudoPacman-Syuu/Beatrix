@@ -22,6 +22,21 @@ import json
 import sys
 from pathlib import Path
 
+# Suppress "Event loop is closed" RuntimeError from orphaned subprocess
+# transports during KeyboardInterrupt shutdown.  These are cosmetic —
+# the OS cleans up child processes when the parent exits.
+_orig_unraisablehook = sys.unraisablehook
+
+
+def _suppress_loop_closed(unraisable):
+    if (isinstance(unraisable.exc_value, RuntimeError)
+            and "Event loop is closed" in str(unraisable.exc_value)):
+        return
+    _orig_unraisablehook(unraisable)
+
+
+sys.unraisablehook = _suppress_loop_closed
+
 import click
 from rich.console import Console
 from rich.panel import Panel
@@ -1466,6 +1481,25 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
                 console.print(f"[red]🔐 Auto-login error: {e}[/red]")
                 console.print("[yellow]   Continuing scan without authenticated session[/yellow]")
 
+        # ── Auto-login for IDOR users if they have login creds ──────────
+        if auth_creds.has_idor_accounts:
+            for label, idor_user in [("user1", auth_creds.idor_user1), ("user2", auth_creds.idor_user2)]:
+                if idor_user and idor_user.has_login_creds and not idor_user.has_auth:
+                    console.print(f"[cyan]🔐 IDOR {label}: logging in as {idor_user.login_username}...[/cyan]")
+                    try:
+                        from beatrix.core.auto_login import perform_auto_login
+                        idor_login = asyncio.run(perform_auto_login(idor_user, target=target))
+                        if idor_login.success:
+                            idor_user.cookies.update(idor_login.cookies)
+                            idor_user.headers.update(idor_login.headers)
+                            if idor_login.token:
+                                idor_user.bearer_token = idor_login.token
+                            console.print(f"[green]🔐 IDOR {label}: {idor_login.message}[/green]")
+                        else:
+                            console.print(f"[red]🔐 IDOR {label} login failed: {idor_login.message}[/red]")
+                    except Exception as e:
+                        console.print(f"[red]🔐 IDOR {label} auto-login error: {e}[/red]")
+
         if auth_creds.has_auth:
             parts = []
             if auth_creds.cookies:
@@ -1724,6 +1758,25 @@ def _hunt_single_target(target, preset="standard", ai=False, modules=None,
                         console.print(f"[red]🔐 Login failed: {login_result.message}[/red]")
                 except Exception as e:
                     console.print(f"[red]🔐 Auto-login error: {e}[/red]")
+
+        # ── Auto-login for IDOR users if they have login creds ──────────
+        if auth_creds.has_idor_accounts:
+            for label, idor_user in [("user1", auth_creds.idor_user1), ("user2", auth_creds.idor_user2)]:
+                if idor_user and idor_user.has_login_creds and not idor_user.has_auth:
+                    console.print(f"[cyan]🔐 IDOR {label}: logging in as {idor_user.login_username}...[/cyan]")
+                    try:
+                        from beatrix.core.auto_login import perform_auto_login
+                        idor_login = asyncio.run(perform_auto_login(idor_user, target=target))
+                        if idor_login.success:
+                            idor_user.cookies.update(idor_login.cookies)
+                            idor_user.headers.update(idor_login.headers)
+                            if idor_login.token:
+                                idor_user.bearer_token = idor_login.token
+                            console.print(f"[green]🔐 IDOR {label}: {idor_login.message}[/green]")
+                        else:
+                            console.print(f"[red]🔐 IDOR {label} login failed: {idor_login.message}[/red]")
+                    except Exception as e:
+                        console.print(f"[red]🔐 IDOR {label} auto-login error: {e}[/red]")
 
         if auth_creds.has_auth:
             parts = []

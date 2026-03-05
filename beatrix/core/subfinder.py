@@ -86,6 +86,10 @@ class SubfinderRunner:
                 process.kill()
                 await process.wait()
                 return []
+            except asyncio.CancelledError:
+                process.kill()
+                await process.wait()
+                raise
 
             if process.returncode != 0:
                 return []

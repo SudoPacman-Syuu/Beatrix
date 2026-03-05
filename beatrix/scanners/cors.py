@@ -279,7 +279,7 @@ class CORSScanner(BaseScanner):
                 return finding
 
         except Exception as e:
-            self.log(f"Error testing authenticated CORS {origin}: {e}")
+            self.log(f"Error testing authenticated CORS {origin}: {type(e).__name__}: {e}")
 
         return None
 
@@ -388,7 +388,7 @@ This allows cross-origin write requests (PUT/PATCH/DELETE) from attacker-control
                 return self._create_cors_finding(url, origin, acao, acac, test, response)
 
         except Exception as e:
-            self.log(f"Error testing origin {origin}: {e}")
+            self.log(f"Error testing origin {origin}: {type(e).__name__}: {e}")
 
         return None
 

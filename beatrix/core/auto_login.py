@@ -156,7 +156,7 @@ JSON_FIELD_COMBOS = [
 USERNAME_FIELD_NAMES = [
     "email", "username", "user", "login", "user_email",
     "user_login", "login_email", "identifier", "account",
-    "userid", "user_id", "name", "uname",
+    "userid", "user_id", "name", "uname", "emailOrUsername",
 ]
 
 # Password field names for HTML form detection
@@ -741,15 +741,16 @@ class AutoLoginEngine:
                 try:
                     # Step 1: Navigate to the site — browser solves Cloudflare challenge
                     logger.info(f"Browser: navigating to {self.base_url}...")
-                    await page.goto(self.base_url, wait_until="networkidle", timeout=30000)
-                    await asyncio.sleep(2)  # Let challenges resolve
+                    await page.goto(self.base_url, wait_until="domcontentloaded", timeout=30000)
+                    # Wait for Cloudflare challenge to resolve (Turnstile can take 5-15s)
+                    await asyncio.sleep(8)
 
                     # Step 2: Find the login page
                     login_page_url = await self._browser_find_login_page(page)
                     if login_page_url and login_page_url != page.url:
                         logger.info(f"Browser: navigating to login page {login_page_url}...")
-                        await page.goto(login_page_url, wait_until="networkidle", timeout=15000)
-                        await asyncio.sleep(1)
+                        await page.goto(login_page_url, wait_until="domcontentloaded", timeout=30000)
+                        await asyncio.sleep(5)
 
                     # Step 3: Find and fill the login form
                     filled = await self._browser_fill_credentials(page)
@@ -795,21 +796,32 @@ class AutoLoginEngine:
                         for w in ["dashboard", "welcome", "logged in", "sign out",
                                   "logout", "my account", "profile"]
                     )
-                    has_error_text = any(
-                        w in page_lower
-                        for w in ["invalid", "incorrect", "wrong password",
-                                  "login failed", "bad credentials"]
-                    )
 
-                    if has_error_text:
-                        await page.close()
-                        await browser.close()
-                        return LoginResult(
-                            success=False,
-                            cookies=cookie_dict,
-                            message="Browser login: credentials were rejected by the application.",
+                    # Check for error text scoped to the login form/modal area,
+                    # not the entire page (full SPAs contain "invalid" etc. in
+                    # unrelated contexts).
+                    has_error_text = False
+                    try:
+                        dialog_el = await page.query_selector(
+                            'dialog, [role="dialog"], [role="modal"], '
+                            '.modal, .login-form, form:has(input[type="password"])'
                         )
+                        if dialog_el:
+                            form_text = (await dialog_el.text_content() or "").lower()
+                        else:
+                            form_text = ""
+                        error_phrases = [
+                            "invalid username", "invalid password",
+                            "invalid credentials", "invalid email",
+                            "incorrect password", "incorrect username",
+                            "wrong password", "login failed",
+                            "bad credentials", "authentication failed",
+                        ]
+                        has_error_text = any(p in form_text for p in error_phrases)
+                    except Exception:
+                        pass
 
+                    # Session cookies / URL change take priority over error text
                     if has_session or left_login or has_success_text:
                         logger.info(f"Browser login succeeded! Captured {len(cookie_dict)} cookies")
 
@@ -851,6 +863,14 @@ class AutoLoginEngine:
 
                     await page.close()
                     await browser.close()
+
+                    # No session cookies detected — check for clear error text
+                    if has_error_text:
+                        return LoginResult(
+                            success=False,
+                            cookies=cookie_dict,
+                            message="Browser login: credentials were rejected by the application.",
+                        )
 
                     if cookie_dict:
                         return LoginResult(
@@ -907,8 +927,8 @@ class AutoLoginEngine:
             login_link = None
 
         if login_link == "__clicked__":
-            # Button was clicked, wait for navigation
-            await asyncio.sleep(2)
+            # Button was clicked, wait for navigation/modal
+            await asyncio.sleep(3)
             return page.url
         elif login_link:
             if login_link.startswith("http"):
@@ -919,7 +939,8 @@ class AutoLoginEngine:
         for path in ["/login", "/signin", "/auth/login"]:
             try:
                 test_url = urljoin(self.base_url, path)
-                resp = await page.goto(test_url, wait_until="networkidle", timeout=10000)
+                resp = await page.goto(test_url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(5)  # Let SPA render + Cloudflare resolve
                 if resp and resp.status in (200, 302):
                     # Check if this page has a password field
                     has_password = await page.query_selector('input[type="password"]')
@@ -941,7 +962,7 @@ class AutoLoginEngine:
             # Try waiting for it (SPA might still be rendering)
             try:
                 password_field = await page.wait_for_selector(
-                    'input[type="password"]', timeout=5000,
+                    'input[type="password"]', timeout=10000,
                 )
             except Exception:
                 logger.warning("Browser: no password field found on page")
@@ -954,6 +975,7 @@ class AutoLoginEngine:
         ] + [
             'input[type="email"]',
             'input[type="text"]',
+            'input:not([type])',  # HTML inputs default to text when type is omitted
         ]
 
         username_field = None
@@ -1468,6 +1490,13 @@ class AutoLoginEngine:
             page_resp = await client.get(url)
             if page_resp.status_code == 404:
                 return LoginResult(success=False, message=f"404: {url}")
+            # If the GET itself is WAF-blocked, no point trying to POST
+            if self._is_waf_response(page_resp) and page_resp.status_code in (401, 403):
+                logger.warning(f"WAF block detected on GET {url} (HTTP {page_resp.status_code}) — skipping form POST")
+                return LoginResult(
+                    success=False,
+                    message=f"WAF/Cloudflare blocked form page {url} (HTTP {page_resp.status_code})",
+                )
             pre_cookies = dict(page_resp.cookies)
             page_body = page_resp.text
         except Exception:
@@ -1522,6 +1551,14 @@ class AutoLoginEngine:
 
         if login_resp.status_code == 404:
             return LoginResult(success=False, message=f"Form action 404: {action_url}")
+
+        # Detect WAF block masquerading as auth rejection
+        if self._is_waf_response(login_resp) and login_resp.status_code in (401, 403):
+            logger.warning(f"WAF block detected on {action_url} (form, HTTP {login_resp.status_code}) — not a real auth rejection")
+            return LoginResult(
+                success=False,
+                message=f"WAF/Cloudflare blocked form request to {action_url} (HTTP {login_resp.status_code})",
+            )
 
         # 401/403 = endpoint is correct but credentials were rejected
         if login_resp.status_code in (401, 403):

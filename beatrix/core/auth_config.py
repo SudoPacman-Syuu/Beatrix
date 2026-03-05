@@ -429,6 +429,38 @@ class AuthConfigLoader:
     DEFAULT_CONFIG_PATH = Path.home() / ".beatrix" / "auth.yaml"
 
     @classmethod
+    def _resolve_config_path(cls) -> Path:
+        """Resolve auth config path, handling sudo correctly.
+
+        When running via 'sudo beatrix', Path.home() returns /root/ but the
+        auth.yaml lives under the real user's home.  Check SUDO_USER first.
+        """
+        default = cls.DEFAULT_CONFIG_PATH
+        if default.exists():
+            return default
+
+        # Under sudo, try the original user's home
+        sudo_user = os.environ.get("SUDO_USER")
+        if sudo_user:
+            import pwd
+            try:
+                real_home = Path(pwd.getpwnam(sudo_user).pw_dir)
+                alt = real_home / ".beatrix" / "auth.yaml"
+                if alt.exists():
+                    return alt
+            except KeyError:
+                pass
+
+        # Fallback: check relative to the venv (the wrapper hardcodes it)
+        venv = os.environ.get("VIRTUAL_ENV")
+        if venv:
+            alt = Path(venv) / "auth.yaml"
+            if alt.exists():
+                return alt
+
+        return default
+
+    @classmethod
     def load(
         cls,
         target: str,
@@ -463,7 +495,7 @@ class AuthConfigLoader:
         creds = AuthCredentials()
 
         # 1. Load from config file (lowest priority)
-        file_path = Path(config_path) if config_path else cls.DEFAULT_CONFIG_PATH
+        file_path = Path(config_path) if config_path else cls._resolve_config_path()
         if file_path.exists():
             file_creds = cls._load_config_file(file_path, target)
             creds = cls._merge(creds, file_creds)
@@ -590,14 +622,24 @@ class AuthConfigLoader:
             u1 = idor_cfg.get("user1") or {}
             u2 = idor_cfg.get("user2") or {}
             if u1:
+                u1_login = u1.get("login") or {}
                 creds.idor_user1 = AuthCredentials(
                     headers=u1.get("headers") or {},
                     cookies=u1.get("cookies") or {},
+                    login_username=u1_login.get("username") or u1_login.get("email") if u1_login else None,
+                    login_password=u1_login.get("password") if u1_login else None,
+                    login_url=u1_login.get("url") if u1_login else None,
+                    login_method=u1_login.get("method", "auto") if u1_login else None,
                 )
             if u2:
+                u2_login = u2.get("login") or {}
                 creds.idor_user2 = AuthCredentials(
                     headers=u2.get("headers") or {},
                     cookies=u2.get("cookies") or {},
+                    login_username=u2_login.get("username") or u2_login.get("email") if u2_login else None,
+                    login_password=u2_login.get("password") if u2_login else None,
+                    login_url=u2_login.get("url") if u2_login else None,
+                    login_method=u2_login.get("method", "auto") if u2_login else None,
                 )
 
         return creds

@@ -344,7 +344,7 @@ xhr.send();
                 "version": "1.0.0",
                 "target": target,
                 "total_findings": len(finding_list),
-                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "generated_at": datetime.now(tz=__import__('datetime').timezone.utc).isoformat(),
             },
         }
 

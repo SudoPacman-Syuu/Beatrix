@@ -166,12 +166,6 @@ class NucleiScanner(BaseScanner):
             "description": "DAST-style active fuzzing templates (ProjectDiscovery)",
         },
         {
-            "name": "cent-nuclei-templates",
-            "url": "https://github.com/xm1k3/cent-nuclei-templates",
-            "dir": "cent-nuclei-templates",
-            "description": "Community-curated templates aggregated from 100+ repos",
-        },
-        {
             "name": "nuclei-templates-pikpikcu",
             "url": "https://github.com/pikpikcu/nuclei-templates",
             "dir": "nuclei-templates-pikpikcu",
@@ -218,7 +212,18 @@ class NucleiScanner(BaseScanner):
         self._interactsh_server: Optional[str] = None
         self._interactsh_token: Optional[str] = None
 
-        # Rate limiting
+        # WAF/CDN bypass
+        self._waf_detected: Optional[str] = None  # e.g. "Cloudflare", "Akamai"
+        self._origin_ip: Optional[str] = None  # Direct IP to bypass CDN
+        self._target_domain: Optional[str] = None  # Original domain for Host header
+
+        # Realistic User-Agent (Chrome on Linux — matches session validator)
+        self._user_agent = (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        )
+
+        # Rate limiting — defaults adjusted if WAF detected
         self._rate_limit = self.config.get("nuclei_rate_limit", 150)
         self._rate_limit_per_host = self.config.get("nuclei_rate_limit_per_host", 50)
 
@@ -326,6 +331,8 @@ class NucleiScanner(BaseScanner):
         async def _process_repo(repo: dict) -> Optional[Path]:
             """Clone or update a single repo. Returns repo_dir on success."""
             repo_dir = base_dir / repo["dir"]
+            # Prevent git from prompting for credentials (blocks the scan)
+            git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
             try:
                 if repo_dir.exists() and (repo_dir / ".git").exists():
                     # Update if > 7 days old
@@ -340,6 +347,7 @@ class NucleiScanner(BaseScanner):
                             "git", "-C", str(repo_dir), "pull", "--quiet",
                             stdout=asyncio.subprocess.PIPE,
                             stderr=asyncio.subprocess.PIPE,
+                            env=git_env,
                         )
                         ret = await asyncio.wait_for(proc.communicate(), timeout=60)
                         age_marker.touch()
@@ -352,6 +360,7 @@ class NucleiScanner(BaseScanner):
                         "git", "clone", "--depth=1", repo["url"], str(repo_dir),
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
+                        env=git_env,
                     )
                     _, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
                     if proc.returncode != 0:
@@ -478,6 +487,31 @@ class NucleiScanner(BaseScanner):
         """Configure interactsh for OOB detection unification."""
         self._interactsh_server = server
         self._interactsh_token = token
+
+    def set_waf(self, waf_name: Optional[str]) -> None:
+        """Set detected WAF/CDN — adjusts rate limits to avoid blocks.
+
+        When a WAF is detected, rate limits are dropped aggressively
+        because WAFs fingerprint scanner behavior (User-Agent, rate,
+        request patterns) and return blanket 403s.
+        """
+        self._waf_detected = waf_name
+        if waf_name:
+            # Reduce rates to stay under WAF bot-detection thresholds
+            self._rate_limit = min(self._rate_limit, 30)
+            self._rate_limit_per_host = min(self._rate_limit_per_host, 15)
+            self.log(f"WAF detected ({waf_name}) — rate limits reduced to {self._rate_limit}/{self._rate_limit_per_host} rps")
+
+    def set_origin_ip(self, ip: str, domain: str) -> None:
+        """Set origin IP for CDN bypass.
+
+        When an origin IP is known, nuclei targets the IP directly with a
+        Host header pointing to the real domain.  This bypasses Cloudflare/
+        Akamai/etc. and lets templates actually reach the origin server.
+        """
+        self._origin_ip = ip
+        self._target_domain = domain
+        self.log(f"Origin IP bypass: {ip} (Host: {domain})")
 
     # =====================================================================
     # TAG & TEMPLATE INTELLIGENCE
@@ -851,8 +885,27 @@ class NucleiScanner(BaseScanner):
         if not tags:
             tags = self._build_exploit_tags()
 
+        # Origin IP bypass: rewrite URLs to target the origin directly
+        # instead of going through the CDN. The Host header ensures the
+        # origin server routes the request to the correct vhost.
+        # Only rewrite exact domain matches (not subdomains like api.domain.com).
+        effective_targets = targets
+        if self._origin_ip and self._target_domain:
+            from urllib.parse import urlparse, urlunparse
+            rewritten = []
+            for t in targets:
+                parsed = urlparse(t) if "://" in t else None
+                if parsed and parsed.hostname == self._target_domain:
+                    # Replace only the hostname, preserving scheme/path/query
+                    rewritten.append(urlunparse(parsed._replace(netloc=
+                        parsed.netloc.replace(self._target_domain, self._origin_ip, 1)
+                    )))
+                else:
+                    rewritten.append(t)
+            effective_targets = rewritten
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            for target in targets:
+            for target in effective_targets:
                 f.write(target + '\n')
             target_file = f.name
 
@@ -876,6 +929,21 @@ class NucleiScanner(BaseScanner):
             # Tags (skip if using -w workflow or -t specific dir)
             if tags:
                 cmd.extend(["-tags", tags])
+
+            # Realistic User-Agent — prevents WAF fingerprinting nuclei's
+            # default UA ("Nuclei - Open-source project (projectdiscovery.io)")
+            cmd.extend(["-H", f"User-Agent: {self._user_agent}"])
+
+            # Origin IP bypass — add Host header so the origin vhost routes
+            # correctly when we're targeting the IP directly
+            if self._origin_ip and self._target_domain:
+                cmd.extend(["-H", f"Host: {self._target_domain}"])
+                # TLS SNI must match the domain so the origin server presents
+                # the right certificate (otherwise TLS handshake fails)
+                cmd.extend(["-sni", self._target_domain])
+                # Don't skip the host after cert/connection errors — origin IPs
+                # may have transient issues but are still worth scanning
+                cmd.extend(["-no-mhe"])
 
             # Authentication headers
             if self._auth_headers:
@@ -997,8 +1065,10 @@ class NucleiScanner(BaseScanner):
                     await stderr_task
                 except (asyncio.CancelledError, Exception):
                     pass
-
-            await process.wait()
+                # Ensure process is terminated
+                if process.returncode is None:
+                    process.kill()
+                await process.wait()
             total_elapsed = int(time.monotonic() - wall_start)
             self.log(f"Nuclei complete: {findings_count} findings in {total_elapsed}s")
 
@@ -1021,6 +1091,10 @@ class NucleiScanner(BaseScanner):
             info = data.get("info", {})
             template_id = data.get("template-id", data.get("templateID", "unknown"))
             matched_at = data.get("matched-at", data.get("matched", ""))
+
+            # If we scanned via origin IP, map findings back to the real domain
+            if self._origin_ip and self._target_domain and self._origin_ip in matched_at:
+                matched_at = matched_at.replace(self._origin_ip, self._target_domain, 1)
 
             # Severity mapping
             sev_str = info.get("severity", "info").lower()

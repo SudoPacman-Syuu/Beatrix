@@ -1,7 +1,7 @@
 # BEATRIX Architecture
 
 **Version:** 1.0.0  
-**Last Updated:** March 3, 2026
+**Last Updated:** March 5, 2026
 
 ---
 
@@ -66,7 +66,7 @@ module key shown below.
 | 1. Reconnaissance | `_handle_recon` | `crawl`, `endpoint_prober`, `js_analysis`, `headers`, `github_recon` + external: subfinder, amass, nmap, katana, gospider, hakrawler, gau, whatweb, webanalyze, dirsearch |
 | 2. Weaponization | `_handle_weaponization` | `takeover`, `error_disclosure`, `cache_poisoning`, `prototype_pollution` |
 | 3. Delivery | `_handle_delivery` | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` |
-| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` + SmartFuzzer (ffuf verification) + external: sqlmap, dalfox, commix, jwt_tool |
+| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` (WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI) + SmartFuzzer (ffuf verification) + external: sqlmap, dalfox, commix, jwt_tool |
 | 5. Installation | `_handle_installation` | `file_upload` |
 | 6. C2 | `_handle_c2` | OOB detector polling — `LocalPoCClient` (built-in) or `InteractshClient` (external). PoCServer callbacks are polled with dedup tracking. |
 | 7. Actions | `_handle_actions` | VRT classification (Bugcrowd VRT + CVSS 3.1) → PoCChainEngine (exploit chain generation from correlated findings) → aggregation via `KillChainState.all_findings` |
@@ -161,7 +161,7 @@ Beatrix includes a **built-in PoC validation server** — a pure `asyncio` HTTP 
 | A03 Injection | `injection` (57K+ payloads), `ssti`, `xxe`, `deserialization` + sqlmap/dalfox/commix |
 | A04 Insecure Design | `payment`, `business_logic`, `file_upload` |
 | A05 Security Misconfiguration | `error_disclosure`, `cache_poisoning`, `js_analysis` |
-| A06 Vulnerable Components | `nuclei` (12,600+ CVE templates) |
+| A06 Vulnerable Components | `nuclei` (18,000+ templates — official + 3 external repos, WAF bypass) |
 | A07 Auth Failures | `auth` + jwt_tool |
 | A08 Software Integrity | `prototype_pollution`, `deserialization` |
 | A09 Logging Failures | (covered via error_disclosure probing) |
@@ -175,7 +175,7 @@ Beatrix includes a **built-in PoC validation server** — a pure `asyncio` HTTP 
 beatrix/
 ├── __init__.py                    # v1.0.0
 ├── cli/
-│   └── main.py                    # 25 CLI commands (Click + Rich)
+│   └── main.py                    # 26 CLI commands (Click + Rich)
 ├── core/
 │   ├── engine.py                  # BeatrixEngine — 29 module registry, presets
 │   ├── kill_chain.py              # KillChainExecutor — 7-phase state machine
@@ -196,10 +196,13 @@ beatrix/
 │   ├── ffuf_engine.py             # ffuf async integration
 │   ├── parallel_haiku.py          # Concurrent AI workers
 │   ├── ssh_auditor.py             # SSH configuration auditing
-│   ├── auto_register.py           # Scanner auto-discovery
+│   ├── auto_register.py           # Account auto-registration for authenticated testing
 │   ├── seclists_manager.py        # Dynamic wordlist engine (SecLists + PATT, 57K+ payloads)
 │   ├── scan_check_types.py        # Scan check type definitions
-│   └── packet_crafter.py          # Custom packet construction
+│   ├── packet_crafter.py          # Custom packet construction
+│   ├── auth_config.py             # Auth credential management (YAML, CLI, env vars)
+│   ├── auto_login.py              # Automated login engine (endpoint discovery, session capture)
+│   └── finding_enricher.py        # Deterministic finding enrichment (poc_curl, impact, CWE)
 ├── scanners/
 │   ├── base.py                    # BaseScanner ABC — rate limiter, httpx client
 │   ├── crawler.py                 # Target spider — soft-404, forms, params, tech
@@ -225,9 +228,9 @@ beatrix/
 │   ├── endpoint_prober.py         # 200+ path probe with soft-404 detection
 │   ├── js_bundle.py               # JS secrets, source maps, API routes
 │   ├── github_recon.py            # GitHub org scanning
-│   ├── nuclei.py                  # Nuclei template engine wrapper
+│   ├── nuclei.py                  # Nuclei template engine wrapper (WAF bypass, origin IP, CDN-aware rate limiting)
 │   ├── file_upload.py             # Extension bypass, polyglot, path traversal
-│   ├── payment.py                 # Checkout flow manipulation
+│   ├── payment_scanner.py          # Checkout flow manipulation
 │   ├── redos.py                   # Regex DoS detection
 │   ├── browser_scanner.py         # Playwright-based DOM XSS
 │   ├── credential_validator.py    # Credential validation
@@ -267,7 +270,7 @@ beatrix/
                 ▼
 2. CLI (cli/main.py)
    Parses args → creates BeatrixEngine → selects preset → calls engine.hunt()
-   (25 Click commands: hunt, strike, ghost, recon, probe, browser, creds, inject, etc.)
+   (26 Click commands: hunt, strike, ghost, recon, probe, browser, creds, inject, etc.)
                 │
                 ▼
 3. ENGINE (core/engine.py)

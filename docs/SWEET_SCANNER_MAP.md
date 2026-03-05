@@ -1,127 +1,253 @@
-# BEATRIX — Sweet Scanner Component Map
+# BEATRIX — Scanner Component Map
 
-**Purpose:** Quick reference for the scanning architecture patterns used in Beatrix
+**Last Updated:** March 5, 2026
 
----
-
-## Scanner Components
-
-### Core Interfaces
-
-| Interface | Purpose | BEATRIX Equivalent |
-|-----------|---------|-------------------|
-| Scanner | Main scanner API | `core/engine.py` |
-| Audit | Audit/scan session | `core/kill_chain.py` |
-| AuditResult | Scan results | `core/types.py` (Finding) |
-
-### Scan Checks
-
-| Interface | Purpose | BEATRIX Module |
-|-----------|---------|----------------|
-| ActiveScanCheck | Active scanning logic | `core/scan_check_types.py` |
-| PassiveScanCheck | Passive analysis | `core/scan_check_types.py` |
-| ScanCheckType | Check type enum | `core/scan_check_types.py` |
-
-### Audit Issues
-
-| Interface | Purpose | BEATRIX Equivalent |
-|-----------|---------|-------------------|
-| AuditIssue | Single finding | `core/types.py` (Finding dataclass) |
-| AuditIssueDefinition | Issue metadata | Config / finding fields |
-| AuditIssueSeverity | Severity levels | `core/types.py` (Severity enum) |
-| AuditIssueConfidence | Confidence levels | `core/types.py` (Confidence enum) |
-
-### Insertion Points
-
-| Interface | Purpose | Notes |
-|-----------|---------|-------|
-| AuditInsertionPoint | Where to inject | URL param, header, body, etc. |
-| AuditInsertionPointProvider | Custom insertion points | For complex params |
-| AuditInsertionPointType | Type enum | PARAM_URL, PARAM_BODY, HEADER, etc. |
+Quick reference for Beatrix's scanning architecture: kill chain phases, registered modules, external tools, core types, and data flow.
 
 ---
 
-## Key Scanner Architecture Patterns
+## Kill Chain Phases & Registered Modules
 
-### 1. Active Scanner Logic
+Scans execute phases in order. Each phase dispatches its registered scanner modules.
 
-**What the Scanner Does:**
-1. Identifies insertion points (URL params, body params, headers, cookies)
-2. For each insertion point, runs relevant checks
-3. Injects payloads, analyzes responses
-4. Reports findings with evidence
+| Phase | Name | Scanner Keys | Module Count |
+|-------|------|-------------|:------------:|
+| **1** | Reconnaissance | `crawl`, `endpoint_prober`, `js_analysis`, `headers`, `github_recon` | 5 |
+| **2** | Weaponization | `takeover`, `error_disclosure`, `cache_poisoning`, `prototype_pollution` | 4 |
+| **3** | Delivery | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` | 5 |
+| **4** | Exploitation | `injection`, `ssrf`, `idor`, `bac`, `auth`, `ssti`, `xxe`, `deserialization`, `graphql`, `mass_assignment`, `business_logic`, `redos`, `payment`, `nuclei` | 14 |
+| **5** | Installation | `file_upload` | 1 |
+| **6** | Command & Control | *(inline: OOB detector, PoC server, token enumerator)* | 0 |
+| **7** | Actions on Objectives | *(inline: credential validation, Metasploit RC gen, VRT classification, PoC chain engine)* | 0 |
 
-**Python Implementation:**
-```python
-class ActiveScanner:
-    def scan(self, request: HttpRequest) -> List[Finding]:
-        findings = []
-        insertion_points = self.find_insertion_points(request)
-        
-        for point in insertion_points:
-            for check in self.get_relevant_checks(point):
-                result = check.run(request, point)
-                if result:
-                    findings.append(result)
-        
-        return findings
+**Total registered modules:** 29
+
+---
+
+## Engine Module Registry
+
+String key → class instance, all wired in `core/engine.py`:
+
+| Key | Class | File |
+|-----|-------|------|
+| `crawl` | `TargetCrawler` | `scanners/crawler.py` |
+| `endpoint_prober` | `EndpointProber` | `scanners/endpoint_prober.py` |
+| `js_analysis` | `JSBundleAnalyzer` | `scanners/js_bundle.py` |
+| `headers` | `HeaderSecurityScanner` | `scanners/headers.py` |
+| `github_recon` | `GitHubRecon` | `scanners/github_recon.py` |
+| `takeover` | `SubdomainTakeoverScanner` | `scanners/takeover.py` |
+| `error_disclosure` | `ErrorDisclosureScanner` | `scanners/error_disclosure.py` |
+| `cache_poisoning` | `CachePoisoningScanner` | `scanners/cache_poisoning.py` |
+| `prototype_pollution` | `PrototypePollutionScanner` | `scanners/prototype_pollution.py` |
+| `cors` | `CORSScanner` | `scanners/cors.py` |
+| `redirect` | `OpenRedirectScanner` | `scanners/redirect.py` |
+| `oauth_redirect` | `OAuthRedirectScanner` | `scanners/redirect.py` |
+| `http_smuggling` | `HTTPSmugglingScanner` | `scanners/http_smuggling.py` |
+| `websocket` | `WebSocketScanner` | `scanners/websocket.py` |
+| `injection` | `InjectionScanner` | `scanners/injection.py` |
+| `ssrf` | `SSRFScanner` | `scanners/ssrf.py` |
+| `idor` | `IDORScanner` | `scanners/idor.py` |
+| `bac` | `BACScanner` | `scanners/idor.py` |
+| `auth` | `AuthScanner` | `scanners/auth.py` |
+| `ssti` | `SSTIScanner` | `scanners/ssti.py` |
+| `xxe` | `XXEScanner` | `scanners/xxe.py` |
+| `deserialization` | `DeserializationScanner` | `scanners/deserialization.py` |
+| `graphql` | `GraphQLScanner` | `scanners/graphql.py` |
+| `mass_assignment` | `MassAssignmentScanner` | `scanners/mass_assignment.py` |
+| `business_logic` | `BusinessLogicScanner` | `scanners/business_logic.py` |
+| `redos` | `ReDoSScanner` | `scanners/redos.py` |
+| `payment` | `PaymentScanner` | `scanners/payment_scanner.py` |
+| `nuclei` | `NucleiScanner` | `scanners/nuclei.py` (WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI) |
+| `file_upload` | `FileUploadScanner` | `scanners/file_upload.py` |
+
+---
+
+## Presets
+
+| Preset | Phases | Modules |
+|--------|--------|---------|
+| `quick` | 1, 3 | 6 |
+| `stealth` | 1 | 5 |
+| `recon` | 1, 2 | 9 |
+| `standard` | 1–4 | 21 |
+| `injection` | 1, 3, 4 | 12 |
+| `api` | 1, 3, 4 | 15 |
+| `web` | 1–5 | 29 |
+| `full` | 1–7 | all 29 |
+
+---
+
+## Scan Execution Flow
+
+```
+beatrix hunt <target> --preset <p>
+  └─ BeatrixEngine.hunt()
+       ├─ Resolve preset → phases + module list
+       ├─ KillChainExecutor.execute()
+       │    ├─ Start PoC server (OOB callbacks, CORS PoC, token enum)
+       │    ├─ Session validator calibration (if auth configured)
+       │    └─ For each phase (in order):
+       │         ├─ Between-phase session health check (re-auth if expired)
+       │         ├─ _execute_phase() → phase handler
+       │         │    └─ _run_scanner() per module key
+       │         │         ├─ async with scanner → creates httpx client
+       │         │         ├─ scanner.apply_auth(auth_creds)
+       │         │         ├─ asyncio.wait_for(scanner.scan(ctx), timeout)
+       │         │         └─ Stamps scanner_module on findings
+       │         └─ Merge context into KillChainState
+       ├─ IssueConsolidator.deduplicate()
+       ├─ FindingEnricher (poc_curl, impact, CWE, repro steps)
+       └─ Optional AI enrichment via HaikuGrunt (OWASP, remediation)
 ```
 
-### 2. Insertion Point Detection
+### Per-Scanner Timeouts
 
-**Types Supported:**
-- `PARAM_URL` — URL query parameters
-- `PARAM_BODY` — POST body parameters
-- `PARAM_COOKIE` — Cookie values
-- `PARAM_HEADER` — Header values (Host, Referer, etc.)
-- `PARAM_JSON` — JSON body values
-- `PARAM_XML` — XML body values
-- `ENTIRE_BODY` — Full body replacement
-- `URL_PATH` — Path segments
-- `URL_PATH_FOLDER` — Directory traversal points
-
-### 3. Check Categories
-
-**Scanner Categories:**
-- SQL Injection (error-based, time-based, boolean-based)
-- XSS (reflected, stored indicators)
-- Command Injection (OS command execution)
-- Path Traversal (file read/write)
-- XML Injection (XXE, XPath)
-- LDAP Injection
-- Header Injection (CRLF)
-- Open Redirect
-- SSRF
-- File Upload
-- Deserialization
-
-### 4. Response Analysis
-
-**Key Detection Methods:**
-- Error message matching (SQL errors, stack traces)
-- Reflection detection (payload in response)
-- Time-based detection (response delay)
-- Out-of-band detection (OOB callbacks via interact.sh)
-- Content comparison (baseline vs payload)
+| Module | Timeout |
+|--------|---------|
+| Default | 600s |
+| `nuclei` | 3,600s |
+| `nmap_nse` | 1,800s |
+| `ssh_auditor`, `packet_crafter` | 900s |
+| `origin_ip_discovery` | 300s |
 
 ---
 
-## Priority Implementation Order
+## Base Scanner Interface
 
-1. **HTTP Client** — Async requests with full control
-2. **Insertion Point Detection** — Find where to inject
-3. **SQL Injection** — Most common high-severity
-4. **XSS** — Common, easy wins
-5. **Command Injection** — Critical severity
-6. **Path Traversal** — File read primitives
-7. **SSRF** — Internal network access
-8. **Other checks** — As needed
+All scanners extend `BaseScanner` (`scanners/base.py`):
+
+| Item | Description |
+|------|-------------|
+| `scan(context) → AsyncIterator[Finding]` | **Abstract** — must implement |
+| `passive_scan(context)` | Optional override for passive analysis |
+| `active_scan(context, insertion_point)` | Optional override for active injection |
+| `apply_auth(auth_creds)` | Injects headers + cookies into httpx client |
+| `reapply_auth(auth_creds)` | Re-injects after mid-scan re-authentication |
+| `session_appears_dead` | True after ≥3 consecutive 401s |
+| `request(method, url, **kw)` | Rate-limited HTTP with 429 retry (3×) and 401 tracking |
+| `create_finding(...)` | Pre-stamps `scanner_module`, `owasp_category`, `mitre_technique`, `found_at` |
+
+`ScanContext` dataclass: `url`, `base_url`, `request`, `response`, `parameters`, `headers`, `cookies`, `insertion_points`, `extra`, `timestamp`. Factory: `ScanContext.from_url(url)`.
 
 ---
 
-## Notes
+## Core Type System (`core/types.py`)
 
-1. The scanner is pattern matching + timing + response comparison
-2. The value is in the **payload libraries** and **detection heuristics**
-3. Beatrix combines open-source scanning patterns + AI analysis for superior results
-4. Dynamic wordlists (57K+ payloads from SecLists + PayloadsAllTheThings) power the injection engine
+### Enums
+
+| Enum | Values |
+|------|--------|
+| `Severity` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO` |
+| `Confidence` | `CERTAIN`, `FIRM`, `TENTATIVE`, `WEAK` |
+| `InsertionPointType` | `URL_PARAM`, `BODY_PARAM`, `COOKIE`, `HEADER`, `JSON_VALUE`, `XML_VALUE`, `URL_PATH`, `URL_PATH_FOLDER`, `ENTIRE_BODY`, `MULTIPART` |
+| `MitreTactic` | 13 tactics (TA0043 → TA0040) |
+| `OwaspCategory` | A01–A10 (OWASP Top 10 2021) |
+| `TargetStatus` | `PENDING`, `RECON`, `SCANNING`, `EXPLOITING`, `COMPLETE`, `PAUSED`, `ERROR` |
+
+### Key Dataclasses
+
+| Class | Key Fields |
+|-------|-----------|
+| `Finding` | `id`, `title`, `severity`, `confidence`, `url`, `parameter`, `payload`, `request`, `response`, `evidence`, `description`, `impact`, `remediation`, `poc_curl`, `poc_python`, `scanner_module`, `owasp_category`, `cwe_id`, `mitre_technique` |
+| `InsertionPoint` | `name`, `value`, `type`, `original_request`, `position` |
+| `Target` | `id`, `domain`, `scope`, `exclude`, `status`, `priority`, `program`, `platform` |
+| `ScanResult` | `target`, `module`, `findings`, `errors`, `requests_sent`, `endpoints_tested` |
+| `HttpRequest` / `HttpResponse` | Standard HTTP envelope fields |
+
+---
+
+## Scan Check Registry (`core/scan_check_types.py`)
+
+| Type | Interface | Dispatch |
+|------|-----------|----------|
+| `PassiveScanCheck` | `do_passive_check(url, status, headers, body)` | Per-host or per-request |
+| `ActiveScanCheck` | `do_active_check(url, insertion_point, send_request)` | Per-insertion-point |
+
+`ScanCheckRegistry` manages registration, enable/disable, and stats (`findings_produced`, `requests_sent`, `errors`).
+
+---
+
+## External Tool Runners
+
+### In `core/external_tools.py` (13 runners)
+
+**Recon (8):**
+
+| Class | Binary | Method |
+|-------|--------|--------|
+| `KatanaRunner` | `katana` | `crawl()` |
+| `AmassRunner` | `amass` | `enumerate()` |
+| `GospiderRunner` | `gospider` | `spider()` |
+| `HakrawlerRunner` | `hakrawler` | `crawl()` |
+| `GauRunner` | `gau` | `fetch_urls()` |
+| `WhatwebRunner` | `whatweb` | `fingerprint()` |
+| `WebanalyzeRunner` | `webanalyze` | `fingerprint()` |
+| `DirsearchRunner` | `dirsearch` | `scan()` |
+
+**Exploitation (3):**
+
+| Class | Binary | Method |
+|-------|--------|--------|
+| `SqlmapRunner` | `sqlmap` | `exploit()` |
+| `DalfoxRunner` | `dalfox` | `scan()` |
+| `CommixRunner` | `commix` | `exploit()` |
+
+**Auth (1):**
+
+| Class | Binary | Methods |
+|-------|--------|---------|
+| `JwtToolRunner` | `jwt_tool` | `analyze()`, `tamper()` |
+
+**Post-Exploitation (1):**
+
+| Class | Binary | Methods |
+|-------|--------|---------|
+| `MetasploitRunner` | `msfconsole` | `generate_resource_file()`, `generate_exploit_rc()`, `search_modules()` |
+
+### In separate core modules
+
+| Class | File | Binary |
+|-------|------|--------|
+| `SubfinderRunner` | `core/subfinder.py` | `subfinder` |
+| `NmapScanner` | `core/nmap_scanner.py` | `nmap` |
+| `FfufEngine` | `core/ffuf_engine.py` | `ffuf` |
+
+---
+
+## Unregistered Scanner Modules (commented-out imports)
+
+These files exist in `scanners/` but are **not** imported or registered in the engine:
+
+| File | Class | Purpose |
+|------|-------|---------|
+| `credential_validator.py` | `CredentialValidator` | Leaked credential validation |
+| `mobile_interceptor.py` | `MobileInterceptor` | Android traffic interception |
+| `power_injector.py` | `PowerInjector` | Advanced SQLi/XSS/CMDi |
+| `browser_scanner.py` | `BrowserScanner` | Playwright-based scanning |
+| `polyglot_generator.py` | `PolyglotGenerator` | XSS polyglot payloads |
+| `css_exfiltrator.py` | `CSSExfiltrator` | CSS injection + data exfil |
+| `idor_auth.py` | `AuthenticatedIDORScanner` | Multi-role AI-driven IDOR |
+| `jwt_analyzer.py` | `JWTAnalyzer` | JWT deep analysis |
+
+---
+
+## Auth Pipeline
+
+```
+auth.yaml (user home)
+  └─ AuthConfigLoader._resolve_config_path()  ← handles sudo
+       └─ AuthConfigLoader.load() → AuthCredentials
+            ├─ main user: headers, cookies, login creds
+            ├─ idor.user1: login creds, headers, cookies
+            └─ idor.user2: login creds, headers, cookies
+
+CLI (hunt/strike)
+  ├─ perform_auto_login(main_user) → session cookies/tokens
+  ├─ perform_auto_login(idor_user1) → session cookies/tokens
+  └─ perform_auto_login(idor_user2) → session cookies/tokens
+
+Engine
+  ├─ scanner.apply_auth(auth_creds) → injects into httpx client
+  ├─ Between-phase session health check → re-auth if expired
+  └─ IDORScanner: cross-account testing with user1 + user2 sessions
+```

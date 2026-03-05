@@ -573,8 +573,13 @@ class IDORScanner(BaseScanner):
 
     async def test_candidate(self,
                             candidate: IDORCandidate,
-                            auth_headers: Dict[str, str]) -> List[Finding]:
-        """Test a single IDOR candidate with GET and write methods"""
+                            auth_headers: Dict[str, str],
+                            cross_account_headers: Optional[Dict[str, str]] = None) -> List[Finding]:
+        """Test a single IDOR candidate with GET and write methods.
+        
+        If cross_account_headers is provided (user2's session), performs true
+        cross-account IDOR testing: accesses user1's resource with user2's credentials.
+        """
         findings = []
 
         if not self.client:
@@ -582,7 +587,7 @@ class IDORScanner(BaseScanner):
 
         # Test with GET first (read IDOR)
         get_findings = await self._test_candidate_with_method(
-            candidate, auth_headers, "GET"
+            candidate, auth_headers, "GET", cross_account_headers=cross_account_headers
         )
         findings.extend(get_findings)
 
@@ -592,7 +597,7 @@ class IDORScanner(BaseScanner):
         # differ between read and write operations
         for method in self.WRITE_METHODS:
             write_findings = await self._test_candidate_with_method(
-                candidate, auth_headers, method
+                candidate, auth_headers, method, cross_account_headers=cross_account_headers
             )
             findings.extend(write_findings)
 
@@ -601,8 +606,17 @@ class IDORScanner(BaseScanner):
     async def _test_candidate_with_method(self,
                                            candidate: IDORCandidate,
                                            auth_headers: Dict[str, str],
-                                           method: str) -> List[Finding]:
-        """Test a single IDOR candidate with a specific HTTP method"""
+                                           method: str,
+                                           cross_account_headers: Optional[Dict[str, str]] = None) -> List[Finding]:
+        """Test a single IDOR candidate with a specific HTTP method.
+        
+        Two testing modes:
+        1. Cross-account (when cross_account_headers provided): Access user1's
+           exact resource URL using user2's session. If user2 gets 200 with data,
+           that's a true IDOR — broken access control.
+        2. ID-manipulation (fallback): Same session, different IDs. Less reliable
+           but catches cases where cross-account creds aren't available.
+        """
         findings = []
 
         if not self.client:
@@ -628,6 +642,79 @@ class IDORScanner(BaseScanner):
         except Exception:
             return findings
 
+        # ── Cross-account IDOR test ────────────────────────────────────────
+        # True IDOR: access user1's resource with user2's session
+        if cross_account_headers and original_response.status_code in [200, 201]:
+            cross_headers = {**cross_account_headers, "User-Agent": "BEATRIX-IDOR-Scanner/2.0"}
+            cross_kwargs = {"headers": cross_headers}
+            if method in self.WRITE_METHODS:
+                cross_headers["Content-Type"] = "application/json"
+                cross_kwargs["headers"] = cross_headers
+                cross_kwargs["content"] = b'{}'
+
+            try:
+                cross_response = await self.client.request(
+                    method,
+                    candidate.original_url,
+                    **cross_kwargs,
+                )
+
+                if cross_response.status_code in [200, 201]:
+                    # User2 accessed user1's resource — potential IDOR
+                    pii_found = self.detect_pii_in_response(cross_response.text)
+                    severity = self.assess_idor_severity(pii_found, method, candidate.param_name)
+
+                    pii_summary = ""
+                    if pii_found:
+                        pii_types = ", ".join(pii_found.keys())
+                        pii_summary = f"\n**PII Detected in Response:** {pii_types}"
+
+                    method_note = ""
+                    if method != "GET":
+                        method_note = f"\n**HTTP Method:** {method} (write-based IDOR — may allow data modification)"
+
+                    finding = Finding(
+                        title=f"Cross-Account {'Write ' if method != 'GET' else ''}IDOR in {candidate.param_name} [{method}]",
+                        description=f"""
+**Cross-Account Broken Access Control (IDOR)**
+
+User2's session successfully accessed User1's resource.
+The application does not properly validate resource ownership.
+
+**Location:** {candidate.location}
+**Parameter:** {candidate.param_name}
+**ID:** {candidate.param_value}
+**URL:** {candidate.original_url}{method_note}{pii_summary}
+
+**Status:** User2 got HTTP {cross_response.status_code} on User1's resource
+**Response Size:** User1: {len(original_response.text)} bytes, User2: {len(cross_response.text)} bytes
+
+**Impact:**
+- {"Unauthorized modification/deletion of other users' data" if method != 'GET' else "Unauthorized access to other users' data"}
+- Data breach / information disclosure
+- Potential account takeover
+""".strip(),
+                        severity=severity,
+                        confidence=Confidence.CONFIRMED if pii_found else Confidence.TENTATIVE,
+                        url=candidate.original_url,
+                        evidence={
+                            "test_type": "cross_account",
+                            "original_url": candidate.original_url,
+                            "method": method,
+                            "user1_status": original_response.status_code,
+                            "user2_status": cross_response.status_code,
+                            "user1_size": len(original_response.text),
+                            "user2_size": len(cross_response.text),
+                            "pii_found": list(pii_found.keys()) if pii_found else [],
+                        },
+                        scanner=self.name,
+                        owasp_category=self.owasp_category,
+                    )
+                    findings.append(finding)
+            except Exception:
+                pass
+
+        # ── ID-manipulation IDOR tests (fallback) ─────────────────────────
         # Generate and test alternative IDs
         test_ids = self.generate_test_ids(candidate.param_value, candidate.id_type)
 
@@ -779,7 +866,10 @@ The application may not properly validate authorization when accessing resources
             await self.__aenter__()
 
         for candidate in candidates:
-            findings = await self.test_candidate(candidate, self.user1_auth)
+            findings = await self.test_candidate(
+                candidate, self.user1_auth,
+                cross_account_headers=self.user2_auth or None,
+            )
             for finding in findings:
                 yield finding
 

@@ -243,7 +243,7 @@ class TargetCrawler:
                 await self._build_soft_404(client, result)
 
             except Exception as e:
-                self.log(f"Initial fetch failed: {e}")
+                self.log(f"Initial fetch failed: {type(e).__name__}: {e}")
                 return result
 
             # Parse the initial page

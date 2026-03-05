@@ -842,11 +842,14 @@ class TestJSONReportGeneration:
 
         assert json_path.exists()
         data = json.loads(json_path.read_text())
-        assert isinstance(data, list)
-        assert len(data) == len(sample_findings)
+        assert isinstance(data, dict)
+        assert "findings" in data
+        assert "metadata" in data
+        findings_list = data["findings"]
+        assert len(findings_list) == len(sample_findings)
 
         # Verify structure
-        for item in data:
+        for item in findings_list:
             assert "title" in item
             assert "severity" in item
             assert "confidence" in item
@@ -861,7 +864,7 @@ class TestJSONReportGeneration:
         reporter.export_json(sample_findings, json_path)
 
         data = json.loads(json_path.read_text())
-        severities = {item["severity"] for item in data}
+        severities = {item["severity"] for item in data["findings"]}
         assert "critical" in severities
         assert "medium" in severities
         assert "low" in severities
@@ -885,14 +888,15 @@ class TestJSONReportGeneration:
         reporter.export_json([finding], json_path)
 
         data = json.loads(json_path.read_text())
-        assert data[0]["title"] == "Test Finding"
-        assert data[0]["severity"] == "high"
-        assert data[0]["confidence"] == "certain"
-        assert data[0]["url"] == "https://example.com/test"
-        assert data[0]["description"] == "A test finding"
-        assert data[0]["evidence"] == "found something"
-        assert data[0]["remediation"] == "fix it"
-        assert data[0]["scanner_module"] == "test"
+        findings = data["findings"]
+        assert findings[0]["title"] == "Test Finding"
+        assert findings[0]["severity"] == "high"
+        assert findings[0]["confidence"] == "certain"
+        assert findings[0]["url"] == "https://example.com/test"
+        assert findings[0]["description"] == "A test finding"
+        assert findings[0]["evidence"] == "found something"
+        assert findings[0]["remediation"] == "fix it"
+        assert findings[0]["scanner_module"] == "test"
 
 
 # =============================================================================
