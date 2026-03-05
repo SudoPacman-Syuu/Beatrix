@@ -719,7 +719,7 @@ beatrix hunt target.com</code></pre>
                 </div>
 
                 <div class="pro-tip">
-                    <strong>OTP / 2FA:</strong> For sites that require OTP verification on every login (e.g., Kick.com), Beatrix detects the challenge and prompts for the code. If auto-login can't handle the site's auth flow (CAPTCHA, complex 2FA, WAF), use <code>beatrix auth browser TARGET</code> to log in manually via a real browser, or pass cookies directly with <code>--cookie</code>.
+                    <strong>OTP / 2FA:</strong> For sites that require OTP verification on every login (e.g., example.com), Beatrix detects the challenge and prompts for the code. If auto-login can't handle the site's auth flow (CAPTCHA, complex 2FA, WAF), use <code>beatrix auth browser TARGET</code> to log in manually via a real browser, or pass cookies directly with <code>--cookie</code>.
                 </div>
 
                 <div class="pro-tip">
@@ -751,8 +751,56 @@ beatrix auth config</code></pre>
 
                 <p>The auth config file supports <strong>per-target credentials</strong> (with wildcard matching like <code>*.example.com</code>) and <strong>IDOR dual-session testing</strong> with separate user1/user2 sessions for access control verification.</p>
 
+                <h4>Saving Multiple Auth Credentials for IDOR Scanning</h4>
+                <p>IDOR (Insecure Direct Object Reference) testing requires <strong>two different authenticated sessions</strong> — one for each user account. The scanner uses user2's session to attempt accessing user1's resources, producing real evidence of broken access control. Without both sessions configured, IDOR scans run in single-user mode with limited detection capability.</p>
+
+                <p><strong>Step 1:</strong> Generate the sample auth config (if you haven't already):</p>
+                <pre><code>beatrix auth init</code></pre>
+
+                <p><strong>Step 2:</strong> Open the config and add both user sessions under the <code>idor</code> section:</p>
+                <pre><code>beatrix auth config</code></pre>
+
+                <p>Add your two users' session cookies and/or auth headers:</p>
+                <pre><code># ~/.beatrix/auth.yaml
+
+# ─────────────────────────────────────────────
+# IDOR testing — two different user sessions
+# Required for proper access control testing
+# ─────────────────────────────────────────────
+idor:
+  user1:
+    cookies:
+      session: "user1-session-cookie"
+    headers:
+      Authorization: "Bearer user1-token"
+  user2:
+    cookies:
+      session: "user2-session-cookie"
+    headers:
+      Authorization: "Bearer user2-token"</code></pre>
+
+                <p><strong>Step 3:</strong> To get each user's session values, log in as each user separately using the browser method and copy the cookies from DevTools (Application → Cookies):</p>
+                <pre><code># Log in as user1, copy session cookies from DevTools
+beatrix auth browser example.com
+
+# Log in as user2 in a private/incognito window, copy those session cookies
+# Then paste user2's cookies into the idor.user2 section of auth.yaml</code></pre>
+
+                <p>Alternatively, if the target uses Bearer tokens or API keys, paste those directly into the <code>headers</code> fields for each user.</p>
+
+                <p><strong>Step 4:</strong> Run the scan — IDOR dual-session testing activates automatically when both users are configured:</p>
+                <pre><code># Full hunt — IDOR scanner picks up both sessions from auth.yaml
+beatrix hunt example.com
+
+# Or target IDOR specifically
+beatrix strike https://api.example.com/v1/users -m idor</code></pre>
+
                 <div class="pro-tip">
-                    <strong>IDOR Testing:</strong> For proper access control testing, configure two different user sessions in <code>~/.beatrix/auth.yaml</code> under the <code>idor</code> section. The scanner will use user2's session to attempt accessing user1's resources — real IDOR evidence.
+                    <strong>Tip:</strong> Use two accounts with <strong>different privilege levels</strong> (e.g., regular user vs. admin) for the most effective IDOR testing. The scanner will attempt to access user1's resources using user2's session — if it succeeds, that's a confirmed IDOR vulnerability. You can verify your IDOR credentials are loaded correctly with <code>beatrix auth show</code>.
+                </div>
+
+                <div class="pro-tip">
+                    <strong>Cookie-only shortcut:</strong> If you only have session cookies (no Bearer tokens), you can leave the <code>headers</code> fields empty and just fill in <code>cookies</code> under each user. Both <code>cookies</code> and <code>headers</code> are optional — use whichever the target requires for authentication.
                 </div>
             </section>
 
@@ -914,10 +962,10 @@ beatrix recon example.com --deep -j -o recon.json</code></pre>
                             <tr><td>-o, --output PATH</td><td>Output report file (markdown)</td></tr>
                         </table>
                         <pre><code># Scan an entire org
-beatrix github-recon shopify --token ghp_xxx
+beatrix github-recon example-org --token ghp_xxx
 
 # Scan a specific repo with full history analysis
-beatrix github-recon shopify --repo shopify/hydrogen --token ghp_xxx
+beatrix github-recon example-org --repo example-org/webapp --token ghp_xxx
 
 # Quick scan (no git history)
 beatrix github-recon target-corp --quick -o github_report.md</code></pre>
@@ -1044,7 +1092,7 @@ beatrix batch api_endpoints.txt -m idor -o ./idor_results</code></pre>
                             <tr><td>-o, --output PATH</td><td>Save findings to JSON file</td></tr>
                         </table>
                         <pre><code># Rapid sweep of multiple domains
-beatrix rapid -d shopify.com -d gitlab.com -d stripe.com
+beatrix rapid -d example.com -d example.org -d example.net
 
 # Rapid sweep from file
 beatrix rapid -t bugbounty_targets.txt -o rapid_results.json</code></pre>
@@ -1181,8 +1229,8 @@ beatrix findings show|hunts|export|diff|delete|summary</code></pre>
                         <pre><code># List all critical findings
 beatrix findings -s critical
 
-# Search for CORS-related findings on Shopify
-beatrix findings -t shopify -q cors
+# Search for CORS-related findings on example.com
+beatrix findings -t example.com -q cors
 
 # Export a specific hunt as CSV
 beatrix findings export --hunt 7 -f csv -o hunt7.csv
@@ -1203,9 +1251,9 @@ beatrix findings show 42</code></pre>
 
                         <table>
                             <tr><th>Subcommand</th><th>Usage</th><th>Description</th></tr>
-                            <tr><td><code>programs</code></td><td><code>beatrix h1 programs -s "shopify"</code></td><td>List/search available programs</td></tr>
-                            <tr><td><code>dupecheck</code></td><td><code>beatrix h1 dupecheck shopify cors auth bypass</code></td><td>Check for duplicate reports</td></tr>
-                            <tr><td><code>submit</code></td><td><code>beatrix h1 submit shopify -t "Title" -f report.md</code></td><td>Submit a report</td></tr>
+                            <tr><td><code>programs</code></td><td><code>beatrix h1 programs -s "example"</code></td><td>List/search available programs</td></tr>
+                            <tr><td><code>dupecheck</code></td><td><code>beatrix h1 dupecheck example cors auth bypass</code></td><td>Check for duplicate reports</td></tr>
+                            <tr><td><code>submit</code></td><td><code>beatrix h1 submit example -t "Title" -f report.md</code></td><td>Submit a report</td></tr>
                         </table>
 
                         <p><strong>Submit flags:</strong></p>
@@ -1219,12 +1267,12 @@ beatrix findings show 42</code></pre>
                         </table>
 
                         <pre><code># Full submission workflow
-beatrix h1 dupecheck shopify cors misconfiguration
-beatrix h1 submit shopify -t "CORS Misconfiguration on api.shopify.com" \
+beatrix h1 dupecheck example cors misconfiguration
+beatrix h1 submit example -t "CORS Misconfiguration on api.example.com" \
   -f report.md -i "Account takeover via cross-origin data theft" -s high
 
 # Dry run (test without submitting)
-beatrix h1 submit shopify -t "CORS" -f report.md -i "ATO" -s high --dry-run</code></pre>
+beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</code></pre>
                     </div>
                 </details>
 
@@ -1278,7 +1326,7 @@ beatrix auth config</code></pre>
                             <tr><th>Subcommand</th><th>Example</th><th>Description</th></tr>
                             <tr><td><code>init</code></td><td><code>beatrix auth init</code></td><td>Generate sample auth config (~/.beatrix/auth.yaml)</td></tr>
                             <tr><td><code>login</code></td><td><code>beatrix auth login example.com</code></td><td>Interactive login wizard — store username/email &amp; password for auto-login</td></tr>
-                            <tr><td><code>browser</code></td><td><code>beatrix auth browser kick.com</code></td><td>Manual browser login — log in yourself, Beatrix captures the session</td></tr>
+                            <tr><td><code>browser</code></td><td><code>beatrix auth browser example.com</code></td><td>Manual browser login — log in yourself, Beatrix captures the session</td></tr>
                             <tr><td><code>sessions</code></td><td><code>beatrix auth sessions</code></td><td>List, clear, or manage saved sessions</td></tr>
                             <tr><td><code>show</code></td><td><code>beatrix auth show -t example.com</code></td><td>Show current auth state for a target</td></tr>
                             <tr><td><code>config</code></td><td><code>beatrix auth config</code></td><td>Open auth.yaml in your default editor</td></tr>
@@ -1286,10 +1334,10 @@ beatrix auth config</code></pre>
 
                         <h4>Auto-Login Wizard</h4>
                         <pre><code># Interactive login — prompts for username/email, password (masked), and optional login URL
-beatrix auth login kick.com
+beatrix auth login example.com
 
 # Credentials are saved to ~/.beatrix/auth.yaml and used automatically on next scan
-beatrix hunt kick.com</code></pre>
+beatrix hunt example.com</code></pre>
 
                         <p>The <code>auth login</code> wizard prompts for:</p>
                         <ul>
@@ -1301,7 +1349,7 @@ beatrix hunt kick.com</code></pre>
                         </ul>
 
                         <h4>OTP / 2FA Handling</h4>
-                        <p>Many sites (e.g., Kick.com) require an OTP verification code on every login. Beatrix detects OTP/2FA challenges automatically by scanning JSON responses for keywords like <code>requires_2fa</code>, <code>verification_required</code>, <code>otp</code>, <code>mfa_token</code>, etc. When detected:</p>
+                        <p>Many sites (e.g., example.com) require an OTP verification code on every login. Beatrix detects OTP/2FA challenges automatically by scanning JSON responses for keywords like <code>requires_2fa</code>, <code>verification_required</code>, <code>otp</code>, <code>mfa_token</code>, etc. When detected:</p>
                         <ol>
                             <li>Beatrix prompts you to enter the OTP code sent to your email/phone</li>
                             <li>The code is submitted to the verification endpoint (auto-discovered or common paths)</li>
@@ -1311,13 +1359,13 @@ beatrix hunt kick.com</code></pre>
 
                         <h4>Manual Browser Login</h4>
                         <pre><code># Open a browser, log in manually, Beatrix captures your session
-beatrix auth browser kick.com
+beatrix auth browser example.com
 
 # In headless environments (codespaces), falls back to cookie-paste prompt
-beatrix auth browser kick.com
+beatrix auth browser example.com
 
 # Or pass cookies directly from your browser's DevTools
-beatrix hunt kick.com --cookie "session=abc123" --cookie "XSRF-TOKEN=xyz"</code></pre>
+beatrix hunt example.com --cookie "session=abc123" --cookie "XSRF-TOKEN=xyz"</code></pre>
                         <p>In environments without a display (e.g., GitHub Codespaces), the browser command falls back to a cookie-paste prompt — open the target site in your local browser, copy cookies from DevTools (Application → Cookies), and paste them in <code>name=value; name2=value2</code> format.</p>
 
                         <h4>Session Persistence</h4>
@@ -1326,16 +1374,16 @@ beatrix hunt kick.com --cookie "session=abc123" --cookie "XSRF-TOKEN=xyz"</code>
 beatrix auth sessions
 
 # Clear a specific domain's session
-beatrix auth sessions --clear kick.com
+beatrix auth sessions --clear example.com
 
 # Clear all saved sessions
 beatrix auth sessions --clear-all
 
 # Force fresh login (ignore saved session)
-beatrix hunt kick.com --fresh-login
+beatrix hunt example.com --fresh-login
 
 # Use manual browser login for this hunt
-beatrix hunt kick.com --manual-login</code></pre>
+beatrix hunt example.com --manual-login</code></pre>
 
                         <h4>CLI Flag Login</h4>
                         <pre><code># Pass login credentials directly
@@ -1951,8 +1999,8 @@ beatrix polyglot clobber</code></pre>
                         <ul>
                             <li><strong>Offline JWT Analysis:</strong> Decodes JWTs locally to extract the header and payload. Checks for weak algorithms (<code>alg: none</code>), expiration dates (<code>exp</code>), and sensitive claims (<code>admin</code>, <code>role</code>, <code>email</code>).</li>
                             <li><strong>AWS Key Validation:</strong> Uses <code>boto3.client('sts')</code> to call <code>get_caller_identity()</code>. If successful, it confirms the AWS Access Key ID and Secret Access Key are valid and active.</li>
-                            <li><strong>Stripe Key Validation:</strong> Sends a test request to <code>https://api.stripe.com/v1/charges</code> using the discovered Stripe API key (<code>sk_live_...</code> or <code>sk_test_...</code>) via Basic Auth to verify its status.</li>
-                            <li><strong>Slack Token Validation:</strong> Calls <code>https://slack.com/api/auth.test</code> with the discovered Slack token (<code>xoxb-...</code> or <code>xoxp-...</code>) in the Authorization header to confirm it is active.</li>
+                            <li><strong>Stripe Key Validation:</strong> Sends a test request to the Stripe API charges endpoint using the discovered Stripe API key (<code>sk_live_...</code> or <code>sk_test_...</code>) via Basic Auth to verify its status.</li>
+                            <li><strong>Slack Token Validation:</strong> Calls the Slack auth.test API endpoint with the discovered Slack token (<code>xoxb-...</code> or <code>xoxp-...</code>) in the Authorization header to confirm it is active.</li>
                         </ul>
                     </div>
                 </details>
@@ -2061,16 +2109,16 @@ beatrix ghost https://example.com/dashboard -H "Authorization: Bearer TOKEN" --m
 beatrix h1 programs
 
 # Search for a specific program
-beatrix h1 programs -s "shopify"
+beatrix h1 programs -s "example"
 
 # Check for duplicates before submitting (Saves reputation points!)
-beatrix h1 dupecheck shopify cors misconfiguration
+beatrix h1 dupecheck example cors misconfiguration
 
 # Submit a report directly from the terminal
-beatrix h1 submit shopify -t "CORS Misconfiguration" -f report.md -i "Account takeover" -s high
+beatrix h1 submit example -t "CORS Misconfiguration" -f report.md -i "Account takeover" -s high
 
 # Dry run submission (Test formatting without actually submitting)
-beatrix h1 submit shopify -t "CORS" -f report.md -i "ATO" -s high --dry-run</code></pre>
+beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</code></pre>
             </section>
 
             <section id="workflows">
