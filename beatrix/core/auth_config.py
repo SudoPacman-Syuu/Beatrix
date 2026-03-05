@@ -39,15 +39,16 @@ targets:
 # IDOR testing requires two different user sessions
 idor:
   user1:
-    cookies:
-      session: "user1-session-cookie"
-    headers:
-      Authorization: "Bearer user1-token"
+    login:
+      username: "user1@example.com"
+      password: "password1"
+    # OR static cookies:
+    # cookies:
+    #   session: "user1-session-cookie"
   user2:
-    cookies:
-      session: "user2-session-cookie"
-    headers:
-      Authorization: "Bearer user2-token"
+    login:
+      username: "user2@example.com"
+      password: "password2"
 """
 
 import asyncio
@@ -584,20 +585,34 @@ class AuthConfigLoader:
                 creds.login_username_field = login_cfg.get("username_field")
                 creds.login_password_field = login_cfg.get("password_field")
 
-        # IDOR accounts
+        # IDOR accounts — support both static cookies/headers AND login credentials
         idor_cfg = data.get("idor") or {}
         if isinstance(idor_cfg, dict):
             u1 = idor_cfg.get("user1") or {}
             u2 = idor_cfg.get("user2") or {}
             if u1:
+                u1_login = u1.get("login") or {}
                 creds.idor_user1 = AuthCredentials(
                     headers=u1.get("headers") or {},
                     cookies=u1.get("cookies") or {},
+                    login_username=u1_login.get("username") or u1_login.get("email") if u1_login else None,
+                    login_password=u1_login.get("password") if u1_login else None,
+                    login_url=u1_login.get("url") if u1_login else None,
+                    login_method=u1_login.get("method", "auto") if u1_login else None,
+                    login_username_field=u1_login.get("username_field") if u1_login else None,
+                    login_password_field=u1_login.get("password_field") if u1_login else None,
                 )
             if u2:
+                u2_login = u2.get("login") or {}
                 creds.idor_user2 = AuthCredentials(
                     headers=u2.get("headers") or {},
                     cookies=u2.get("cookies") or {},
+                    login_username=u2_login.get("username") or u2_login.get("email") if u2_login else None,
+                    login_password=u2_login.get("password") if u2_login else None,
+                    login_url=u2_login.get("url") if u2_login else None,
+                    login_method=u2_login.get("method", "auto") if u2_login else None,
+                    login_username_field=u2_login.get("username_field") if u2_login else None,
+                    login_password_field=u2_login.get("password_field") if u2_login else None,
                 )
 
         return creds
@@ -779,18 +794,27 @@ targets:
 # ─────────────────────────────────────────────
 # IDOR testing — two different user sessions
 # Required for proper access control testing
+#
+# Option A: Supply static cookies/tokens (manual capture)
+# Option B: Supply login credentials → Beatrix auto-logs in both accounts
 # ─────────────────────────────────────────────
 idor:
   user1:
-    cookies: {}
-      # session: "user1-session-cookie"
-    headers: {}
-      # Authorization: "Bearer user1-token"
+    # Option A: static cookies/headers
+    # cookies:
+    #   session: "user1-session-cookie"
+    # headers:
+    #   Authorization: "Bearer user1-token"
+    # Option B: auto-login (recommended)
+    login:
+      # username: "user1@example.com"
+      # password: "password1"
+      # url: "https://target.com/api/auth/login"  # optional
+      # method: "json"                             # optional: auto|form|json
   user2:
-    cookies: {}
-      # session: "user2-session-cookie"
-    headers: {}
-      # Authorization: "Bearer user2-token"
+    login:
+      # username: "user2@example.com"
+      # password: "password2"
 
 # ─────────────────────────────────────────────
 # Environment variables (alternative to this file)

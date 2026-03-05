@@ -28,9 +28,10 @@ install: ## Install globally (tries pipx → pip --user → system pip → venv)
 install-pipx: ## Install via pipx (recommended)
 	pipx install --force .
 
-install-user: ## Install to ~/.local/bin via pip
+install-user: ## Install to ~/.local/bin via pip (+ sudo wrapper)
 	$(PYTHON) -m pip install --user --break-system-packages . 2>/dev/null || \
 		$(PYTHON) -m pip install --user .
+	@$(MAKE) _sudo-wrapper
 
 install-system: ## Install system-wide (requires sudo)
 	sudo $(PYTHON) -m pip install --break-system-packages . 2>/dev/null || \
@@ -47,13 +48,25 @@ install-venv: ## Install in dedicated venv at ~/.beatrix + symlink to /usr/local
 	fi
 	@echo "✓ Installed to $(VENV_DIR), linked at $(BIN_DIR)/beatrix"
 
-install-dev: ## Install in editable mode for development
+install-dev: ## Install in editable mode for development (+ sudo wrapper)
 	$(PYTHON) -m pip install -e ".[dev]" --break-system-packages 2>/dev/null || \
 		$(PYTHON) -m pip install -e ".[dev]"
+	@$(MAKE) _sudo-wrapper
 	@echo "✓ Dev install complete"
 
 setup: ## Install all 21 external security tools (nuclei, nmap, sqlmap, etc.)
 	@chmod +x install.sh && bash -c 'source install.sh && install_external_tools'
+
+# ── Sudo Wrapper ─────────────────────────────────────────
+
+_sudo-wrapper: ## (internal) Create /usr/local/bin/beatrix wrapper for sudo compat
+	@SITE_PKGS=$$($(PYTHON) -c "import site; print(site.getusersitepackages())"); \
+	PROJECT_DIR=$$(cd "$(CURDIR)" && pwd); \
+	PYBIN=$$(which $(PYTHON)); \
+	WRAPPER='#!/usr/bin/env bash\nexport PYTHONPATH="'"$$PROJECT_DIR"':'"$$SITE_PKGS"'"\nexec '"$$PYBIN"' -W ignore::RuntimeWarning -m beatrix.cli.main "$$@"'; \
+	echo "$$WRAPPER" | sudo tee $(BIN_DIR)/beatrix >/dev/null && \
+	sudo chmod +x $(BIN_DIR)/beatrix && \
+	echo "✓ sudo wrapper installed at $(BIN_DIR)/beatrix"
 
 # ── Uninstall ────────────────────────────────────────────
 

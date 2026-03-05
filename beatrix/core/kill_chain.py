@@ -1708,6 +1708,34 @@ class KillChainExecutor:
         discovered = context.get("discovered_urls", [])
         api_urls = [u for u in discovered if "/api/" in u or "/v1/" in u or "/v2/" in u or "/v3/" in u or "/graphql" in u or "/rest/" in u]
         idor_targets = list(set([url] + api_urls[:30]))  # Base URL + API endpoints
+
+        # ── IDOR dual-account auto-login ──────────────────────────────────
+        # If IDOR user1/user2 have login credentials, auto-login both before
+        # running the IDOR scanner so it gets fresh sessions for both accounts.
+        auth = context.get("auth")
+        if auth:
+            for user_attr, label in [("idor_user1", "IDOR user1"), ("idor_user2", "IDOR user2")]:
+                idor_user = getattr(auth, user_attr, None)
+                if idor_user and hasattr(idor_user, "has_login_creds") and idor_user.has_login_creds:
+                    if not idor_user.has_auth:
+                        # Need to auto-login this IDOR account
+                        self._emit("info", message=f"🔐 Auto-logging in {label}...")
+                        try:
+                            from beatrix.core.auto_login import perform_auto_login
+                            login_result = await perform_auto_login(idor_user, target)
+                            if login_result.success:
+                                if login_result.cookies:
+                                    idor_user.cookies.update(login_result.cookies)
+                                if login_result.headers:
+                                    idor_user.headers.update(login_result.headers)
+                                if login_result.token:
+                                    idor_user.bearer_token = login_result.token
+                                self._emit("info", message=f"✓ {label} authenticated ({len(idor_user.cookies)} cookies)")
+                            else:
+                                self._emit("info", message=f"⚠ {label} login failed: {login_result.message}")
+                        except Exception as e:
+                            self._emit("info", message=f"⚠ {label} login error: {e}")
+
         results.append(await self._run_scanner_on_urls("idor", idor_targets, context))
         results.append(await self._run_scanner_on_urls("bac", idor_targets, context))
 

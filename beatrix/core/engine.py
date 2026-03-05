@@ -338,10 +338,14 @@ class BeatrixEngine:
 
     async def _ai_enrich_findings(self) -> None:
         """
-        Enrich findings with AI-powered classification.
+        Enrich findings with AI-powered analysis.
 
-        Adds OWASP category, CWE ID, and remediation suggestions
-        to each finding using Claude Haiku for fast bulk analysis.
+        Three-phase AI enrichment:
+        1. Classification — OWASP category, CWE ID, remediation
+        2. False-positive filtering — flag likely false positives
+        3. Severity re-assessment — adjust severity based on context
+
+        Uses Claude Haiku for fast, cheap bulk analysis.
         Failures are silent — AI enrichment is best-effort.
         """
         import json as _json
@@ -370,32 +374,48 @@ class BeatrixEngine:
             return
 
         if self._on_event:
-            self._on_event("info", {"message": f"🧠 AI enriching {len(self.findings)} findings..."})
+            self._on_event("info", {"message": f"🧠 AI analyzing {len(self.findings)} findings..."})
 
-        # Batch findings into a single prompt for efficiency
+        # ── Phase 1: Classification (OWASP/CWE/Remediation) ──────────────
         findings_summary = []
         for i, f in enumerate(self.findings):
             findings_summary.append({
                 "idx": i,
                 "title": f.title,
                 "severity": f.severity.value,
+                "confidence": f.confidence.value,
                 "url": f.url,
                 "module": f.scanner_module,
                 "description": (f.description or "")[:300],
+                "evidence": str(f.evidence or "")[:200],
             })
 
-        prompt = (
-            "You are a bug bounty vulnerability classifier.\n"
+        classify_prompt = (
+            "You are an expert bug bounty vulnerability analyst.\n"
             "For each finding below, return a JSON array where each element has:\n"
-            '  {"idx": <int>, "owasp": "<OWASP Top 10 2021 category, e.g. A01:2021 - Broken Access Control>",\n'
-            '   "cwe": <int CWE ID>, "remediation": "<one-sentence fix>"}\n\n'
-            "Skip findings that are purely informational (severity=info) — return them with null values.\n"
+            '  {"idx": <int>, "owasp": "<OWASP Top 10 2025 category, e.g. A01:2025 - Broken Access Control>",\n'
+            '   "cwe": <int CWE ID>, "remediation": "<one-sentence fix>",\n'
+            '   "false_positive": <true if likely FP, false if likely real>,\n'
+            '   "fp_reason": "<why you think it is/isn\'t a false positive>",\n'
+            '   "severity_adj": "<critical|high|medium|low|info or null if no change>",\n'
+            '   "impact": "<one-sentence real-world impact>"}\n\n'
+            "IMPORTANT false-positive guidelines:\n"
+            "- Missing security headers (CSP, HSTS, X-Frame-Options) on CDN/API domains are NOT false positives\n"
+            "- CORS with specific origins (not *) is usually safe — mark as FP\n"
+            "- Self-referencing open redirects (redirect to same domain) are FP\n"
+            "- Info-severity tech disclosure (server version, framework) on public sites are real but low impact\n"
+            "- Confirmed injection with evidence (error messages, time delays) are NOT FP\n"
+            "- IDOR without proof of data leakage is tentative, not FP\n\n"
+            "Skip purely informational findings (severity=info) — return them with null values.\n"
             "Return ONLY the JSON array, no explanation.\n\n"
             f"Findings:\n{_json.dumps(findings_summary, indent=2)}"
         )
 
+        enriched_count = 0
+        fp_count = 0
+
         try:
-            result = await grunt.complete(prompt)
+            result = await grunt.complete(classify_prompt)
 
             # Parse JSON from response
             json_start = result.find("[")
@@ -410,6 +430,10 @@ class BeatrixEngine:
                         owasp = entry.get("owasp")
                         cwe = entry.get("cwe")
                         rem = entry.get("remediation")
+                        impact = entry.get("impact")
+                        is_fp = entry.get("false_positive", False)
+                        fp_reason = entry.get("fp_reason", "")
+                        sev_adj = entry.get("severity_adj")
 
                         if owasp and not finding.owasp_category:
                             finding.owasp_category = owasp
@@ -417,10 +441,43 @@ class BeatrixEngine:
                             finding.cwe_id = cwe
                         if rem and not finding.remediation:
                             finding.remediation = rem
+                        if impact and not finding.impact:
+                            finding.impact = impact
 
-                enriched = sum(1 for e in enrichments if e.get("owasp"))
+                        # Mark likely false positives by downgrading confidence
+                        if is_fp and finding.confidence != Confidence.CERTAIN:
+                            from beatrix.core.types import Confidence
+                            finding.confidence = Confidence.WEAK
+                            if fp_reason:
+                                finding.description = (
+                                    f"{finding.description}\n\n"
+                                    f"⚠️ AI Assessment: Likely false positive — {fp_reason}"
+                                )
+                            fp_count += 1
+
+                        # Adjust severity if AI disagrees (only downgrade, never upgrade)
+                        if sev_adj and sev_adj != "null":
+                            from beatrix.core.types import Severity
+                            sev_map = {
+                                "critical": Severity.CRITICAL,
+                                "high": Severity.HIGH,
+                                "medium": Severity.MEDIUM,
+                                "low": Severity.LOW,
+                                "info": Severity.INFO,
+                            }
+                            new_sev = sev_map.get(sev_adj.lower())
+                            if new_sev and new_sev.value < finding.severity.value:
+                                # AI says it's less severe — trust the downgrade
+                                finding.severity = new_sev
+
+                        enriched_count += 1
+
                 if self._on_event:
-                    self._on_event("info", {"message": f"🧠 AI enriched {enriched}/{len(self.findings)} findings"})
+                    msg = f"🧠 AI enriched {enriched_count}/{len(self.findings)} findings"
+                    if fp_count:
+                        msg += f" ({fp_count} flagged as likely FP)"
+                    self._on_event("info", {"message": msg})
+
         except Exception:
             if self._on_event:
                 self._on_event("info", {"message": "🧠 AI enrichment skipped (no credentials or API error)"})

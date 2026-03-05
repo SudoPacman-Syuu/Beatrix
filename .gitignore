@@ -26,5 +26,8 @@ venv/
 # Tests
 tests/
 
+# Notes
+BURP_INSPIRATION_NOTES.md
+
 # OS
 .DS_Store
