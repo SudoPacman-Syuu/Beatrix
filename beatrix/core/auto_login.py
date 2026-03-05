@@ -33,7 +33,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, unquote
 
 import httpx
 
@@ -1285,6 +1285,27 @@ class AutoLoginEngine:
                 return result
             return await self._try_form_endpoint(client, url, form_fields)
 
+    async def _acquire_sanctum_csrf(self, client: httpx.AsyncClient) -> Optional[str]:
+        """Try Laravel Sanctum CSRF preflight.
+
+        Calls ``/sanctum/csrf-cookie`` which sets the ``XSRF-TOKEN``
+        cookie.  Returns the URL-decoded token value or ``None`` if the
+        endpoint doesn't exist.
+        """
+        try:
+            sanctum_url = urljoin(self.base_url, "/sanctum/csrf-cookie")
+            resp = await client.get(sanctum_url)
+            if resp.status_code in (200, 204):
+                xsrf = (client.cookies.get("XSRF-TOKEN", domain=f".{self.domain}")
+                        or client.cookies.get("XSRF-TOKEN"))
+                if xsrf:
+                    decoded = unquote(xsrf)
+                    logger.info(f"Sanctum CSRF acquired ({len(decoded)} chars)")
+                    return decoded
+        except Exception as e:
+            logger.debug(f"Sanctum CSRF unavailable: {e}")
+        return None
+
     async def _try_json_endpoint(
         self, client: httpx.AsyncClient, url: str,
     ) -> LoginResult:
@@ -1303,6 +1324,14 @@ class AutoLoginEngine:
         except Exception:
             pass
 
+        # Also grab XSRF-TOKEN from the client cookie jar (may have been
+        # set by an earlier request, e.g. the home-page GET in discover)
+        if not csrf_header_token:
+            xsrf_jar = (client.cookies.get("XSRF-TOKEN", domain=f".{self.domain}")
+                        or client.cookies.get("XSRF-TOKEN"))
+            if xsrf_jar:
+                csrf_header_token = unquote(xsrf_jar)
+
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/plain, */*",
@@ -1313,6 +1342,8 @@ class AutoLoginEngine:
             # Send CSRF token via the standard header; don't blast all 3 variants
             # (WAFs flag requests with multiple redundant CSRF headers)
             headers["x-csrf-token"] = csrf_header_token
+            # Laravel specifically looks for X-XSRF-TOKEN
+            headers["X-XSRF-TOKEN"] = csrf_header_token
 
         # Build field name combos — user-specified first, then auto-detect
         if self.username_field and self.password_field:
@@ -1321,6 +1352,7 @@ class AutoLoginEngine:
         else:
             combos = JSON_FIELD_COMBOS
 
+        sanctum_attempted = False
         last_error = ""
         for user_field, pass_field in combos:
             payload = {user_field: self.username, pass_field: self.password}
@@ -1337,6 +1369,30 @@ class AutoLoginEngine:
 
             if resp.status_code in (404, 405):
                 return LoginResult(success=False, message=f"{resp.status_code}: {url}")
+
+            # ── HTTP 419: Laravel CSRF mismatch → try Sanctum flow ──
+            if resp.status_code == 419 and not sanctum_attempted:
+                sanctum_attempted = True
+                logger.info(f"HTTP 419 CSRF mismatch at {url} — trying Sanctum CSRF preflight")
+                sanctum_token = await self._acquire_sanctum_csrf(client)
+                if sanctum_token:
+                    headers["X-XSRF-TOKEN"] = sanctum_token
+                    headers["x-csrf-token"] = sanctum_token
+                    pre_cookies = {}  # Sanctum sets fresh session cookies
+                    # Retry the same field combo with the Sanctum token
+                    try:
+                        resp = await client.post(url, json=payload, headers=headers)
+                    except Exception:
+                        pass
+                    if resp.status_code == 419:
+                        last_error = f"CSRF mismatch persists after Sanctum flow"
+                        continue
+                else:
+                    last_error = "HTTP 419 CSRF mismatch and Sanctum unavailable"
+                    continue
+            elif resp.status_code == 419:
+                last_error = "HTTP 419 CSRF mismatch (Sanctum already attempted)"
+                continue
 
             # Detect WAF block masquerading as auth rejection
             is_waf = self._is_waf_response(resp)
@@ -1565,7 +1621,11 @@ class AutoLoginEngine:
         return None, None
 
     def _extract_csrf_from_headers(self, resp: httpx.Response) -> Optional[str]:
-        """Extract CSRF token from response headers or cookies."""
+        """Extract CSRF token from response headers or cookies.
+
+        URL-decodes cookie values (e.g. Laravel's XSRF-TOKEN contains
+        URL-encoded base64 with trailing %3D → =).
+        """
         for hname in CSRF_HEADER_NAMES:
             val = resp.headers.get(hname)
             if val:
@@ -1574,7 +1634,8 @@ class AutoLoginEngine:
         csrf_cookie_names = ["csrf_token", "csrftoken", "XSRF-TOKEN", "_csrf", "csrf"]
         for cname, cval in resp.cookies.items():
             if any(cname.lower() == n.lower() for n in csrf_cookie_names):
-                return cval
+                # URL-decode: Laravel's XSRF-TOKEN cookie is URL-encoded
+                return unquote(cval)
 
         return None
 
@@ -1680,8 +1741,13 @@ class AutoLoginEngine:
         failure_signals = 0
 
         # Signal 1: HTTP status
-        if resp.status_code in (200, 201, 302, 303):
+        if resp.status_code in (200, 201, 204, 302, 303):
             success_signals += 1
+        elif resp.status_code == 419:
+            # Laravel CSRF token mismatch — not a credential rejection
+            failure_signals += 3
+            result.message = "CSRF token mismatch (HTTP 419) — retry with Sanctum CSRF flow"
+            return result
         elif resp.status_code in (401, 403, 422, 429):
             failure_signals += 3
 

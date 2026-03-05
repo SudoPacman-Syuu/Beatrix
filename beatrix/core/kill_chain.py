@@ -2448,6 +2448,33 @@ class KillChainExecutor:
             self._emit("info", message=f"PoC server unavailable: {e}")
             state.context["poc_server"] = None
 
+        # ── Session validator: calibrate if auth is configured ─────────
+        # Modeled on Burp Suite's session validation: probe the target once
+        # to discover an auth-sensitive endpoint, capture what "logged in"
+        # looks like, then re-check between phases to detect session death.
+        session_validator = None
+        auth = state.context.get("auth")
+        if auth and hasattr(auth, 'has_auth') and auth.has_auth:
+            try:
+                from beatrix.core.auth_config import SessionValidator
+                session_validator = SessionValidator(target, auth)
+                calibrated = await session_validator.calibrate()
+                if calibrated:
+                    state.context["session_validator"] = session_validator
+                    self._emit("info", message=(
+                        f"Session validator calibrated: "
+                        f"{session_validator.fingerprint.check_url}"
+                    ))
+                else:
+                    self._emit("info", message=(
+                        "Session validator: no auth-sensitive endpoint found "
+                        "— session expiry will be detected via 401/403 tracking"
+                    ))
+                    session_validator = None
+            except Exception as e:
+                self._emit("info", message=f"Session validator setup failed: {e}")
+                session_validator = None
+
         # Execute each phase
         try:
             for phase in run_phases:
@@ -2458,6 +2485,51 @@ class KillChainExecutor:
                     await asyncio.sleep(0.5)
 
                 state.current_phase = phase
+
+                # ── Between-phase session health check ────────────────
+                # Before each phase after recon, verify the session is still
+                # alive. If it's dead, attempt re-authentication so subsequent
+                # scanners don't silently run unauthenticated.
+                if (session_validator
+                        and phase != KillChainPhase.RECONNAISSANCE
+                        and auth and hasattr(auth, 'has_login_creds')
+                        and auth.has_login_creds):
+                    try:
+                        alive = await session_validator.is_session_alive(force=True)
+                        if not alive and session_validator.needs_reauth:
+                            self._emit("info", message=(
+                                "⚠ Session expired — attempting re-authentication..."
+                            ))
+                            try:
+                                from beatrix.core.auto_login import perform_auto_login
+                                login_result = await perform_auto_login(auth, target)
+                                if login_result.success:
+                                    # Update auth credentials with fresh session
+                                    if login_result.cookies:
+                                        auth.cookies.update(login_result.cookies)
+                                    if login_result.headers:
+                                        auth.headers.update(login_result.headers)
+                                    if login_result.token:
+                                        auth.bearer_token = login_result.token
+                                    session_validator.reset()
+                                    # Re-calibrate with new session
+                                    await session_validator.calibrate()
+                                    self._emit("info", message=(
+                                        "✓ Re-authentication successful — "
+                                        "session refreshed"
+                                    ))
+                                else:
+                                    self._emit("info", message=(
+                                        "⚠ Re-authentication failed — "
+                                        "continuing with expired session"
+                                    ))
+                            except Exception as e:
+                                self._emit("info", message=(
+                                    f"⚠ Re-auth error: {e} — "
+                                    f"continuing with existing session"
+                                ))
+                    except Exception:
+                        pass  # Session check failure is non-fatal
 
                 # Before Phase 7, inject all accumulated findings into context
                 # so _handle_actions can access them for credential validation

@@ -105,8 +105,8 @@ beatrix arsenal                      # full module reference
 | `inject TARGET` | Deep parameter injection | `beatrix inject https://api.com --deep` |
 | `polyglot [sub]` | XSS polyglot generation | `beatrix polyglot generate` |
 | `auth [sub]` | Auth & auto-login | `beatrix auth login example.com` |
-| `auth browser TARGET` | Manual browser login | `beatrix auth browser kick.com` |
-| `auth sessions` | Manage saved sessions | `beatrix auth sessions --clear kick.com` |
+| `auth browser TARGET` | Manual browser login | `beatrix auth browser example.com` |
+| `auth sessions` | Manage saved sessions | `beatrix auth sessions --clear example.com` |
 | `config` | Configuration | `beatrix config --show` |
 | `list` | List modules/presets | `beatrix list --modules` |
 | `arsenal` | Full module reference | `beatrix arsenal` |
@@ -466,19 +466,19 @@ The `auth login` wizard prompts for target, username/email, password (masked inp
 
 #### OTP / 2FA Handling
 
-Many sites (e.g., Kick.com) require OTP verification on every login. Beatrix detects OTP challenges automatically by scanning JSON responses for 2FA keywords (`requires_2fa`, `verification_required`, `otp`, etc.) and prompts you to enter the code sent to your email/phone.
+Many sites require OTP verification on every login. Beatrix detects OTP challenges automatically by scanning JSON responses for 2FA keywords (`requires_2fa`, `verification_required`, `otp`, etc.) and prompts you to enter the code sent to your email/phone.
 
 If auto-login can't complete (WAF blocks, CAPTCHA, complex 2FA), use the **manual browser login**:
 
 ```bash
 # Open a browser, log in manually, Beatrix captures your session
-beatrix auth browser kick.com
+beatrix auth browser example.com
 
 # In headless environments (e.g., codespaces), paste cookies from DevTools instead
-beatrix auth browser kick.com  # falls back to cookie-paste prompt
+beatrix auth browser example.com  # falls back to cookie-paste prompt
 
 # Or pass cookies directly from your browser's DevTools
-beatrix hunt kick.com --cookie "session=abc123" --cookie "XSRF-TOKEN=xyz"
+beatrix hunt example.com --cookie "session=abc123" --cookie "XSRF-TOKEN=xyz"
 ```
 
 #### Session Persistence
@@ -490,16 +490,16 @@ Once authenticated (via auto-login, manual browser, or OTP flow), sessions are s
 beatrix auth sessions
 
 # Clear a specific session
-beatrix auth sessions --clear kick.com
+beatrix auth sessions --clear example.com
 
 # Clear all sessions
 beatrix auth sessions --clear-all
 
 # Force fresh login (ignore saved session)
-beatrix hunt kick.com --fresh-login
+beatrix hunt example.com --fresh-login
 
 # Use manual browser login for this hunt
-beatrix hunt kick.com --manual-login
+beatrix hunt example.com --manual-login
 ```
 
 #### Static Credentials (Manual)

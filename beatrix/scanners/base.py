@@ -6,12 +6,15 @@ Inspired by Sweet Scanner's IScannerCheck interface.
 """
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
+
+logger = logging.getLogger("beatrix.scanners.base")
 
 from beatrix.core.types import (
     Confidence,
@@ -118,6 +121,12 @@ class BaseScanner(ABC):
         # Timeout
         self.timeout = self.config.get("timeout", 10)
 
+        # Auth state tracking — for session expiry detection
+        self._auth_creds = None
+        self._auth_failure_count = 0
+        self._auth_failure_threshold = 3  # consecutive 401/403s before warning
+        self._session_dead_warned = False
+
     async def __aenter__(self):
         """Async context manager entry"""
         self.client = httpx.AsyncClient(
@@ -146,12 +155,20 @@ class BaseScanner(ABC):
         and BEFORE the first scan() call.  Headers are injected once and
         persist for every subsequent request this scanner makes.
 
+        Also stores the auth_creds reference so the scanner can detect
+        session expiry (repeated 401/403) and report it.
+
         Args:
             auth_creds: An AuthCredentials instance (or any object with
                 merged_headers() and cookie_header() methods).
         """
         if not auth_creds or not self.client:
             return
+
+        # Store reference for session monitoring
+        self._auth_creds = auth_creds
+        self._auth_failure_count = 0
+        self._session_dead_warned = False
 
         # Inject headers (Authorization, X-API-Key, etc.)
         if hasattr(auth_creds, 'merged_headers'):
@@ -163,6 +180,18 @@ class BaseScanner(ABC):
             cookie_str = auth_creds.cookie_header()
             if cookie_str:
                 self.client.headers["Cookie"] = cookie_str
+
+    def reapply_auth(self, auth_creds) -> None:
+        """Re-inject fresh auth credentials after re-authentication.
+
+        Called when the kill chain detects session expiry and performs
+        a fresh login mid-scan. Updates the scanner's HTTP client headers
+        with the new session tokens.
+        """
+        self._auth_creds = auth_creds
+        self._auth_failure_count = 0
+        self._session_dead_warned = False
+        self.apply_auth(auth_creds)
 
     # =========================================================================
     # MAIN ENTRY POINTS
@@ -213,7 +242,14 @@ class BaseScanner(ABC):
         url: str,
         **kwargs,
     ) -> httpx.Response:
-        """Make an HTTP request with rate limiting and retry on 429"""
+        """Make an HTTP request with rate limiting, 429 retry, and session
+        expiry detection.
+
+        When auth is configured and the server returns 401/403, tracks
+        consecutive failures. After hitting the threshold, logs a warning
+        that the session may have expired. This allows the kill chain to
+        detect and handle re-authentication between phases.
+        """
         if not self.client:
             raise RuntimeError("Scanner not initialized. Use 'async with' context.")
 
@@ -233,7 +269,36 @@ class BaseScanner(ABC):
                 retry_count += 1
                 continue
 
+            # ── Session expiry detection ──────────────────────────────
+            # When we're running authenticated and get 401, track it.
+            # A single 401 could be expected (e.g., testing auth bypass).
+            # Consecutive 401s across multiple requests = session died.
+            # NOTE: Only 401 (Unauthorized) is tracked, NOT 403 (Forbidden).
+            # 403 often means access denied regardless of auth state
+            # (e.g., .git/, .env, admin panels, security-blocked paths).
+            # Security-probe scanners hammering blocked endpoints would
+            # otherwise generate constant false session-death warnings.
+            if self._auth_creds and response.status_code == 401:
+                self._auth_failure_count += 1
+                if (self._auth_failure_count >= self._auth_failure_threshold
+                        and not self._session_dead_warned):
+                    self._session_dead_warned = True
+                    logger.warning(
+                        f"[{self.name}] Session may have expired — "
+                        f"{self._auth_failure_count} consecutive 401 "
+                        f"responses on {url}"
+                    )
+            elif self._auth_creds and response.status_code < 400:
+                # Successful response resets the failure counter
+                self._auth_failure_count = 0
+
             return response
+
+    @property
+    def session_appears_dead(self) -> bool:
+        """Whether this scanner has detected likely session expiry."""
+        return (self._auth_creds is not None
+                and self._auth_failure_count >= self._auth_failure_threshold)
 
     async def get(self, url: str, **kwargs) -> httpx.Response:
         """GET request"""

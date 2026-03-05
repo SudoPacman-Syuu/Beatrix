@@ -122,7 +122,13 @@ class TargetCrawler:
         """
         from beatrix.core.types import Confidence, Finding, Severity
 
-        result = await self.crawl(context.url)
+        # Pass auth from context.extra so authenticated crawling works
+        # even when invoked through the generic _run_scanner() path.
+        auth = None
+        if hasattr(context, 'extra') and isinstance(context.extra, dict):
+            auth = context.extra.get("auth")
+
+        result = await self.crawl(context.url, auth=auth)
         if result.pages_crawled > 0:
             yield Finding(
                 title=f"Crawl complete: {result.pages_crawled} pages, {len(result.urls)} URLs, {len(result.urls_with_params)} with params",
@@ -214,9 +220,15 @@ class TargetCrawler:
                 resolved_parsed = urlparse(result.resolved_url)
                 result.base_url = f"{resolved_parsed.scheme}://{resolved_parsed.netloc}"
 
-                # Extract cookies
-                for cookie_name, cookie_value in client.cookies.items():
-                    result.cookies[cookie_name] = cookie_value
+                # Extract cookies (handle CookieConflict from duplicate
+                # names across domains, e.g. Cloudflare's __cf_bm)
+                try:
+                    for cookie_name, cookie_value in client.cookies.items():
+                        result.cookies[cookie_name] = cookie_value
+                except Exception:
+                    # CookieConflict: iterate the raw jar instead
+                    for cookie in client.cookies.jar:
+                        result.cookies[cookie.name] = cookie.value
 
                 # Fingerprint technologies
                 self._fingerprint_tech(response, result)

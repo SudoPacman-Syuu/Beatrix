@@ -1231,6 +1231,8 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
                     login_user=login_user,
                     login_pass=login_pass,
                     login_url=login_url,
+                    manual_login=manual_login,
+                    fresh_login=fresh_login,
                 )
                 all_findings.extend(h_findings)
                 if h_id:
@@ -1579,7 +1581,7 @@ def _hunt_single_target(target, preset="standard", ai=False, modules=None,
                         output=None, auth_config=None, cli_cookies=None,
                         cli_headers=None, cli_token=None, auth_user=None,
                         auth_pass=None, login_user=None, login_pass=None,
-                        login_url=None):
+                        login_url=None, manual_login=False, fresh_login=False):
     """
     Run a full hunt on a single target. Used by both single-target and
     multi-target (--file) modes.
@@ -1664,22 +1666,42 @@ def _hunt_single_target(target, preset="standard", ai=False, modules=None,
             login_url=login_url,
         )
 
-        # Auto-login if credentials provided
-        if auth_creds.has_login_creds:
-            # Check for saved session first
+        # ── Manual browser login (for OTP/captcha sites) ──────────────
+        if manual_login:
+            console.print(f"[cyan]🌐 Manual browser login for {target}...[/cyan]")
             try:
-                from beatrix.core.auto_login import load_session
-                from urllib.parse import urlparse as _urlparse
-                _domain = _urlparse(target if "://" in target else f"https://{target}").netloc
-                saved = load_session(_domain)
-                if saved and saved.success:
-                    auth_creds.cookies.update(saved.cookies)
-                    auth_creds.headers.update(saved.headers)
-                    if saved.token:
-                        auth_creds.bearer_token = saved.token
-                    console.print(f"[green]🔐 {saved.message}[/green]")
-            except Exception:
-                pass
+                from beatrix.core.auto_login import browser_interactive_login, save_session
+                login_result = asyncio.run(browser_interactive_login(target))
+                if login_result.success:
+                    auth_creds.cookies.update(login_result.cookies)
+                    auth_creds.headers.update(login_result.headers)
+                    if login_result.token:
+                        auth_creds.bearer_token = login_result.token
+                    console.print(f"[green]🔐 {login_result.message}[/green]")
+                else:
+                    console.print(f"[red]🔐 Manual login failed: {login_result.message}[/red]")
+                    console.print("[yellow]   Continuing scan without authenticated session[/yellow]")
+            except Exception as e:
+                console.print(f"[red]🔐 Manual login error: {e}[/red]")
+                console.print("[yellow]   Continuing scan without authenticated session[/yellow]")
+
+        # Auto-login if credentials provided
+        elif auth_creds.has_login_creds:
+            # Check for saved session first (skip if --fresh-login)
+            if not fresh_login:
+                try:
+                    from beatrix.core.auto_login import load_session
+                    from urllib.parse import urlparse as _urlparse
+                    _domain = _urlparse(target if "://" in target else f"https://{target}").netloc
+                    saved = load_session(_domain)
+                    if saved and saved.success:
+                        auth_creds.cookies.update(saved.cookies)
+                        auth_creds.headers.update(saved.headers)
+                        if saved.token:
+                            auth_creds.bearer_token = saved.token
+                        console.print(f"[green]🔐 {saved.message}[/green]")
+                except Exception:
+                    pass
 
             if not auth_creds.has_auth:
                 console.print(f"[cyan]🔐 Auto-login: logging in as {auth_creds.login_username}...[/cyan]")

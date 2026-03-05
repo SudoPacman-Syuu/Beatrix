@@ -23,5 +23,8 @@ venv/
 .idea/
 .vscode/
 
+# Tests
+tests/
+
 # OS
 .DS_Store

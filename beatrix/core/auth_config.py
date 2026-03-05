@@ -50,10 +50,15 @@ idor:
       Authorization: "Bearer user2-token"
 """
 
+import asyncio
+import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("beatrix.auth_config")
 
 
 @dataclass
@@ -140,6 +145,274 @@ class AuthCredentials:
         if cookie_str:
             flags.extend(["-H", f"Cookie: {cookie_str}"])
         return flags
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session Validator
+#
+# Modeled on Burp Suite's session validation approach:
+# 1. Establish a "session check" URL — a page that behaves differently
+#    when authenticated vs unauthenticated (e.g., /account, /api/me).
+# 2. Capture a "logged-in fingerprint" — response patterns that prove
+#    the session is alive (status code, body keywords, absence of login
+#    redirects).
+# 3. Periodically re-check during the scan.
+# 4. If the session is dead → re-authenticate automatically.
+#
+# The validator is non-blocking and designed to be called between
+# kill chain phases or after a scanner detects repeated 401/403s.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Pages likely to differ between auth'd and unauth'd states
+SESSION_CHECK_PATHS = [
+    "/api/v1/me", "/api/v1/user", "/api/me", "/api/user",
+    "/api/v2/me", "/api/v2/user", "/api/auth/me", "/api/auth/session",
+    "/api/session", "/api/account", "/api/profile",
+    "/me", "/account", "/profile", "/settings", "/dashboard",
+    "/user/settings", "/account/settings", "/my-account",
+]
+
+# Patterns in response body that indicate "logged in"
+LOGGED_IN_PATTERNS = [
+    "logout", "sign out", "sign_out", "signout", "log out", "log_out",
+    "my account", "my-account", "my_account", "dashboard",
+    "welcome back", "settings", "profile", "preferences",
+]
+
+# Patterns that indicate "not logged in" / redirected to login
+LOGGED_OUT_PATTERNS = [
+    "log in", "login", "sign in", "signin", "sign_in",
+    "forgot password", "create account", "register", "sign up",
+    "unauthorized", "session expired", "please authenticate",
+]
+
+
+@dataclass
+class SessionFingerprint:
+    """Captured fingerprint of a valid authenticated session."""
+    check_url: str
+    expected_status: int
+    logged_in_markers: List[str]  # substrings found in body when authenticated
+    logged_out_markers: List[str]  # substrings found in body when NOT authenticated
+    response_size_range: tuple  # (min, max) expected body size
+    captured_at: float = 0.0
+
+    def is_stale(self, max_age_seconds: float = 3600) -> bool:
+        return (time.time() - self.captured_at) > max_age_seconds
+
+
+class SessionValidator:
+    """
+    Validates whether an authenticated session is still alive.
+
+    Usage:
+        validator = SessionValidator(target_url, auth_creds)
+        await validator.calibrate()  # probe once to build fingerprint
+        ...
+        if not await validator.is_session_alive():
+            # re-authenticate
+    """
+
+    def __init__(self, target: str, auth_creds: "AuthCredentials"):
+        self.target = target if "://" in target else f"https://{target}"
+        self.auth_creds = auth_creds
+        self.fingerprint: Optional[SessionFingerprint] = None
+        self._calibrated = False
+        self._consecutive_failures = 0
+        self._last_check_time = 0.0
+        self._check_interval = 120  # seconds between checks (2 min)
+
+    async def calibrate(self) -> bool:
+        """
+        Probe the target to discover a session-check URL and capture a
+        fingerprint of what "authenticated" looks like.
+
+        Returns True if calibration succeeded (found a URL that differs
+        between auth'd and unauth'd responses).
+        """
+        import httpx
+
+        base_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+        }
+
+        auth_headers = {**base_headers, **self.auth_creds.all_headers()}
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=10, follow_redirects=True, verify=False
+            ) as client:
+                for path in SESSION_CHECK_PATHS:
+                    url = self.target.rstrip("/") + path
+                    try:
+                        # Request WITH auth
+                        auth_resp = await client.get(url, headers=auth_headers)
+                        # Request WITHOUT auth (plain)
+                        noauth_resp = await client.get(url, headers=base_headers)
+
+                        # Skip if both return the same thing (not auth-sensitive)
+                        if (auth_resp.status_code == noauth_resp.status_code
+                                and abs(len(auth_resp.text) - len(noauth_resp.text)) < 50):
+                            continue
+
+                        # Skip 404s — not a real endpoint
+                        if auth_resp.status_code == 404:
+                            continue
+
+                        # Good candidate: auth'd response is 200 and unauth'd is
+                        # 401/403 or a redirect to login
+                        auth_ok = auth_resp.status_code in (200, 201)
+                        noauth_blocked = (
+                            noauth_resp.status_code in (401, 403, 302, 303, 307)
+                            or any(p in noauth_resp.text.lower() for p in LOGGED_OUT_PATTERNS[:5])
+                        )
+
+                        if auth_ok and noauth_blocked:
+                            # Build fingerprint
+                            body_lower = auth_resp.text.lower()
+                            markers = [p for p in LOGGED_IN_PATTERNS if p in body_lower]
+                            out_markers = [p for p in LOGGED_OUT_PATTERNS
+                                           if p in noauth_resp.text.lower()]
+
+                            body_len = len(auth_resp.text)
+                            self.fingerprint = SessionFingerprint(
+                                check_url=url,
+                                expected_status=auth_resp.status_code,
+                                logged_in_markers=markers,
+                                logged_out_markers=out_markers,
+                                response_size_range=(
+                                    max(0, body_len - 500),
+                                    body_len + 500,
+                                ),
+                                captured_at=time.time(),
+                            )
+                            self._calibrated = True
+                            logger.info(
+                                f"Session validator calibrated: {url} "
+                                f"(auth={auth_resp.status_code}, "
+                                f"noauth={noauth_resp.status_code}, "
+                                f"markers={len(markers)})"
+                            )
+                            return True
+
+                    except httpx.RequestError:
+                        continue
+
+        except Exception as e:
+            logger.debug(f"Session calibration failed: {e}")
+
+        # Fallback — no perfect candidate found; use the target root with a
+        # simple status-code check (less reliable but still useful)
+        try:
+            async with httpx.AsyncClient(
+                timeout=10, follow_redirects=False, verify=False
+            ) as client:
+                auth_resp = await client.get(self.target, headers=auth_headers)
+                self.fingerprint = SessionFingerprint(
+                    check_url=self.target,
+                    expected_status=auth_resp.status_code,
+                    logged_in_markers=[],
+                    logged_out_markers=[],
+                    response_size_range=(0, len(auth_resp.text) + 2000),
+                    captured_at=time.time(),
+                )
+                self._calibrated = True
+                logger.info(f"Session validator calibrated (fallback): {self.target}")
+                return True
+        except Exception:
+            pass
+
+        logger.warning("Session validator: could not calibrate — no auth-sensitive endpoint found")
+        return False
+
+    async def is_session_alive(self, force: bool = False) -> bool:
+        """
+        Check if the current session is still valid.
+
+        Respects the check interval to avoid hammering the target.
+        Returns True if session appears alive, False if it's dead.
+        """
+        if not self._calibrated or not self.fingerprint:
+            return True  # Can't check → assume alive
+
+        now = time.time()
+        if not force and (now - self._last_check_time) < self._check_interval:
+            return True  # Too soon since last check
+
+        self._last_check_time = now
+
+        import httpx
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            **self.auth_creds.all_headers(),
+        }
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=10, follow_redirects=True, verify=False
+            ) as client:
+                resp = await client.get(self.fingerprint.check_url, headers=headers)
+
+                # Check 1: Status code
+                if resp.status_code in (401, 403):
+                    self._consecutive_failures += 1
+                    logger.warning(
+                        f"Session check: {resp.status_code} on "
+                        f"{self.fingerprint.check_url} "
+                        f"(failure #{self._consecutive_failures})"
+                    )
+                    return False
+
+                # Check 2: Redirected to login page
+                body_lower = resp.text.lower()
+                if any(p in body_lower for p in self.fingerprint.logged_out_markers):
+                    # Also verify NO logged-in markers are present
+                    if not any(p in body_lower for p in self.fingerprint.logged_in_markers):
+                        self._consecutive_failures += 1
+                        logger.warning(
+                            f"Session check: login page detected in response "
+                            f"(failure #{self._consecutive_failures})"
+                        )
+                        return False
+
+                # Check 3: Logged-in markers present (if we have any)
+                if self.fingerprint.logged_in_markers:
+                    marker_hits = sum(1 for p in self.fingerprint.logged_in_markers
+                                      if p in body_lower)
+                    if marker_hits == 0:
+                        self._consecutive_failures += 1
+                        logger.warning(
+                            f"Session check: no logged-in markers found "
+                            f"(failure #{self._consecutive_failures})"
+                        )
+                        # Only declare dead if we had reliable markers
+                        if len(self.fingerprint.logged_in_markers) >= 2:
+                            return False
+
+                # Session looks alive
+                self._consecutive_failures = 0
+                return True
+
+        except Exception as e:
+            logger.debug(f"Session check error: {e}")
+            return True  # Network error → don't declare dead, could be transient
+
+    @property
+    def needs_reauth(self) -> bool:
+        """Whether we should trigger re-authentication based on failure history."""
+        return self._consecutive_failures >= 2
+
+    def reset(self):
+        """Reset failure counters after successful re-authentication."""
+        self._consecutive_failures = 0
+        self._last_check_time = 0.0
 
 
 class AuthConfigLoader:
