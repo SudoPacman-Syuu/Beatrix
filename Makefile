@@ -63,7 +63,7 @@ _sudo-wrapper: ## (internal) Create /usr/local/bin/beatrix wrapper for sudo comp
 	@SITE_PKGS=$$($(PYTHON) -c "import site; print(site.getusersitepackages())"); \
 	PROJECT_DIR=$$(cd "$(CURDIR)" && pwd); \
 	PYBIN=$$(which $(PYTHON)); \
-	WRAPPER='#!/usr/bin/env bash\nexport PYTHONPATH="'"$$PROJECT_DIR"':'"$$SITE_PKGS"'"\nexec '"$$PYBIN"' -W ignore::RuntimeWarning -m beatrix.cli.main "$$@"'; \
+	WRAPPER='#!/usr/bin/env bash\nif [ -n "$$SUDO_USER" ]; then\n    export HOME=$$(getent passwd "$$SUDO_USER" | cut -d: -f6)\nfi\nexport PYTHONPATH="'"$$PROJECT_DIR"':'"$$SITE_PKGS"'"\nexec '"$$PYBIN"' -W ignore::RuntimeWarning -m beatrix.cli.main "$$@"'; \
 	echo "$$WRAPPER" | sudo tee $(BIN_DIR)/beatrix >/dev/null && \
 	sudo chmod +x $(BIN_DIR)/beatrix && \
 	echo "✓ sudo wrapper installed at $(BIN_DIR)/beatrix"

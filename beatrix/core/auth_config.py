@@ -427,7 +427,26 @@ class AuthConfigLoader:
     4. Global config from auth.yaml
     """
 
-    DEFAULT_CONFIG_PATH = Path.home() / ".beatrix" / "auth.yaml"
+    @staticmethod
+    def _user_home() -> Path:
+        """Resolve the real user's home, even under sudo."""
+        import os
+        # If running under sudo, prefer the invoking user's home
+        sudo_home = os.environ.get("SUDO_HOME")
+        if sudo_home:
+            return Path(sudo_home)
+        sudo_user = os.environ.get("SUDO_USER")
+        if sudo_user:
+            try:
+                import pwd
+                return Path(pwd.getpwnam(sudo_user).pw_dir)
+            except (KeyError, ImportError):
+                pass
+        return Path.home()
+
+    @classmethod
+    def _default_config_path(cls) -> Path:
+        return cls._user_home() / ".beatrix" / "auth.yaml"
 
     @classmethod
     def load(
@@ -464,7 +483,7 @@ class AuthConfigLoader:
         creds = AuthCredentials()
 
         # 1. Load from config file (lowest priority)
-        file_path = Path(config_path) if config_path else cls.DEFAULT_CONFIG_PATH
+        file_path = Path(config_path) if config_path else cls._default_config_path()
         if file_path.exists():
             file_creds = cls._load_config_file(file_path, target)
             creds = cls._merge(creds, file_creds)

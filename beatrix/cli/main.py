@@ -3482,7 +3482,8 @@ def auth_show(target):
         if target:
             creds = AuthConfigLoader.load(target=target, config_path=str(config_path))
             console.print(f"\n[bold]Auth for {target}:[/bold]")
-            if creds.has_auth:
+            has_anything = creds.has_auth or creds.has_login_creds or creds.has_idor_accounts
+            if has_anything:
                 if creds.headers:
                     console.print(f"  Headers: {len(creds.headers)}")
                     for k in creds.headers:

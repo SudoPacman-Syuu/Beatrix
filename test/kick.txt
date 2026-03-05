@@ -1,0 +1,249 @@
+
+
+    ____             __       _
+   / __ )___  ____ _/ /______(_)  __
+  / __  / _ \/ __ `/ __/ ___/ / |/_/
+ / /_/ /  __/ /_/ / /_/ /  / />  <
+/_____/\___/\__,_/\__/_/  /_/_/|_|
+
+v1.0.0 — "Revenge is a dish best served with a working PoC"
+The Black Mamba — Bug Bounty Hunting Framework
+
+
+⚔️  Initiating hunt on kick.com
+   Preset: full | AI: enabled
+
+[injection] SecLists manager initialized — dynamic wordlists enabled
+    [SecLists] Fetching: sqli_generic
+    [SecLists] Fetched: sqli_generic (267 payloads)
+    [SecLists] Fetching: sqli_quick
+    [SecLists] Fetched: sqli_quick (77 payloads)
+    [SecLists] Fetching: sqli_auth_bypass_seclists
+    [SecLists] Fetched: sqli_auth_bypass_seclists (96 payloads)
+    [SecLists] Fetching: sqli_polyglots
+    [SecLists] Fetched: sqli_polyglots (3 payloads)
+    [SecLists] Fetching: sqli_mysql_fuzzdb
+    [SecLists] Fetched: sqli_mysql_fuzzdb (6 payloads)
+    [SecLists] Fetching: sqli_mysql_login_bypass
+    [SecLists] Fetched: sqli_mysql_login_bypass (5 payloads)
+    [SecLists] Fetching: sqli_mssql
+    [SecLists] Fetched: sqli_mssql (16 payloads)
+    [SecLists] Fetching: sqli_oracle
+    [SecLists] Fetched: sqli_oracle (54 payloads)
+    [SecLists] Fetching: sqli_nosql
+    [SecLists] Fetched: sqli_nosql (22 payloads)
+    [SecLists] Fetching: sqli_blind
+    [SecLists] Fetched: sqli_blind (41 payloads)
+    [SecLists] Fetching: patt_sqli_auth_bypass
+    [SecLists] Fetched: patt_sqli_auth_bypass (78 payloads)
+    [SecLists] Fetching: patt_sqli_auth_bypass2
+    [SecLists] Fetched: patt_sqli_auth_bypass2 (121 payloads)
+    [SecLists] Fetching: patt_sqli_fuzzdb_mssql_time
+    [SecLists] Fetched: patt_sqli_fuzzdb_mssql_time (40 payloads)
+    [SecLists] Fetching: patt_sqli_fuzzdb_mssql
+    [SecLists] Fetched: patt_sqli_fuzzdb_mssql (16 payloads)
+    [SecLists] Fetching: patt_sqli_fuzzdb_mssql_enum
+    [SecLists] Fetched: patt_sqli_fuzzdb_mssql_enum (11 payloads)
+    [SecLists] Fetching: patt_sqli_fuzzdb_mysql
+    [SecLists] Fetched: patt_sqli_fuzzdb_mysql (6 payloads)
+    [SecLists] Fetching: patt_sqli_fuzzdb_mysql_time
+    [SecLists] Fetched: patt_sqli_fuzzdb_mysql_time (45 payloads)
+    [SecLists] Fetching: patt_sqli_fuzzdb_mysql_read
+    [SecLists] Fetched: patt_sqli_fuzzdb_mysql_read (1 payloads)
+    [SecLists] Fetching: patt_sqli_fuzzdb_oracle
+    [SecLists] Fetched: patt_sqli_fuzzdb_oracle (54 payloads)
+    [SecLists] Fetching: patt_sqli_fuzzdb_postgres
+    [SecLists] Fetched: patt_sqli_fuzzdb_postgres (19 payloads)
+    [SecLists] Fetching: patt_sqli_error_based
+    [SecLists] Fetched: patt_sqli_error_based (154 payloads)
+    [SecLists] Fetching: patt_sqli_fuzz
+    [SecLists] Fetched: patt_sqli_fuzz (12 payloads)
+    [SecLists] Fetching: patt_sqli_time_based
+    [SecLists] Fetched: patt_sqli_time_based (104 payloads)
+    [SecLists] Fetching: patt_sqli_union_select
+    [SecLists] Fetched: patt_sqli_union_select (424 payloads)
+    [SecLists] Fetching: patt_sqli_polyglots
+    [SecLists] Fetched: patt_sqli_polyglots (2 payloads)
+    [SecLists] Category 'sqli': 1415 unique payloads from 25 sources
+[injection] Augmented sqli with 1412 dynamic payloads from SecLists
+    [SecLists] Fetching: xss_brutelogic
+    [SecLists] Fetched: xss_brutelogic (114 payloads)
+    [SecLists] Fetching: xss_portswigger
+    [SecLists] Fetched: xss_portswigger (6047 payloads)
+    [SecLists] Fetching: xss_jhaddix
+    [SecLists] Fetched: xss_jhaddix (110 payloads)
+    [SecLists] Fetching: xss_rsnake
+    [SecLists] Fetched: xss_rsnake (73 payloads)
+    [SecLists] Fetching: xss_with_context
+    [SecLists] Fetched: xss_with_context (1387 payloads)
+    [SecLists] Fetching: xss_somdev
+    [SecLists] Fetched: xss_somdev (22 payloads)
+    [SecLists] Fetching: xss_payloadbox
+    [SecLists] Fetched: xss_payloadbox (2688 payloads)
+    [SecLists] Fetching: xss_ofjaaah
+    [SecLists] Fetched: xss_ofjaaah (2974 payloads)
+    [SecLists] Fetching: xss_polyglots
+    [SecLists] Fetched: xss_polyglots (14 payloads)
+    [SecLists] Fetching: xss_polyglot_0xsobky
+    [SecLists] Fetched: xss_polyglot_0xsobky (1 payloads)
+    [SecLists] Fetching: patt_xss_event_handlers
+    [SecLists] Fetched: patt_xss_event_handlers (105 payloads)
+    [SecLists] Fetching: patt_xss_brutelogic_js
+    [SecLists] Fetched: patt_xss_brutelogic_js (17 payloads)
+    [SecLists] Fetching: patt_xss_brutelogic_strings
+    [SecLists] Fetched: patt_xss_brutelogic_strings (110 payloads)
+    [SecLists] Fetching: patt_xss_intruders
+    [SecLists] Fetched: patt_xss_intruders (180 payloads)
+    [SecLists] Fetching: patt_xss_jhaddix
+    [SecLists] Fetched: patt_xss_jhaddix (110 payloads)
+    [SecLists] Fetching: patt_xss_mario
+    [SecLists] Fetched: patt_xss_mario (272 payloads)
+    [SecLists] Fetching: patt_xss_rsnake
+    [SecLists] Fetched: patt_xss_rsnake (73 payloads)
+    [SecLists] Fetching: patt_xss_detection
+    [SecLists] Fetched: patt_xss_detection (202 payloads)
+    [SecLists] Fetching: patt_xss_polyglots
+    [SecLists] Fetched: patt_xss_polyglots (16 payloads)
+    [SecLists] Fetching: patt_xss_jsonp
+    [SecLists] Fetched: patt_xss_jsonp (46 payloads)
+    [SecLists] Fetching: patt_xss_portswigger_events
+    [SecLists] Fetched: patt_xss_portswigger_events (114 payloads)
+    [SecLists] Fetching: patt_xss_alert
+    [SecLists] Fetched: patt_xss_alert (667 payloads)
+    [SecLists] Fetching: patt_xss_alert_identifiable
+    [SecLists] Fetched: patt_xss_alert_identifiable (667 payloads)
+    [SecLists] Fetching: patt_xss_quick
+    [SecLists] Fetched: patt_xss_quick (39 payloads)
+    [SecLists] Fetching: patt_xss_swf
+    [SecLists] Fetched: patt_xss_swf (22 payloads)
+    [SecLists] Category 'xss': 10297 unique payloads from 25 sources
+[injection] Augmented xss with 10293 dynamic payloads from SecLists
+    [SecLists] Fetching: cmdi_commix
+    [SecLists] Fetched: cmdi_commix (8262 payloads)
+    [SecLists] Fetching: patt_cmdi_unix
+    [SecLists] Fetched: patt_cmdi_unix (83 payloads)
+    [SecLists] Fetching: patt_cmdi_exec
+    [SecLists] Fetched: patt_cmdi_exec (448 payloads)
+    [SecLists] Category 'cmdi': 8776 unique payloads from 3 sources
+[injection] Augmented cmdi with 8770 dynamic payloads from SecLists
+    [SecLists] Fetching: ssti_payloads
+    [SecLists] Fetched: ssti_payloads (33 payloads)
+    [SecLists] Category 'ssti': 55 unique payloads from 1 sources
+[injection] Augmented ssti with 50 dynamic payloads from SecLists
+    [SecLists] Fetching: lfi_jhaddix
+    [SecLists] Fetched: lfi_jhaddix (930 payloads)
+    [SecLists] Fetching: lfi_linux
+    [SecLists] Fetched: lfi_linux (881 payloads)
+    [SecLists] Fetching: lfi_windows
+    [SecLists] Fetched: lfi_windows (236 payloads)
+    [SecLists] Fetching: lfi_linux_packages
+    [SecLists] Fetched: lfi_linux_packages (8315 payloads)
+    [SecLists] Fetching: patt_traversal_deep
+    [SecLists] Fetched: patt_traversal_deep (887 payloads)
+    [SecLists] Fetching: patt_traversal_basic
+    [SecLists] Fetched: patt_traversal_basic (140 payloads)
+    [SecLists] Fetching: patt_traversal_dotdotpwn
+    [SecLists] Fetched: patt_traversal_dotdotpwn (21144 payloads)
+    [SecLists] Fetching: patt_traversal_exotic
+    [SecLists] Fetched: patt_traversal_exotic (887 payloads)
+    [SecLists] Fetching: patt_lfi_bsd
+    [SecLists] Fetched: patt_lfi_bsd (13 payloads)
+    [SecLists] Fetching: patt_lfi_jhaddix
+    [SecLists] Fetched: patt_lfi_jhaddix (879 payloads)
+    [SecLists] Fetching: patt_lfi_fd_check
+    [SecLists] Fetched: patt_lfi_fd_check (39 payloads)
+    [SecLists] Fetching: patt_lfi_windows_check
+    [SecLists] Fetched: patt_lfi_windows_check (69 payloads)
+    [SecLists] Fetching: patt_lfi_linux
+    [SecLists] Fetched: patt_lfi_linux (62 payloads)
+    [SecLists] Fetching: patt_lfi_files_list
+    [SecLists] Fetched: patt_lfi_files_list (911 payloads)
+    [SecLists] Fetching: patt_lfi_files_null
+    [SecLists] Fetched: patt_lfi_files_null (319 payloads)
+    [SecLists] Fetching: patt_lfi_mac
+    [SecLists] Fetched: patt_lfi_mac (8 payloads)
+    [SecLists] Fetching: patt_lfi_traversal
+    [SecLists] Fetched: patt_lfi_traversal (4510 payloads)
+    [SecLists] Fetching: patt_lfi_web
+    [SecLists] Fetched: patt_lfi_web (14 payloads)
+    [SecLists] Fetching: patt_lfi_windows
+    [SecLists] Fetched: patt_lfi_windows (212 payloads)
+    [SecLists] Fetching: patt_lfi_dotslash
+    [SecLists] Fetched: patt_lfi_dotslash (886 payloads)
+    [SecLists] Fetching: patt_lfi_php_filter
+    [SecLists] Fetched: patt_lfi_php_filter (50 payloads)
+    [SecLists] Fetching: patt_lfi_simple
+    [SecLists] Fetched: patt_lfi_simple (10 payloads)
+    [SecLists] Category 'lfi': 35933 unique payloads from 22 sources
+[injection] Augmented path with 35929 dynamic payloads from SecLists
+  ℹ  PoC server started on http://192.168.1.153:41007
+🔍 Reconnaissance — Target discovery, subdomain enum, port scan, 
+service detection
+  ℹ  Running subfinder on kick.com
+[crawler] Fetching https://kick.com
+  ℹ  Subfinder found 34 subdomains
+  🕷️  Crawling target...
+[crawler] Extracted 19 URLs, 69 JS files, 0 forms from initial page
+[crawler] Crawling 19 pages (depth 1)
+[crawler] Crawl complete: 19 pages, 19 URLs, 1 with params, 69 JS files, 0 forms
+  🕷️  Crawl complete — 19 pages, 19 URLs, 1 with params, 69 JS 
+files
+  🔬 Technologies: Cloudflare
+  ℹ  Phase 0: CDN/WAF detection and origin IP discovery for 
+kick.com
+  ℹ  Phase 0: CDN detected — Cloudflare (IPs: 162.159.235.122, 
+172.64.235.133)
+  ℹ    Origin IP: 103.96.20.26 — 80% confidence (MX Record 
+(au-smtp-inbound-2.mimecast.com), unvalidated)
+  ℹ    Origin IP: 103.96.22.26 — 80% confidence (MX Record 
+(au-smtp-inbound-2.mimecast.com), unvalidated)
+  ℹ    Origin IP: 96.43.154.16 — 20% confidence (Subdomain 
+(mail.kick.com), unvalidated)
+  ℹ  Phase 0: Using origin IP 103.96.20.26 (80% confidence, 
+source: MX Record (au-smtp-inbound-2.mimecast.com)) for network 
+scanning instead of CDN
+  ℹ  Network Phase 1a: Full TCP SYN scan on 103.96.20.26 (origin 
+IP) (all 65535 ports)
+[endpoint_prober] Endpoint probing on https://kick.com
+[endpoint_prober] Testing 516 paths
+[js_bundle] JS bundle analysis on https://kick.com
+[headers] Scanning headers on https://kick.com
+[github_recon] Derived GitHub org from target: kick
+[github_recon] Starting GitHub recon on organization: kick
+[nuclei] Nuclei templates not found — downloading...
+  ℹ  Phase 1a: No open ports found on 103.96.20.26 (origin IP)
+  ℹ  Phase 2: No filtered ports — firewall analysis skipped
+  ℹ  Network pipeline complete: 0 services, 0 filtered, fw=n/a, 2
+network findings
+  ℹ  Running whatweb on https://kick.com (tech fingerprinting)
+  ▸ endpoint_prober → https://kick.com
+  ▸ js_analysis → https://kick.com
+  ▸ headers → https://kick.com
+  ▸ github_recon → https://kick.com
+  ▸ nuclei_recon → https://kick.com
+[github_recon] No public repositories found
+    🔵 Missing Security Header: Strict-Transport-Security
+    ⚪ Missing Security Header: X-Content-Type-Options
+    🔵 Missing Security Header: X-Frame-Options
+    ⚪ Missing Security Header: Content-Security-Policy
+    ⚪ Missing Security Header: Referrer-Policy
+    ⚪ Missing Security Header: Permissions-Policy
+    ⚪ Information Disclosure: Server Header
+    🔵 Insecure Cookie: USER_LOCALE
+    🔵 Insecure Cookie: __cf_bm
+    🔵 Insecure Cookie: _cfuvid
+    ⚡ headers found 10 issues
+[endpoint_prober] Detected 3 soft-404 signatures
+[nuclei] Nuclei templates updated
+[nuclei] Cloning fuzzing-templates...
+[nuclei] Cloning cent-nuclei-templates...
+[nuclei] Cloning nuclei-templates-pikpikcu...
+[nuclei] Cloning kenzer-templates...
+[nuclei] Cloned fuzzing-templates
+[nuclei] Cloned nuclei-templates-pikpikcu
+[nuclei] Cloned kenzer-templates
+    ⚪ Live API Endpoints Discovered (2 endpoints)
+    🔵 Auth-Protected Endpoints Found (4 endpoints)
+    ⚡ endpoint_prober found 2 issues
+
+Hunt interrupted. Partial results may be available.
