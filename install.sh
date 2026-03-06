@@ -517,6 +517,21 @@ install_external_tools() {
         )
 
         for tool in nuclei httpx subfinder ffuf katana gospider hakrawler gau dalfox amass; do
+            # httpx: the Python httpx pip package installs a CLI shim that
+            # shadows ProjectDiscovery's Go httpx. Detect this by checking
+            # if the found binary is a compiled Go executable vs a Python script.
+            if [[ "$tool" == "httpx" ]] && command_exists httpx; then
+                if file "$(command -v httpx)" 2>/dev/null | grep -qi "python\|script\|text"; then
+                    info "Found Python httpx shim — installing Go httpx (ProjectDiscovery)..."
+                    if go_install_tool "httpx" "${GO_TOOLS[httpx]}"; then
+                        ((installed++))
+                    else
+                        ((failed++))
+                    fi
+                    continue
+                fi
+            fi
+
             if command_exists "$tool"; then
                 success "$tool (already installed)"
                 ((skipped++))
@@ -530,6 +545,33 @@ install_external_tools() {
         done
 
         _add_to_path "$GOBIN"
+
+        # ── Initialize Go tool configs as current user ────────────
+        # When Beatrix runs via sudo, Go tools (subfinder, amass, nuclei)
+        # create their config dirs in ~/.config/ as root, making them
+        # unreadable on subsequent runs. Pre-create them here as the
+        # current (non-root) user so they already exist with correct
+        # ownership before sudo ever invokes them.
+        echo ""
+        info "Initializing Go tool configurations..."
+        if command_exists subfinder; then
+            subfinder -h &>/dev/null || true
+            success "subfinder config initialized"
+        fi
+        if command_exists amass; then
+            amass -h &>/dev/null || true
+            success "amass config initialized"
+        fi
+
+        # ── Download nuclei templates ─────────────────────────────
+        # Nuclei needs ~18,000 YAML templates to scan. Without them,
+        # the first scan triggers a 500MB+ download mid-hunt.
+        if command_exists nuclei; then
+            info "Downloading nuclei templates (one-time, ~500MB)..."
+            nuclei -update-templates &>/dev/null && \
+                success "nuclei templates downloaded" || \
+                warn "Failed to download nuclei templates (run 'nuclei -update-templates' manually)"
+        fi
     else
         warn "Skipping Go tools (Go not available)"
         ((failed+=10))
