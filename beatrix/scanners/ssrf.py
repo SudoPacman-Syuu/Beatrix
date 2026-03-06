@@ -430,9 +430,24 @@ class SSRFScanner(BaseScanner):
                         "response_code": response.status_code,
                         "response_size": len(response.content),
                     },
+                    request=self.format_http_request(response),
+                    response=self.format_http_response(response),
+                    impact=(
+                        f"An attacker can abuse the '{candidate.param_name}' parameter "
+                        f"to force the server to make requests to internal resources. "
+                        f"The payload '{payload.value}' triggered SSRF indicators: "
+                        f"{', '.join(indicators)}. This can lead to access of cloud "
+                        f"metadata (AWS IAM credentials), internal service enumeration, "
+                        f"or data exfiltration from the internal network."
+                    ),
                     remediation="Implement allowlist of permitted URLs/hosts. "
                                "Block requests to internal IPs and cloud metadata. "
-                               "Use DNS resolution checks to prevent rebinding."
+                               "Use DNS resolution checks to prevent rebinding.",
+                    references=[
+                        "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/",
+                        "https://cwe.mitre.org/data/definitions/918.html",
+                    ],
+                    cwe_id="CWE-918",
                 )
                 finding.reproduction_steps = [
                     f"1. Send request to: {test_url}",

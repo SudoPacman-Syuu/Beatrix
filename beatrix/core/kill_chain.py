@@ -1878,19 +1878,148 @@ class KillChainExecutor:
                             verified = await fuzzer.scan(fuzz_marked, parameter=param_name)
                             for vf in verified:
                                 sev_map = {"critical": _S.CRITICAL, "high": _S.HIGH, "medium": _S.MEDIUM, "low": _S.LOW}
+
+                                # Build detailed description based on vuln category
+                                _cat = vf.category.value
+                                _desc_lines = [
+                                    f"**Verified {_cat}** in parameter `{param_name}` via SmartFuzzer.",
+                                    f"",
+                                    f"**Payload:** `{vf.payload}`",
+                                    f"**Evidence:** {vf.evidence}",
+                                ]
+                                if vf.response_code:
+                                    _desc_lines.append(f"**Response code:** {vf.response_code}")
+                                if vf.response_length:
+                                    _desc_lines.append(f"**Response length:** {vf.response_length} bytes")
+                                if vf.response_time_ms:
+                                    _desc_lines.append(f"**Response time:** {vf.response_time_ms:.0f}ms")
+                                if vf.reflection_context:
+                                    _desc_lines.append(f"**Reflection context:** {vf.reflection_context}")
+                                if vf.alternative_payloads:
+                                    _desc_lines.append(f"**Alternative payloads that also triggered:** {', '.join(vf.alternative_payloads[:5])}")
+                                _description = "\n".join(_desc_lines)
+
+                                # Build impact statement based on category
+                                _impact_map = {
+                                    "xss_reflected": (
+                                        f"Reflected XSS in the `{param_name}` parameter allows an attacker to "
+                                        f"execute arbitrary JavaScript in a victim's browser session. This enables "
+                                        f"session hijacking, credential theft, defacement, and phishing attacks."
+                                    ),
+                                    "sqli_blind_boolean": (
+                                        f"Boolean-based blind SQL injection in the `{param_name}` parameter allows "
+                                        f"an attacker to extract database contents one bit at a time. This can lead "
+                                        f"to full database dump including user credentials and sensitive data."
+                                    ),
+                                    "sqli_blind_time": (
+                                        f"Time-based blind SQL injection in the `{param_name}` parameter allows "
+                                        f"an attacker to extract database contents by measuring response delays. "
+                                        f"Full database compromise including credential extraction is possible."
+                                    ),
+                                    "sqli_error": (
+                                        f"Error-based SQL injection in the `{param_name}` parameter leaks database "
+                                        f"structure and data directly in error messages. Enables complete database access."
+                                    ),
+                                    "sqli_union": (
+                                        f"UNION-based SQL injection in the `{param_name}` parameter allows direct "
+                                        f"extraction of data from arbitrary database tables in a single request."
+                                    ),
+                                    "lfi": (
+                                        f"Local File Inclusion via the `{param_name}` parameter allows reading "
+                                        f"arbitrary server files including /etc/passwd, application source code, "
+                                        f"and configuration files with secrets."
+                                    ),
+                                    "rce": (
+                                        f"Remote Code Execution via the `{param_name}` parameter allows an attacker "
+                                        f"to execute arbitrary system commands on the server, leading to full compromise."
+                                    ),
+                                    "ssti": (
+                                        f"Server-Side Template Injection in `{param_name}` allows code execution "
+                                        f"within the template engine, potentially escalating to full RCE."
+                                    ),
+                                    "ssrf": (
+                                        f"SSRF via `{param_name}` allows the server to make requests to internal "
+                                        f"resources including cloud metadata and internal services."
+                                    ),
+                                    "open_redirect": (
+                                        f"Open redirect via `{param_name}` can be used for phishing attacks "
+                                        f"by redirecting users from a trusted domain to a malicious site."
+                                    ),
+                                }
+                                _impact = _impact_map.get(_cat, (
+                                    f"The `{param_name}` parameter is vulnerable to {_cat}. "
+                                    f"An attacker can exploit this to compromise application security."
+                                ))
+
+                                # Build remediation based on category
+                                _remed_map = {
+                                    "xss_reflected": "Encode all user input in HTML output context. Implement Content-Security-Policy header.",
+                                    "sqli_blind_boolean": "Use parameterized queries/prepared statements. Never concatenate user input into SQL.",
+                                    "sqli_blind_time": "Use parameterized queries/prepared statements. Never concatenate user input into SQL.",
+                                    "sqli_error": "Use parameterized queries/prepared statements. Disable verbose error messages in production.",
+                                    "sqli_union": "Use parameterized queries/prepared statements. Apply least-privilege database permissions.",
+                                    "lfi": "Use an allowlist of permitted file paths. Never pass user input directly to file operations.",
+                                    "rce": "Avoid system command execution with user input. Use safe APIs instead of shell commands.",
+                                    "ssti": "Use a sandboxed template engine. Never pass user input directly into template strings.",
+                                    "ssrf": "Implement URL allowlisting. Block internal/metadata IP ranges.",
+                                    "open_redirect": "Validate redirect targets against an allowlist of trusted domains.",
+                                }
+
+                                # Build reproduction steps
+                                _steps = [
+                                    f"1. Navigate to: {vf.url}",
+                                    f"2. Identify the `{param_name}` parameter in the URL query string",
+                                    f"3. Replace the parameter value with the payload: {vf.payload}",
+                                    f"4. Send the request and observe the response (HTTP {vf.response_code}, {vf.response_length} bytes)",
+                                    f"5. Verify the vulnerability indicator: {vf.evidence}",
+                                ]
+
+                                # Build request/response strings
+                                _req_str = f"GET {vf.url} HTTP/1.1\nHost: {parsed.netloc}\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                                _resp_str = f"HTTP/1.1 {vf.response_code}\nContent-Length: {vf.response_length}"
+                                if vf.reflection_context:
+                                    _resp_str += f"\n\n... {vf.reflection_context} ..."
+
+                                # CWE mapping
+                                _cwe_map = {
+                                    "xss_reflected": "CWE-79",
+                                    "xss_stored": "CWE-79",
+                                    "xss_dom": "CWE-79",
+                                    "sqli_error": "CWE-89",
+                                    "sqli_blind_boolean": "CWE-89",
+                                    "sqli_blind_time": "CWE-89",
+                                    "sqli_union": "CWE-89",
+                                    "lfi": "CWE-22",
+                                    "rfi": "CWE-98",
+                                    "rce": "CWE-78",
+                                    "ssti": "CWE-1336",
+                                    "ssrf": "CWE-918",
+                                    "open_redirect": "CWE-601",
+                                }
+
                                 results.append({"findings": [_F(
                                     severity=sev_map.get(vf.severity, _S.HIGH),
                                     confidence=_C.CONFIRMED if vf.confidence.value == "confirmed" else _C.FIRM,
                                     url=vf.url,
                                     title=f"SmartFuzzer: {vf.category.value} in {param_name}",
-                                    description=f"Verified {vf.category.value} via SmartFuzzer.\nEvidence: {vf.evidence}",
+                                    description=_description,
                                     evidence={"payload": vf.payload, "evidence": vf.evidence,
+                                              "response_code": vf.response_code,
+                                              "response_length": vf.response_length,
+                                              "response_time_ms": vf.response_time_ms,
+                                              "reflection_context": vf.reflection_context,
                                               "alternatives": vf.alternative_payloads[:3]},
+                                    request=_req_str,
+                                    response=_resp_str,
+                                    impact=_impact,
+                                    remediation=_remed_map.get(_cat, "Validate and sanitize all user input."),
+                                    reproduction_steps=_steps,
+                                    references=[f"https://cwe.mitre.org/data/definitions/{_cwe_map.get(_cat, 'CWE-20').split('-')[1]}.html"],
                                     parameter=param_name,
                                     payload=vf.payload,
                                     poc_curl=vf.poc_curl,
                                     poc_python=vf.poc_python,
-                                    cwe_id=vf.cwe,
+                                    cwe_id=_cwe_map.get(_cat, vf.cwe),
                                     scanner_module="smart_fuzzer",
                                 )], "assets": [], "context": {}, "modules": ["smart_fuzzer"], "requests": 0})
                                 self._emit("info", message=f"SmartFuzzer CONFIRMED {vf.category.value} in {param_name}")

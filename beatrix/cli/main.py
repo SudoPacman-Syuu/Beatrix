@@ -4347,14 +4347,36 @@ def validate_findings(ctx, findings_file):
     needs_work = 0
 
     for rf in raw_findings:
+        # Map confidence string to enum, default tentative
+        _conf_str = rf.get("confidence", "tentative")
+        try:
+            from beatrix.core.types import Confidence as _Conf
+            _confidence = _Conf(_conf_str)
+        except (ValueError, KeyError):
+            _confidence = _Conf.TENTATIVE
+
         finding = Finding(
             title=rf.get("title", ""),
             description=rf.get("description", ""),
             severity=Severity(rf.get("severity", "info")),
+            confidence=_confidence,
             url=rf.get("url", ""),
+            parameter=rf.get("parameter"),
+            payload=rf.get("payload"),
             evidence=rf.get("evidence"),
+            request=rf.get("request"),
+            response=rf.get("response"),
+            impact=rf.get("impact", ""),
+            remediation=rf.get("remediation", ""),
+            references=rf.get("references") or [],
+            reproduction_steps=rf.get("reproduction_steps") or [],
+            poc_curl=rf.get("poc_curl"),
+            poc_python=rf.get("poc_python"),
             cwe_id=rf.get("cwe_id"),
-            owasp_category=rf.get("owasp"),
+            owasp_category=rf.get("owasp_category") or rf.get("owasp"),
+            mitre_technique=rf.get("mitre_technique"),
+            scanner_module=rf.get("scanner_module", ""),
+            validated=rf.get("validated", False),
         )
 
         impact = validator.validate(finding, None)

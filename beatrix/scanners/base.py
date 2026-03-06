@@ -325,6 +325,89 @@ class BaseScanner(ABC):
         return await self.request("HEAD", url, **kwargs)
 
     # =========================================================================
+    # HTTP FORMATTING — convert httpx objects to readable HTTP text
+    # =========================================================================
+
+    @staticmethod
+    def format_http_request(resp: httpx.Response, *, max_body: int = 2000) -> str:
+        """Format the request side of an httpx.Response as readable HTTP text.
+
+        Args:
+            resp: httpx.Response whose `.request` attribute is used.
+            max_body: Maximum body bytes to include (default 2000).
+
+        Returns:
+            Human-readable HTTP request string like::
+
+                GET /path?q=1 HTTP/1.1
+                Host: example.com
+                User-Agent: ...
+
+                <body if present>
+        """
+        req = resp.request
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(str(req.url))
+            path = parsed.path or "/"
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+        except Exception:
+            path = str(req.url)
+
+        lines = [f"{req.method} {path} HTTP/1.1"]
+        for name, value in req.headers.items():
+            lines.append(f"{name}: {value}")
+        header_block = "\n".join(lines)
+
+        body = ""
+        if req.content:
+            try:
+                body_text = req.content.decode("utf-8", errors="replace")
+            except Exception:
+                body_text = repr(req.content[:max_body])
+            if len(body_text) > max_body:
+                body_text = body_text[:max_body] + f"\n... ({len(body_text)} bytes total)"
+            body = f"\n\n{body_text}"
+
+        return header_block + body
+
+    @staticmethod
+    def format_http_response(resp: httpx.Response, *, max_body: int = 2000) -> str:
+        """Format an httpx.Response as readable HTTP text.
+
+        Args:
+            resp: httpx.Response to format.
+            max_body: Maximum body bytes to include (default 2000).
+
+        Returns:
+            Human-readable HTTP response string like::
+
+                HTTP/1.1 200 OK
+                Content-Type: application/json
+                ...
+
+                {"key": "value", ...}
+        """
+        reason = resp.reason_phrase or ""
+        lines = [f"HTTP/1.1 {resp.status_code} {reason}".rstrip()]
+        for name, value in resp.headers.items():
+            lines.append(f"{name}: {value}")
+        header_block = "\n".join(lines)
+
+        body = ""
+        try:
+            body_text = resp.text
+        except Exception:
+            body_text = repr(resp.content[:max_body])
+        if body_text:
+            if len(body_text) > max_body:
+                body_text = body_text[:max_body] + f"\n... ({len(body_text)} bytes total)"
+            body = f"\n\n{body_text}"
+
+        return header_block + body
+
+    # =========================================================================
     # FINDING HELPERS
     # =========================================================================
 

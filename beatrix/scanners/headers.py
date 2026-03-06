@@ -107,6 +107,10 @@ class HeaderSecurityScanner(BaseScanner):
             response = await self.get(context.url)
             headers = {k.lower(): v for k, v in response.headers.items()}
 
+            # Format full request/response for evidence
+            _full_request = self.format_http_request(response)
+            _full_response = self.format_http_response(response, max_body=500)
+
             # Check for missing security headers
             for header, info in self.REQUIRED_HEADERS.items():
                 if header not in headers:
@@ -121,11 +125,26 @@ class HeaderSecurityScanner(BaseScanner):
                         severity=info["severity"],
                         confidence=Confidence.CERTAIN,
                         url=context.url,
-                        description=info["description"],
-                        evidence=f"Header '{header}' not found in response",
-                        request=f"GET {context.url}",
-                        response=f"HTTP {response.status_code}",
+                        description=(
+                            f"The response from {context.url} is missing the `{header}` "
+                            f"security header. {info['description']}\n\n"
+                            f"All response headers present: {', '.join(sorted(headers.keys()))}"
+                        ),
+                        evidence=f"Header '{header}' not found in response headers",
+                        request=_full_request,
+                        response=_full_response,
+                        impact=info.get("impact", (
+                            f"Without the {header} header, the application is missing "
+                            f"a defense-in-depth security control that protects against "
+                            f"common web attacks."
+                        )),
                         remediation=info["remediation"],
+                        reproduction_steps=[
+                            f"1. Send a GET request to {context.url}",
+                            f"2. Inspect the response headers",
+                            f"3. Verify that the `{header}` header is absent",
+                            f"4. Run: curl -sSk -I {context.url} | grep -i '{header}'",
+                        ],
                         references=[f"https://cwe.mitre.org/data/definitions/{info['cwe'].split('-')[1]}.html"],
                         cwe_id=info["cwe"],
                         parameter=header,
@@ -141,11 +160,27 @@ class HeaderSecurityScanner(BaseScanner):
                         severity=Severity.INFO,
                         confidence=Confidence.CERTAIN,
                         url=context.url,
-                        description=f"Server exposes '{header}' header which reveals technology stack information",
+                        description=(
+                            f"The server at {context.url} exposes the `{header}` header "
+                            f"with value `{value}`. This reveals technology stack information "
+                            f"that an attacker can use to target known vulnerabilities in "
+                            f"specific software versions."
+                        ),
                         evidence=f"{header}: {value}",
-                        request=f"GET {context.url}",
-                        response=f"HTTP {response.status_code}\n{header}: {value}",
-                        remediation=f"Remove or obfuscate the {header} header",
+                        request=_full_request,
+                        response=_full_response,
+                        impact=(
+                            f"The `{header}: {value}` header discloses server technology. "
+                            f"An attacker can use this to find CVEs specific to this "
+                            f"software version and craft targeted exploits."
+                        ),
+                        remediation=f"Remove or obfuscate the {header} header in the web server configuration.",
+                        reproduction_steps=[
+                            f"1. Send a GET request to {context.url}",
+                            f"2. Inspect the response headers",
+                            f"3. Observe the `{header}: {value}` header revealing server info",
+                            f"4. Run: curl -sSk -I {context.url} | grep -i '{header}'",
+                        ],
                         cwe_id="CWE-200",
                         parameter=header,
                         poc_curl=f"curl -sSk -I {context.url} | grep -i '{header}'",
