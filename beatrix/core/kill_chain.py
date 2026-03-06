@@ -74,16 +74,18 @@ class KillChainPhase(Enum):
         """Default modules for this phase — maps to actual engine module keys."""
         return {
             KillChainPhase.RECONNAISSANCE: [
-                "crawl", "endpoint_prober", "js_analysis", "headers", "github_recon"
+                "crawl", "endpoint_prober", "js_analysis", "headers", "github_recon",
+                "param_miner"
             ],
             KillChainPhase.WEAPONIZATION: [
-                "takeover", "error_disclosure", "cache_poisoning", "prototype_pollution"
+                "takeover", "error_disclosure", "cache_poisoning", "prototype_pollution",
+                "sequencer"
             ],
             KillChainPhase.DELIVERY: [
                 "cors", "redirect", "oauth_redirect", "http_smuggling", "websocket"
             ],
             KillChainPhase.EXPLOITATION: [
-                "injection", "ssrf", "idor", "bac", "auth", "ssti", "xxe",
+                "backslash", "injection", "ssrf", "idor", "bac", "auth", "ssti", "xxe",
                 "deserialization", "graphql", "mass_assignment", "business_logic",
                 "redos", "payment", "nuclei"
             ],

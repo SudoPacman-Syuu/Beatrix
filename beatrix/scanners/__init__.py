@@ -52,6 +52,11 @@ from .takeover import SubdomainTakeoverScanner
 from .websocket import WebSocketScanner
 from .xxe import XXEScanner
 
+# === Burp-inspired scanner modules ===
+from .backslash_scanner import BackslashPoweredScanner
+from .param_miner import ParamMiner
+from .sequencer import SequencerScanner
+
 # === Extended modules (not BaseScanner subclasses — imported on demand) ===
 # from .credential_validator import CredentialValidator  # Leaked cred validation
 # from .mobile_interceptor import MobileInterceptor     # Android traffic capture
@@ -118,4 +123,8 @@ __all__ = [
     "GraphQLScanner",
     # CDN Bypass
     "OriginIPDiscovery",
+    # Burp-inspired
+    "BackslashPoweredScanner",
+    "ParamMiner",
+    "SequencerScanner",
 ]

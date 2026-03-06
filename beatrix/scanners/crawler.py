@@ -13,16 +13,20 @@ What this does:
 5. Follow same-origin links (depth-limited)
 6. Build a map of: URLs, parameters, forms, JS files, technologies
 7. Feed everything into ScanContext for downstream scanners
+8. Run registered passive scan checks on every fetched response
 """
 
 import asyncio
 import hashlib
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Dict, List, Optional, Set
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
+
+logger = logging.getLogger("beatrix.scanners.crawler")
 
 # Browser-like User-Agent — critical for SPAs that serve different content to bots
 USER_AGENT = (
@@ -105,6 +109,52 @@ class TargetCrawler:
         self._visited: Set[str] = set()
         self._log_callback = None
 
+        # Passive scan pipeline — when set, every fetched response is
+        # passed through registered PassiveScanChecks in real time.
+        self._scan_check_registry = None
+        self._passive_findings: List = []
+
+    def set_scan_check_registry(self, registry):
+        """
+        Attach a ScanCheckRegistry so passive checks run during crawling.
+
+        Usage (in kill_chain.py or engine.py):
+            from beatrix.core.scan_check_types import ScanCheckRegistry
+            registry = ScanCheckRegistry()
+            registry.register_passive(HeaderPassiveCheck())
+            crawler.set_scan_check_registry(registry)
+        """
+        self._scan_check_registry = registry
+
+    async def _run_passive_checks(
+        self, url: str, status_code: int, headers: Dict[str, str], body: str
+    ) -> None:
+        """
+        Run all registered passive scan checks against a fetched response.
+        Findings are accumulated in self._passive_findings.
+        """
+        if not self._scan_check_registry:
+            return
+
+        checks = self._scan_check_registry.get_passive_checks()
+        for rc in checks:
+            try:
+                findings = await rc.check.do_passive_check(
+                    url=url,
+                    status_code=status_code,
+                    headers=headers,
+                    body=body,
+                )
+                if findings:
+                    self._passive_findings.extend(findings)
+                    rc.findings_produced += len(findings)
+            except Exception as e:
+                rc.errors += 1
+                logger.debug(
+                    f"Passive check '{rc.name}' failed on {url}: "
+                    f"{type(e).__name__}: {e}"
+                )
+
     async def __aenter__(self):
         """Async context manager entry (no-op — crawler manages its own httpx client)."""
         return self
@@ -118,7 +168,8 @@ class TargetCrawler:
         Adapter so TargetCrawler works through the generic scanner path.
 
         Runs crawl() under the hood and yields INFO-level findings
-        summarising the discovered attack surface.
+        summarising the discovered attack surface, plus any findings
+        from passive scan checks run during the crawl.
         """
         from beatrix.core.types import Confidence, Finding, Severity
 
@@ -127,6 +178,9 @@ class TargetCrawler:
         auth = None
         if hasattr(context, 'extra') and isinstance(context.extra, dict):
             auth = context.extra.get("auth")
+
+        # Reset passive findings for this scan
+        self._passive_findings = []
 
         result = await self.crawl(context.url, auth=auth)
         if result.pages_crawled > 0:
@@ -152,6 +206,10 @@ class TargetCrawler:
                 },
                 scanner_module="crawl",
             )
+
+        # Yield any findings from passive scan checks run during crawling
+        for finding in self._passive_findings:
+            yield finding
 
     def set_log_callback(self, callback):
         """Set a callback for progress logging"""
@@ -233,6 +291,14 @@ class TargetCrawler:
                 # Fingerprint technologies
                 self._fingerprint_tech(response, result)
 
+                # Run passive scan checks on the initial response
+                await self._run_passive_checks(
+                    url=result.resolved_url or target,
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    body=response.text or "",
+                )
+
                 # Enrich with external tools (whatweb, webanalyze) — non-blocking
                 try:
                     await self._enrich_tech_fingerprint(result.resolved_url or target, result)
@@ -311,6 +377,14 @@ class TargetCrawler:
                         continue
 
                     self._extract_from_html(resp.text, str(resp.url), result)
+
+                    # Run passive scan checks on each crawled page
+                    await self._run_passive_checks(
+                        url=str(resp.url),
+                        status_code=resp.status_code,
+                        headers=dict(resp.headers),
+                        body=resp.text or "",
+                    )
 
             except Exception:
                 continue

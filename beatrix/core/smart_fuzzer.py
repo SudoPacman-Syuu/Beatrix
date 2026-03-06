@@ -70,6 +70,25 @@ class Confidence(Enum):
     LOW = "low"              # Weak evidence, needs manual review
 
 
+class AttackMode(Enum):
+    """
+    Burp Intruder-style attack modes for multi-position fuzzing.
+
+    SNIPER:        One position at a time, same wordlist across all positions.
+                   N_positions × N_payloads requests.
+    BATTERING_RAM: Same payload in ALL positions simultaneously.
+                   N_payloads requests.
+    PITCHFORK:     Each position gets its own wordlist, iterated in lockstep.
+                   min(len(list_1), len(list_2), ...) requests.
+    CLUSTER_BOMB:  All combinations of all wordlists across all positions.
+                   product(len(list_1) × len(list_2) × ...) requests.
+    """
+    SNIPER = "sniper"
+    BATTERING_RAM = "battering_ram"
+    PITCHFORK = "pitchfork"
+    CLUSTER_BOMB = "cluster_bomb"
+
+
 class VulnCategory(Enum):
     """Vulnerability categories"""
     XSS_REFLECTED = "xss_reflected"
@@ -729,6 +748,183 @@ if "{finding.payload[:20]}" in response.text:
 
         return "unknown"
 
+    # =========================================================================
+    # INTRUDER ATTACK MODES (Burp-inspired multi-position fuzzing)
+    # =========================================================================
+
+    async def intruder_scan(
+        self,
+        url_template: str,
+        wordlists: Dict[str, List[str]],
+        attack_mode: AttackMode = AttackMode.SNIPER,
+        method: str = "GET",
+        body_template: str = None,
+        headers: Dict[str, str] = None,
+        match_status: List[int] = None,
+        filter_status: List[int] = None,
+        match_size: int = None,
+        filter_size: int = None,
+    ) -> List[Dict]:
+        """
+        Multi-position fuzzing with Burp Intruder-style attack modes.
+
+        Positions are marked with §name§ in url_template and body_template.
+        Each name maps to a key in the wordlists dict.
+
+        Args:
+            url_template: URL with §markers§ (e.g., "/api/§endpoint§?id=§id§")
+            wordlists: {"marker_name": ["val1", "val2", ...]}
+            attack_mode: SNIPER, BATTERING_RAM, PITCHFORK, or CLUSTER_BOMB
+            method: HTTP method
+            body_template: Body with §markers§ (for POST/PUT/PATCH)
+            headers: Additional headers
+            match_status: Only return results matching these status codes
+            filter_status: Filter OUT results with these status codes
+            match_size: Only return results within ±10% of this size
+            filter_size: Filter OUT results within ±10% of this size
+
+        Returns:
+            List of result dicts with payload, status, length, time info
+        """
+        import itertools
+
+        # Find all position markers
+        positions = re.findall(r'§(\w+)§', url_template + (body_template or ""))
+        positions = list(dict.fromkeys(positions))  # Dedupe, preserve order
+
+        if not positions:
+            raise ValueError(
+                "No position markers found. Use §name§ syntax "
+                "(e.g., /api/§endpoint§?id=§id§)"
+            )
+
+        # Validate wordlists exist for all positions
+        for pos in positions:
+            if pos not in wordlists:
+                raise ValueError(
+                    f"No wordlist provided for position '§{pos}§'. "
+                    f"Available: {list(wordlists.keys())}"
+                )
+
+        # Generate payload combinations based on attack mode
+        combos = self._generate_combinations(
+            positions, wordlists, attack_mode
+        )
+
+        results = []
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.timeout),
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        ) as session:
+            # Get baseline (all markers replaced with canary)
+            baseline_url = url_template
+            for pos in positions:
+                baseline_url = baseline_url.replace(f"§{pos}§", "BASELINE_CANARY")
+            try:
+                start = time.time()
+                async with session.request(method, baseline_url, headers=headers) as resp:
+                    baseline_body = await resp.text()
+                    baseline = {
+                        "status": resp.status,
+                        "length": len(baseline_body),
+                        "time": (time.time() - start) * 1000,
+                    }
+            except Exception:
+                baseline = {"status": 0, "length": 0, "time": 0}
+
+            # Execute each combination
+            for combo in combos:
+                test_url = url_template
+                test_body = body_template
+                for pos_name, value in combo.items():
+                    test_url = test_url.replace(f"§{pos_name}§", str(value))
+                    if test_body:
+                        test_body = test_body.replace(f"§{pos_name}§", str(value))
+
+                try:
+                    start = time.time()
+                    kwargs = {"headers": headers}
+                    if test_body and method.upper() in ("POST", "PUT", "PATCH"):
+                        kwargs["data"] = test_body
+                    async with session.request(method, test_url, **kwargs) as resp:
+                        body = await resp.text()
+                        elapsed = (time.time() - start) * 1000
+
+                        result = {
+                            "payloads": combo,
+                            "url": test_url,
+                            "status": resp.status,
+                            "length": len(body),
+                            "time_ms": elapsed,
+                            "diff_status": resp.status != baseline["status"],
+                            "diff_length": abs(len(body) - baseline["length"]),
+                        }
+
+                        # Apply filters
+                        if match_status and resp.status not in match_status:
+                            continue
+                        if filter_status and resp.status in filter_status:
+                            continue
+                        if match_size and abs(len(body) - match_size) > match_size * 0.1:
+                            continue
+                        if filter_size and abs(len(body) - filter_size) <= filter_size * 0.1:
+                            continue
+
+                        results.append(result)
+
+                except Exception:
+                    continue
+
+                await asyncio.sleep(0.01)  # Rate limit
+
+        return results
+
+    @staticmethod
+    def _generate_combinations(
+        positions: List[str],
+        wordlists: Dict[str, List[str]],
+        attack_mode: AttackMode,
+    ) -> List[Dict[str, str]]:
+        """Generate payload combinations for the given attack mode."""
+        import itertools
+
+        if attack_mode == AttackMode.SNIPER:
+            # One position at a time, all others get baseline value
+            combos = []
+            for active_pos in positions:
+                for payload in wordlists[active_pos]:
+                    combo = {p: wordlists[p][0] if wordlists[p] else "" for p in positions}
+                    combo[active_pos] = payload
+                    combos.append(combo)
+            return combos
+
+        elif attack_mode == AttackMode.BATTERING_RAM:
+            # Same payload in ALL positions — use first wordlist's values
+            primary = wordlists[positions[0]]
+            return [
+                {p: payload for p in positions}
+                for payload in primary
+            ]
+
+        elif attack_mode == AttackMode.PITCHFORK:
+            # Lockstep iteration across wordlists
+            lists = [wordlists[p] for p in positions]
+            min_len = min(len(l) for l in lists)
+            return [
+                {positions[i]: lists[i][idx] for i in range(len(positions))}
+                for idx in range(min_len)
+            ]
+
+        elif attack_mode == AttackMode.CLUSTER_BOMB:
+            # All combinations (cartesian product)
+            lists = [wordlists[p] for p in positions]
+            return [
+                {positions[i]: val for i, val in enumerate(combo)}
+                for combo in itertools.product(*lists)
+            ]
+
+        return []
+
     def print_summary(self):
         """Print scan summary"""
         print(f"\n{'='*60}")
@@ -785,6 +981,7 @@ __all__ = [
     'VerifiedFinding',
     'Confidence',
     'VulnCategory',
+    'AttackMode',
     'smart_scan',
     'smart_scan_sync',
 ]

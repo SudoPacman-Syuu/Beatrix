@@ -100,6 +100,7 @@ class BeatrixEngine:
         from beatrix.scanners import (
             AuthScanner,
             BACScanner,
+            BackslashPoweredScanner,
             BusinessLogicScanner,
             CachePoisoningScanner,
             # === Core scanners (original 12) ===
@@ -119,9 +120,11 @@ class BeatrixEngine:
             NucleiScanner,
             OAuthRedirectScanner,
             OpenRedirectScanner,
+            ParamMiner,
             PaymentScanner,
             PrototypePollutionScanner,
             ReDoSScanner,
+            SequencerScanner,
             SSRFScanner,
             # === Expanded attack surface (15 new BaseScanner modules) ===
             SSTIScanner,
@@ -143,12 +146,14 @@ class BeatrixEngine:
             "js_analysis": JSBundleAnalyzer(scanner_config),
             "headers": HeaderSecurityScanner(scanner_config),
             "github_recon": GitHubRecon(scanner_config),
+            "param_miner": ParamMiner(scanner_config),
 
             # ── Phase 2: Weaponization ────────────────────────────────────────
             "takeover": SubdomainTakeoverScanner(scanner_config),
             "error_disclosure": ErrorDisclosureScanner(scanner_config),
             "cache_poisoning": CachePoisoningScanner(scanner_config),
             "prototype_pollution": PrototypePollutionScanner(scanner_config),
+            "sequencer": SequencerScanner(scanner_config),
 
             # ── Phase 3: Delivery ─────────────────────────────────────────────
             "cors": CORSScanner(scanner_config),
@@ -158,6 +163,7 @@ class BeatrixEngine:
             "websocket": WebSocketScanner(scanner_config),
 
             # ── Phase 4: Exploitation ─────────────────────────────────────────
+            "backslash": BackslashPoweredScanner(scanner_config),
             "injection": InjectionScanner(scanner_config),
             "ssrf": SSRFScanner(scanner_config),
             "idor": IDORScanner(config=scanner_config),
