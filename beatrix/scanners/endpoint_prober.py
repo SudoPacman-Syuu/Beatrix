@@ -278,6 +278,7 @@ class EndpointProber(BaseScanner):
             )
 
         # --- Infrastructure endpoints that shouldn't be public ---
+        reported_infra_paths = set()
         for result in alive:
             path = urlparse(result.url).path
             if any(p in path for p in [
@@ -305,15 +306,30 @@ class EndpointProber(BaseScanner):
                     remediation="Restrict access to infrastructure endpoints via firewall rules or authentication.",
                     references=["https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/"],
                 )
+                reported_infra_paths.add(path)
 
         # --- Swagger/OpenAPI docs ---
         for result in alive:
             path = urlparse(result.url).path
+            # Only flag if path matches AND we already reported it as infra
+            # (avoid double-reporting swagger as both infra + api-docs)
             if any(p in path for p in ['/swagger', '/openapi', '/api-docs']):
+                # Content validation: don't report if body is just an SPA shell
+                body_lower = result.body_preview.lower()
+                has_api_content = any(marker in body_lower for marker in [
+                    '"swagger"', '"openapi"', '"paths"', '"info"',
+                    'swagger-ui', 'redoc', 'api documentation',
+                    'application/json',
+                ])
+                if not has_api_content:
+                    continue  # SPA catch-all, not real API docs
+                # Skip if already reported as infrastructure endpoint
+                if path in reported_infra_paths:
+                    continue
                 yield self.create_finding(
                     title=f"API Documentation Publicly Accessible: {path}",
                     severity=Severity.LOW,
-                    confidence=Confidence.CERTAIN,
+                    confidence=Confidence.FIRM,
                     url=result.url,
                     description=(
                         f"API documentation at `{path}` is publicly accessible. "
@@ -426,7 +442,7 @@ class EndpointProber(BaseScanner):
                 url=url,
                 status=response.status_code,
                 content_type=response.headers.get("content-type", ""),
-                body_length=len(response.content),
+                body_length=len(full_text),  # Use text length (chars) to match soft-404 sigs
                 body_preview=full_text[:2000],
                 headers=dict(response.headers),
                 response_time_ms=elapsed,

@@ -325,6 +325,31 @@ class BaseScanner(ABC):
         return await self.request("HEAD", url, **kwargs)
 
     # =========================================================================
+    # CDN / WAF CHALLENGE DETECTION
+    # =========================================================================
+
+    # Markers that indicate response is from a CDN/WAF challenge, not the real app
+    _CDN_CHALLENGE_MARKERS = (
+        "<title>Just a moment...</title>",       # Cloudflare JS challenge
+        "<title>Attention Required!</title>",     # Cloudflare block page
+        "<title>Access denied</title>",           # Cloudflare/Akamai block
+        "cf-browser-verification",               # Cloudflare verification div
+        "cf_chl_opt",                            # Cloudflare challenge options JS
+        "challenges.cloudflare.com",             # Cloudflare challenge iframe
+        "cdn-cgi/challenge-platform",            # Cloudflare challenge platform
+        "Pardon Our Interruption",               # Akamai bot manager
+    )
+
+    @staticmethod
+    def is_cdn_challenge(body: str) -> bool:
+        """Return True if the response body is a CDN/WAF challenge page."""
+        body_lower = body[:5000].lower()  # Only check the head — saves time
+        for marker in BaseScanner._CDN_CHALLENGE_MARKERS:
+            if marker.lower() in body_lower:
+                return True
+        return False
+
+    # =========================================================================
     # HTTP FORMATTING — convert httpx objects to readable HTTP text
     # =========================================================================
 

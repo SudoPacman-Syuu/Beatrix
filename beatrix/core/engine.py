@@ -463,7 +463,6 @@ class BeatrixEngine:
 
                         # Adjust severity if AI disagrees (only downgrade, never upgrade)
                         if sev_adj and sev_adj != "null":
-                            from beatrix.core.types import Severity
                             sev_map = {
                                 "critical": Severity.CRITICAL,
                                 "high": Severity.HIGH,

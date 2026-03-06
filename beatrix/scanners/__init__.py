@@ -66,10 +66,6 @@ try:
     from .origin_ip_discovery import OriginIPDiscovery  # WAF bypass via origin IP
 except ImportError:
     OriginIPDiscovery = None  # aiohttp missing — kill_chain.py handles gracefully
-# from .polyglot_generator import PolyglotGenerator   # XSS polyglot payloads
-# from .css_exfiltrator import CSSExfiltrator     # CSS injection + exfil
-# from .idor_auth import AuthenticatedIDORScanner # Multi-role IDOR testing (AI)
-# from .jwt_analyzer import JWTAnalyzer           # JWT deep analysis (ReconX)
 
 __all__ = [
     # Base

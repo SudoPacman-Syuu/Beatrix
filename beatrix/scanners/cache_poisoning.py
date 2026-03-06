@@ -364,6 +364,10 @@ class CachePoisoningScanner(BaseScanner):
             r'href="[^"]*' + re.escape(canary),
             r'action="[^"]*' + re.escape(canary),
             r'btrxcb=' + re.escape(canary),  # Cache buster param echo
+            # Next.js RSC payload — serialized URL in __next_f.push() hydration data
+            r'__next_f\.push\([^)]*' + re.escape(canary),
+            # Generic SSR JSON context echoing URL params (e.g. "c":["","?param=..."])
+            r'"\?[^"]*' + re.escape(canary),
         ]
         for pat in url_echo_patterns:
             if re.search(pat, context_str, re.IGNORECASE):

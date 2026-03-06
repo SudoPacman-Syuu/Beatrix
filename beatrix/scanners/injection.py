@@ -73,8 +73,15 @@ class InjectionScanner(BaseScanner):
         super().__init__(config)
         self.insertion_detector = InsertionPointDetector(config)
         self._seclists = None
-        self._init_seclists()
-        self.payloads = self._load_payloads()
+        self._payloads = None  # Lazy-loaded on first scan
+
+    @property
+    def payloads(self) -> Dict[str, List[Payload]]:
+        """Lazy-load payloads + SecLists on first access."""
+        if self._payloads is None:
+            self._init_seclists()
+            self._payloads = self._load_payloads()
+        return self._payloads
 
     def _init_seclists(self):
         """Initialize SecLists manager for dynamic wordlist fetching."""

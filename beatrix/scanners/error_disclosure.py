@@ -121,7 +121,7 @@ class ErrorDisclosureScanner(BaseScanner):
         (r'relation\s+"(\w+)"\s+does not exist', "PostgreSQL table name leak", Severity.MEDIUM),
         (r'column\s+"(\w+)"\s+does not exist', "PostgreSQL column name leak", Severity.MEDIUM),
         (r'PostgreSQL.*ERROR', "PostgreSQL error", Severity.MEDIUM),
-        (r'pg_\w+', "PostgreSQL internal reference", Severity.LOW),
+        (r'pg_(?:catalog|class|tables|stat|attribute|namespace|index|constraint|type|proc|trigger|roles|user|database|settings|views|indexes|sequences|locks|replication)', "PostgreSQL system catalog reference", Severity.LOW),
         (r'SQLSTATE\[(\w+)\]', "PostgreSQL SQLSTATE", Severity.MEDIUM),
         # MySQL
         (r'SQL syntax.*MySQL', "MySQL syntax error", Severity.MEDIUM),
@@ -202,6 +202,30 @@ class ErrorDisclosureScanner(BaseScanner):
     # CORS wildcards on error pages
     CORS_WILDCARD_SEVERITY = Severity.LOW
 
+    # Markers that identify CDN/WAF challenge pages (not real app responses)
+    CDN_CHALLENGE_MARKERS = [
+        "<title>Just a moment...</title>",       # Cloudflare JS challenge
+        "<title>Attention Required!</title>",     # Cloudflare block page
+        "<title>Access denied</title>",           # Cloudflare/Akamai block
+        "cf-browser-verification",               # Cloudflare verification div
+        "cf_chl_opt",                            # Cloudflare challenge options JS
+        "_cf_chl_tk",                            # Cloudflare challenge token
+        "challenges.cloudflare.com",             # Cloudflare challenge iframe
+        "Checking if the site connection is secure",  # Cloudflare interstitial
+        "cdn-cgi/challenge-platform",            # Cloudflare challenge platform
+        "Pardon Our Interruption",               # Akamai bot manager
+        "<title>Bot Verification</title>",       # Generic bot challenge
+    ]
+
+    @staticmethod
+    def _is_cdn_challenge(body: str) -> bool:
+        """Detect CDN/WAF challenge pages that produce false positives."""
+        body_lower = body.lower()
+        for marker in ErrorDisclosureScanner.CDN_CHALLENGE_MARKERS:
+            if marker.lower() in body_lower:
+                return True
+        return False
+
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
         """
         Probe target with error-triggering requests and analyze responses.
@@ -225,6 +249,10 @@ class ErrorDisclosureScanner(BaseScanner):
 
             # Only analyze error responses (4xx, 5xx) — that's where the gold is
             if status < 400:
+                continue
+
+            # Skip CDN/WAF challenge pages — they are NOT real app responses
+            if self._is_cdn_challenge(body):
                 continue
 
             # --- Database leaks ---
@@ -387,6 +415,9 @@ class ErrorDisclosureScanner(BaseScanner):
                     response = await self.get(fuzz_url)
                     if response.status_code >= 400:
                         body = response.text
+                        # Skip CDN challenge pages
+                        if self._is_cdn_challenge(body):
+                            continue
                         # Check if our input is reflected in the error
                         if fuzz in body and fuzz not in ("1", "0", "true"):
                             yield self.create_finding(
