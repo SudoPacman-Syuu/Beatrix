@@ -34,40 +34,43 @@ class HeaderSecurityScanner(BaseScanner):
     version = "1.0.0"
 
     # Required headers and their severity if missing
+    # NOTE: Missing security headers are INFORMATIONAL only — not reportable
+    # in bug bounty programs. They represent best-practice recommendations,
+    # not exploitable vulnerabilities.
     REQUIRED_HEADERS = {
         "strict-transport-security": {
-            "severity": Severity.LOW,
-            "description": "HTTP Strict Transport Security (HSTS) not enforced",
+            "severity": Severity.INFO,
+            "description": "HTTP Strict Transport Security (HSTS) not enforced. Without HSTS, the browser may connect over plain HTTP on first visit, allowing SSL stripping attacks.",
             "remediation": "Add header: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload",
             "cwe": "CWE-319",
         },
         "x-content-type-options": {
             "severity": Severity.INFO,
-            "description": "X-Content-Type-Options not set, MIME sniffing possible",
+            "description": "X-Content-Type-Options not set. Without nosniff, browsers may MIME-sniff responses and interpret uploaded files differently than intended.",
             "remediation": "Add header: X-Content-Type-Options: nosniff",
             "cwe": "CWE-693",
         },
         "x-frame-options": {
-            "severity": Severity.LOW,
-            "description": "X-Frame-Options not set, clickjacking possible",
-            "remediation": "Add header: X-Frame-Options: DENY (or SAMEORIGIN)",
+            "severity": Severity.INFO,
+            "description": "X-Frame-Options not set. Without this header (or CSP frame-ancestors), the page can be embedded in an iframe, which may enable clickjacking if sensitive actions are present.",
+            "remediation": "Add header: X-Frame-Options: DENY (or SAMEORIGIN), or use CSP frame-ancestors directive",
             "cwe": "CWE-1021",
         },
         "content-security-policy": {
             "severity": Severity.INFO,
-            "description": "Content-Security-Policy not set",
+            "description": "Content-Security-Policy not set. CSP provides defense-in-depth against XSS by restricting which scripts, styles, and resources can be loaded.",
             "remediation": "Implement a Content-Security-Policy header appropriate for your application",
             "cwe": "CWE-693",
         },
         "referrer-policy": {
             "severity": Severity.INFO,
-            "description": "Referrer-Policy not set — full URL may leak to third parties via Referer header",
+            "description": "Referrer-Policy not set. Without this, the full URL (including query parameters with tokens/IDs) may leak to third-party sites via the Referer header.",
             "remediation": "Add header: Referrer-Policy: strict-origin-when-cross-origin (or no-referrer)",
             "cwe": "CWE-200",
         },
         "permissions-policy": {
             "severity": Severity.INFO,
-            "description": "Permissions-Policy not set — browser features (camera, mic, geolocation) not restricted",
+            "description": "Permissions-Policy not set. Browser features (camera, microphone, geolocation) are not explicitly restricted for embedded contexts.",
             "remediation": "Add header: Permissions-Policy: camera=(), microphone=(), geolocation=()",
             "cwe": "CWE-693",
         },
@@ -212,12 +215,40 @@ class HeaderSecurityScanner(BaseScanner):
             raw = response.headers.get("set-cookie", "")
             cookies = [raw] if raw else []
 
+        # CDN/WAF cookies that are NOT the application's responsibility.
+        # Reporting these is noise — they're set by infrastructure (Cloudflare,
+        # Akamai, AWS CloudFront, etc.) and the app developer cannot control them.
+        CDN_COOKIE_PREFIXES = (
+            "__cf",       # Cloudflare bot management (__cf_bm, __cflb, __cfruid)
+            "_cf",        # Cloudflare utilities (_cfuvid, _cf_bm)
+            "cf_",        # Cloudflare misc
+            "__cfduid",   # Cloudflare (deprecated but still seen)
+            "_ga",        # Google Analytics
+            "_gid",       # Google Analytics
+            "_gat",       # Google Analytics
+            "_fbp",       # Facebook pixel
+            "__hstc",     # HubSpot
+            "__hssc",     # HubSpot
+            "__hssrc",    # HubSpot
+            "_dd_s",      # Datadog RUM
+            "akamai",     # Akamai CDN
+            "ak_bmsc",    # Akamai bot management
+            "bm_sv",      # Akamai bot management
+            "awsalb",     # AWS ALB
+            "awsalbcors", # AWS ALB CORS
+        )
+
         for cookie in cookies:
             if not cookie:
                 continue
 
             cookie_lower = cookie.lower()
             cookie_name = cookie.split("=")[0] if "=" in cookie else "unknown"
+
+            # Skip CDN/WAF/analytics cookies — not the application's problem
+            name_stripped = cookie_name.strip().lower()
+            if any(name_stripped.startswith(prefix) for prefix in CDN_COOKIE_PREFIXES):
+                continue
 
             issues = []
 

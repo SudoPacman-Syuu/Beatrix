@@ -469,14 +469,14 @@ class TestScannerConfig:
         assert "x-powered-by" in s.SENSITIVE_HEADERS
 
     def test_header_severity_alignment(self):
-        """Verify Bugcrowd VRT severity alignment."""
+        """Missing headers are INFO-only — not reportable as vulnerabilities."""
         from beatrix.scanners import HeaderSecurityScanner
         s = HeaderSecurityScanner()
-        # HSTS and X-Frame should be LOW (not medium/high)
-        assert s.REQUIRED_HEADERS["strict-transport-security"]["severity"] == Severity.LOW
-        assert s.REQUIRED_HEADERS["x-frame-options"]["severity"] == Severity.LOW
-        # CSP should be INFO
-        assert s.REQUIRED_HEADERS["content-security-policy"]["severity"] == Severity.INFO
+        # ALL missing headers are informational (not reportable in bug bounty)
+        for header, config in s.REQUIRED_HEADERS.items():
+            assert config["severity"] == Severity.INFO, (
+                f"{header} should be INFO, got {config['severity']}"
+            )
 
     def test_insertion_point_detector(self):
         from beatrix.scanners import InsertionPointDetector
