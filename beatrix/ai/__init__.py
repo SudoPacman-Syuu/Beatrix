@@ -11,7 +11,7 @@ Architecture:
 - Opus/Sonnet: Complex vulnerability analysis, exploit development, report writing
 """
 
-from .assistant import AIAssistant, AIConfig, HaikuGrunt
+from .assistant import AIAssistant, AIConfig, HaikuGrunt, validate_credentials
 from .ghost import GhostAgent, GhostCallback, GhostFinding, PrintCallback
 from .tasks import Task, TaskPriority, TaskRouter
 

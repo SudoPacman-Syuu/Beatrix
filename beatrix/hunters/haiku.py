@@ -11,6 +11,7 @@ Uses beatrix.ai for the Bedrock backend and beatrix.core.types for Findings.
 import asyncio
 import json
 import re
+import os
 import time
 from typing import Dict, List, Tuple
 
@@ -27,29 +28,51 @@ except ImportError:
 
 
 class HaikuAnalyzer:
-    """Claude Haiku for security analysis via Bedrock"""
+    """Claude Haiku for security analysis via Bedrock (API key or IAM)"""
 
     def __init__(self, region: str = "us-east-1"):
-        if not HAS_BOTO:
-            raise RuntimeError("boto3 required: pip install boto3")
-        config = Config(region_name=region, retries={"max_attempts": 3})
-        self.client = boto3.client("bedrock-runtime", config=config)
-        self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+        self._bedrock_api_key = os.environ.get("BEDROCK_API_KEY")
+        self._use_api_key = bool(self._bedrock_api_key)
+        self._region = region
+
+        if not self._use_api_key:
+            if not HAS_BOTO:
+                raise RuntimeError("boto3 required: pip install boto3")
+            config = Config(region_name=region, retries={"max_attempts": 3})
+            self.client = boto3.client("bedrock-runtime", config=config)
+
+        self.model_id = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
         self.input_tokens = 0
         self.output_tokens = 0
 
     async def analyze(self, prompt: str, max_tokens: int = 1000) -> str:
-        body = json.dumps({
+        body = {
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
-        })
-        loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self.client.invoke_model(modelId=self.model_id, body=body),
-        )
-        result = json.loads(response["body"].read())
+        }
+
+        if self._use_api_key:
+            url = (
+                f"https://bedrock-runtime.{self._region}.amazonaws.com"
+                f"/model/{self.model_id}/invoke"
+            )
+            headers = {
+                "Authorization": f"Bearer {self._bedrock_api_key}",
+                "Content-Type": "application/json",
+            }
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(url, headers=headers, json=body)
+                response.raise_for_status()
+                result = response.json()
+        else:
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.invoke_model(modelId=self.model_id, body=json.dumps(body)),
+            )
+            result = json.loads(response["body"].read())
+
         self.input_tokens += result.get("usage", {}).get("input_tokens", 0)
         self.output_tokens += result.get("usage", {}).get("output_tokens", 0)
         return result["content"][0]["text"]

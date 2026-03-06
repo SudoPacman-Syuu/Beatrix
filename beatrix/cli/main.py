@@ -1220,7 +1220,12 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
     # ── Multi-target mode ─────────────────────────────────────────────────
     if len(target_list) > 1:
         console.print(f"\n[bright_yellow]📋 Batch hunt — {len(target_list)} targets from [bold]{targets_file}[/bold][/bright_yellow]")
-        console.print(f"[dim]   Preset: {preset} | AI: {'enabled' if ai else 'disabled'}[/dim]\n")
+        console.print(f"[dim]   Preset: {preset} | AI: {'enabled' if ai else 'disabled'}[/dim]")
+
+        # Validate AI creds once before processing the whole batch
+        if ai:
+            _validate_ai_credentials()
+        console.print()
 
         all_findings = []
         hunt_ids = []
@@ -1311,6 +1316,11 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
     console.print(f"[dim]   Preset: {preset} | AI: {'enabled' if ai else 'disabled'}[/dim]")
     if modules:
         console.print(f"[dim]   Modules: {', '.join(modules)}[/dim]")
+
+    # Validate AI credentials early so the user isn't blindsided mid-scan
+    if ai:
+        _validate_ai_credentials()
+
     console.print()
 
     # ── Real-time progress state ──────────────────────────────────────────
@@ -1835,6 +1845,48 @@ def _hunt_single_target(target, preset="standard", ai=False, modules=None,
     _display_hunt_results(state, engine, hunt_id=hunt_id)
 
     return hunt_id, list(engine.findings)
+
+
+def _validate_ai_credentials(ai_config=None):
+    """
+    Validate AI credentials before running any AI-powered command.
+    Prints a clear error and exits if credentials are broken.
+    Returns True if valid.
+    """
+    from beatrix.ai.assistant import AIConfig, AIProvider, validate_credentials
+
+    if ai_config is None:
+        ai_config = AIConfig(provider=AIProvider.BEDROCK)
+
+    console.print("[dim]  🔑 Validating AI credentials...[/dim]", end="")
+
+    try:
+        result = asyncio.run(validate_credentials(ai_config))
+    except Exception as exc:
+        console.print(f"  [red]✗[/red]")
+        console.print(f"[red]✗ Credential validation failed: {exc}[/red]")
+        console.print("[yellow]  Fix your credentials and try again.[/yellow]")
+        sys.exit(1)
+
+    if result["valid"]:
+        auth_method = result["auth_method"]
+        console.print(f"  [green]✓[/green]  [dim]({auth_method})[/dim]")
+        return True
+    else:
+        console.print(f"  [red]✗[/red]")
+        console.print(f"\n[red]✗ AI credentials are invalid![/red]")
+        console.print(f"[red]  Error: {result['error']}[/red]")
+        console.print(f"[dim]  Provider: {result['provider']} | Auth: {result['auth_method']}[/dim]")
+        console.print("\n[yellow]  To fix:[/yellow]")
+        if result["auth_method"] == "bedrock_api_key":
+            console.print("[yellow]    • Check BEDROCK_API_KEY env var[/yellow]")
+            console.print("[yellow]    • Verify the key hasn't been revoked in the AWS console[/yellow]")
+        elif "iam" in result["auth_method"]:
+            console.print("[yellow]    • Run: aws sts get-caller-identity[/yellow]")
+            console.print("[yellow]    • Or set BEDROCK_API_KEY with a long-term API key[/yellow]")
+        else:
+            console.print("[yellow]    • Set ANTHROPIC_API_KEY or use --bedrock[/yellow]")
+        sys.exit(1)
 
 
 def _display_hunt_results(state, engine, hunt_id=None):
@@ -4456,6 +4508,9 @@ def ghost(ctx, target, objective, method, header, data, max_turns, model, api_ke
         border_style="red",
     ))
 
+    # Validate credentials before launching the agent
+    _validate_ai_credentials(ai_config)
+
     agent = GhostAgent(config=ai_config, callback=PrintCallback(), max_iterations=max_turns)
 
     try:
@@ -4618,6 +4673,11 @@ def haiku_hunt(target, no_ai, deep, region, output):
         title="[bold magenta]🤖 Haiku Hunt[/bold magenta]",
         border_style="magenta",
     ))
+
+    # Validate credentials before launching AI-powered hunt
+    if not no_ai:
+        from beatrix.ai.assistant import AIConfig, AIProvider
+        _validate_ai_credentials(AIConfig(provider=AIProvider.BEDROCK, aws_region=region))
 
     hunter = HaikuHunter(use_ai=not no_ai, region=region)
     findings = asyncio.run(hunter.hunt(target, deep=deep))

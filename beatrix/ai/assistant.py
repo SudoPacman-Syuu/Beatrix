@@ -48,6 +48,7 @@ class AIConfig:
     aws_access_key: Optional[str] = None
     aws_secret_key: Optional[str] = None
     aws_session_token: Optional[str] = None
+    bedrock_api_key: Optional[str] = None  # Long-term Bedrock API key (ABSK...)
 
     # Rate limiting
     requests_per_minute: int = 60
@@ -56,6 +57,8 @@ class AIConfig:
         # Try to load from environment
         if not self.api_key:
             self.api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not self.bedrock_api_key:
+            self.bedrock_api_key = os.environ.get("BEDROCK_API_KEY")
         if not self.aws_access_key:
             self.aws_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
         if not self.aws_secret_key:
@@ -150,30 +153,36 @@ class AnthropicBackend(AIBackend):
 
 
 class BedrockBackend(AIBackend):
-    """AWS Bedrock backend"""
+    """AWS Bedrock backend — supports long-term API keys (ABSK) and IAM/boto3"""
 
     def __init__(self, config: AIConfig):
         self.config = config
-        try:
-            import boto3
-            self.boto3 = boto3
-        except ImportError:
-            raise ImportError("boto3 required for Bedrock backend: pip install boto3")
 
-        client_kwargs = {
-            "region_name": config.aws_region,
-        }
-        # Only pass explicit credentials if provided (otherwise boto3
-        # falls back to its standard credential chain: env vars,
-        # ~/.aws/credentials, instance profile, etc.)
-        if config.aws_access_key:
-            client_kwargs["aws_access_key_id"] = config.aws_access_key
-        if config.aws_secret_key:
-            client_kwargs["aws_secret_access_key"] = config.aws_secret_key
-        if config.aws_session_token:
-            client_kwargs["aws_session_token"] = config.aws_session_token
+        # Prefer Bedrock long-term API key (httpx bearer auth) over boto3/IAM
+        self._use_api_key = bool(config.bedrock_api_key)
 
-        self.client = boto3.client("bedrock-runtime", **client_kwargs)
+        if not self._use_api_key:
+            # Fall back to boto3 / IAM credential chain
+            try:
+                import boto3
+                self.boto3 = boto3
+            except ImportError:
+                raise ImportError("boto3 required for Bedrock backend: pip install boto3")
+
+            client_kwargs = {
+                "region_name": config.aws_region,
+            }
+            if config.aws_access_key:
+                client_kwargs["aws_access_key_id"] = config.aws_access_key
+            if config.aws_secret_key:
+                client_kwargs["aws_secret_access_key"] = config.aws_secret_key
+            if config.aws_session_token:
+                client_kwargs["aws_session_token"] = config.aws_session_token
+
+            self.client = boto3.client("bedrock-runtime", **client_kwargs)
+        else:
+            if not HAS_HTTPX:
+                raise ImportError("httpx required for Bedrock API key auth: pip install httpx")
 
         # Map model names to Bedrock inference profile IDs.
         # Claude 4+ models REQUIRE inference profiles (on-demand model IDs
@@ -228,7 +237,39 @@ class BedrockBackend(AIBackend):
         if system:
             body["system"] = system
 
-        # Run in executor to not block
+        if self._use_api_key:
+            return await self._complete_api_key(model_id, body)
+        else:
+            return await self._complete_boto3(model_id, body)
+
+    async def _complete_api_key(self, model_id: str, body: dict) -> AIResponse:
+        """Invoke Bedrock via long-term API key (httpx + Bearer token)"""
+        url = (
+            f"https://bedrock-runtime.{self.config.aws_region}.amazonaws.com"
+            f"/model/{model_id}/invoke"
+        )
+        headers = {
+            "Authorization": f"Bearer {self.config.bedrock_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(url, headers=headers, json=body)
+            response.raise_for_status()
+            data = response.json()
+
+        return AIResponse(
+            content=data["content"][0]["text"],
+            model=model_id,
+            usage={
+                "input_tokens": data["usage"]["input_tokens"],
+                "output_tokens": data["usage"]["output_tokens"],
+            },
+            raw_response=data
+        )
+
+    async def _complete_boto3(self, model_id: str, body: dict) -> AIResponse:
+        """Invoke Bedrock via boto3 / IAM credentials (SigV4)"""
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None,
@@ -622,3 +663,105 @@ async def quick_analyze(content: str, task: str = "security") -> str:
 
     prompt = f"{prompts.get(task, prompts['security'])}\n\n{content}"
     return await grunt.complete(prompt)
+
+
+async def validate_credentials(config: Optional[AIConfig] = None) -> Dict[str, Any]:
+    """
+    Validate AI credentials and return a status report.
+
+    Returns dict with:
+        valid (bool): True if credentials work
+        provider (str): Provider name
+        auth_method (str): How we're authenticating
+        error (str|None): Error message if invalid
+        model (str): Model tested
+    """
+    if config is None:
+        config = AIConfig(provider=AIProvider.BEDROCK)
+
+    result: Dict[str, Any] = {
+        "valid": False,
+        "provider": config.provider.value,
+        "auth_method": "unknown",
+        "error": None,
+        "model": config.model,
+    }
+
+    try:
+        if config.provider == AIProvider.BEDROCK:
+            if config.bedrock_api_key:
+                result["auth_method"] = "bedrock_api_key"
+            elif config.aws_access_key:
+                result["auth_method"] = "iam_explicit"
+            else:
+                result["auth_method"] = "iam_credential_chain"
+
+            backend = BedrockBackend(config)
+            # Minimal invoke — 1 token max to keep costs near zero
+            test_msg = [AIMessage(role="user", content="hi")]
+            resp = await backend.complete(test_msg)
+            if resp.content:
+                result["valid"] = True
+
+        elif config.provider == AIProvider.ANTHROPIC:
+            if not config.api_key:
+                result["error"] = (
+                    "No Anthropic API key found. "
+                    "Set ANTHROPIC_API_KEY env var or pass --api-key."
+                )
+                return result
+            result["auth_method"] = "anthropic_api_key"
+            backend = AnthropicBackend(config)
+            test_msg = [AIMessage(role="user", content="hi")]
+            resp = await backend.complete(test_msg)
+            if resp.content:
+                result["valid"] = True
+
+        else:
+            result["error"] = f"Unsupported provider: {config.provider}"
+
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 401:
+            result["error"] = "Authentication failed — API key is invalid or expired."
+        elif status == 403:
+            result["error"] = (
+                "Access denied — key lacks permissions for Bedrock. "
+                "Check IAM policies or API key scope."
+            )
+        elif status == 404:
+            result["error"] = (
+                f"Model not found: {config.model}. "
+                "Verify model access is enabled in the AWS console."
+            )
+        else:
+            result["error"] = f"HTTP {status}: {exc.response.text[:200]}"
+    except ImportError as exc:
+        result["error"] = str(exc)
+    except Exception as exc:
+        err_name = type(exc).__name__
+        err_msg = str(exc)
+        # boto3 / botocore errors
+        if "ExpiredTokenException" in err_name or "ExpiredToken" in err_msg:
+            result["error"] = (
+                "AWS credentials have expired. "
+                "Refresh your session token or use a Bedrock long-term API key."
+            )
+        elif "UnrecognizedClientException" in err_name or "security token" in err_msg.lower():
+            result["error"] = (
+                "AWS credentials are invalid. "
+                "Check AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY."
+            )
+        elif "AccessDenied" in err_msg or "not authorized" in err_msg.lower():
+            result["error"] = (
+                "Access denied — IAM user/role lacks bedrock:InvokeModel permission."
+            )
+        elif "NoCredentialsError" in err_name or "Unable to locate credentials" in err_msg:
+            result["error"] = (
+                "No AWS credentials found. Set BEDROCK_API_KEY, or configure "
+                "AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or run `aws configure`."
+            )
+        else:
+            result["error"] = f"{err_name}: {err_msg}"
+
+    return result
