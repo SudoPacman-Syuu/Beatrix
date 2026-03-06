@@ -1,5 +1,5 @@
 """
-ReconX Event Correlation Engine
+Beatrix Event Correlation Engine
 
 A sophisticated attack chain detection and correlation system that combines:
 - Lockheed Martin Cyber Kill Chain (7 phases)
@@ -24,7 +24,7 @@ Industry References:
 - PTES Technical Guidelines: http://www.pentest-standard.org/
 - OWASP Web Security Testing Guide (WSTG)
 
-Author: ReconX Framework
+Author: Beatrix Framework
 Version: 2.0
 """
 
@@ -1332,7 +1332,7 @@ class EventCorrelationEngine:
             })
 
         return {
-            'name': 'ReconX Findings',
+            'name': 'Beatrix Findings',
             'version': '4.5',
             'domain': 'enterprise-attack',
             'description': 'Security assessment findings mapped to MITRE ATT&CK',

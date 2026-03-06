@@ -116,7 +116,7 @@ class PrivilegeEscalationPath:
     description: str
 
     def to_finding(self) -> Dict:
-        """Convert to ReconX finding format"""
+        """Convert to Beatrix finding format"""
         severity_map = {
             (0, 4): 'CRITICAL',  # Unauth to admin
             (0, 3): 'CRITICAL',  # Unauth to moderator

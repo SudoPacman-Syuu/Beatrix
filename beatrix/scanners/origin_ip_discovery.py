@@ -130,14 +130,14 @@ class OriginIPDiscovery:
 
     async def run(self, target: str, shared_data: dict = None) -> dict:
         """
-        ReconX module interface - wraps discover() method
+        Beatrix module interface - wraps discover() method
 
         Args:
             target: Target URL or domain
             shared_data: Shared data from other modules (unused)
 
         Returns:
-            Module results in ReconX format
+            Module results in Beatrix format
         """
         # Extract domain from URL if needed
         if '://' in target:
@@ -152,7 +152,7 @@ class OriginIPDiscovery:
         try:
             result = await self.discover(domain)
 
-            # Convert to ReconX findings format
+            # Convert to Beatrix findings format
             findings = []
             for ip_info in result.discovered_ips:
                 findings.append({
@@ -940,20 +940,20 @@ async def run_origin_discovery(
     return discovery.get_results_summary()
 
 
-# Module interface for ReconX integration
+# Module interface for Beatrix integration
 async def discover_origin_ips(
     targets: List[str],
     config: Optional[Dict] = None
 ) -> Dict:
     """
-    ReconX module interface for origin IP discovery
+    Beatrix module interface for origin IP discovery
 
     Args:
         targets: List of target domains
         config: Module configuration
 
     Returns:
-        Module results in ReconX format
+        Module results in Beatrix format
     """
     config = config or {}
     verbose = config.get('verbose', False)
@@ -974,7 +974,7 @@ async def discover_origin_ips(
         verbose=verbose
     )
 
-    # Convert to ReconX findings format
+    # Convert to Beatrix findings format
     findings = []
     for domain_result in results.get('domains', []):
         for ip_info in domain_result.get('top_ips', []):

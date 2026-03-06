@@ -131,7 +131,7 @@ class IDORScanner(BaseScanner):
         r'/reports?/([^/]+)',
         r'/tickets?/([^/]+)',
         r'/api/v\d+/([^/]+)/([^/]+)',
-        # E-commerce / Zooplus-style patterns
+        # E-commerce patterns
         r'/customers?/([^/]+)',
         r'/customer-data/([^/]+)',
         r'/addresses?/([^/]+)',
@@ -349,7 +349,7 @@ class IDORScanner(BaseScanner):
         """
         Extract potential IDs from cookies.
 
-        Lesson from Zooplus: the 'cid' cookie contained the customer ID used
+        Lesson from a real-world engagement: the 'cid' cookie contained the customer ID used
         in API paths like /customers/{cid}/addresses. Cookie-based IDOR is
         often overlooked but critical for e-commerce targets.
         """
@@ -592,7 +592,7 @@ class IDORScanner(BaseScanner):
         findings.extend(get_findings)
 
         # Test with write methods (write IDOR — often more impactful)
-        # Lesson from Zooplus: read IDOR was blocked on /customers/{id}/addresses
+        # Lesson from a real-world engagement: read IDOR was blocked on /customers/{id}/addresses
         # but write IDOR (PUT) should also be tested since access control may
         # differ between read and write operations
         for method in self.WRITE_METHODS:
@@ -840,7 +840,7 @@ The application may not properly validate authorization when accessing resources
         # Extract ID candidates from URL
         candidates = self.extract_ids_from_url(ctx.url)
 
-        # Extract from cookies (Zooplus lesson: cid cookie = customer ID)
+        # Extract from cookies (e-commerce lesson: cid cookie = customer ID)
         if ctx.cookies:
             cookie_candidates = self.extract_ids_from_cookies(ctx.cookies)
             # For each cookie-based ID, try it in the URL path

@@ -2,7 +2,7 @@
 BEATRIX PowerInjector - AI-Assisted Injection Scanner
 ======================================================
 Combines:
-- ReconX's 2000+ injection payloads
+- Beatrix's 2000+ injection payloads
 - Haiku AI for intelligent false-positive analysis
 - Context-aware payload selection
 - WAF bypass techniques
@@ -62,7 +62,7 @@ class PowerInjector:
 
     # ============ MEGA PAYLOAD DATABASE ============
 
-    # SQL INJECTION - Comprehensive from ReconX + PayloadsAllTheThings
+    # SQL INJECTION - Comprehensive from Beatrix + PayloadsAllTheThings
     SQLI_PAYLOADS = {
         'error_based': [
             "'", "''", '"', "\"'", "'--", "'#", "')--", "')",

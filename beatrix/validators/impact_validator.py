@@ -4,7 +4,7 @@ BEATRIX Impact Validator
 Post-scan filter that answers ONE question:
 "Does this finding demonstrate REAL, concrete impact?"
 
-Born from 3 informative closures on Bykea (2026-02-05):
+Born from real-world informative closures during bug bounty testing:
   1. WAF bypass + PostgreSQL error → "error messages without demonstrable impact are out of scope"
   2. CORS on Socket.IO → "websockets only used in mobile apps, CORS doesn't apply"
   3. Nominatim + CORS → "Nominatim is public data by design"
@@ -200,8 +200,8 @@ class ImpactValidator:
     def _check_error_only(self, finding: Finding) -> ImpactCheck:
         """
         LESSON: Error messages alone are NOT vulnerabilities.
-        Bykea Report #3541158 — "standalone error messages without
-        demonstrable impact are out of scope"
+        "Standalone error messages without demonstrable impact
+        are out of scope."
 
         An error message is only interesting if it leaks ACTIONABLE data:
         - Database credentials
@@ -265,8 +265,8 @@ class ImpactValidator:
     def _check_cors_relevance(self, finding: Finding, ctx: TargetContext) -> ImpactCheck:
         """
         LESSON: CORS is irrelevant on mobile-only APIs.
-        Bykea CORS on Socket.IO — "websockets only used in mobile apps,
-        CORS exploitation doesn't apply"
+        "Websockets only used in mobile apps,
+        CORS exploitation doesn't apply."
 
         CORS attacks require:
         1. A BROWSER visits attacker's page (mobile apps don't browse random sites)
@@ -355,7 +355,7 @@ class ImpactValidator:
     def _check_public_data(self, finding: Finding, ctx: TargetContext) -> ImpactCheck:
         """
         LESSON: "Exposing" data that is PUBLIC BY DESIGN is not a vulnerability.
-        Bykea Nominatim — "Nominatim is a public OSS geocoding service.
+        "Nominatim is a public OSS geocoding service.
         The data is publicly available by design."
 
         Known public-by-design services:
@@ -500,7 +500,7 @@ class ImpactValidator:
         If exploiting a finding requires auth credentials that an attacker
         can't reasonably obtain, the impact is severely limited.
 
-        Example: Bykea tracking CORS needs booking_id + hash — both are
+        Example: A tracking CORS endpoint needs booking_id + hash — both are
         non-guessable and unique per booking. An attacker can't enumerate them.
         """
         # Check if context indicates hard-to-obtain auth requirements

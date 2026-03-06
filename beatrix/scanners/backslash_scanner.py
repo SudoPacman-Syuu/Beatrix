@@ -4,8 +4,7 @@ BEATRIX Backslash-Powered Scanner
 Inspired by James Kettle's "Backslash Powered Scanning" technique.
 
 Instead of blindly spraying payloads at every parameter (which produces
-massive false positive rates — see: every SmartFuzzer "SQLi" against
-kick.com), this scanner first *probes how input is processed* and then
+massive false positive rates), this scanner first *probes how input is processed* and then
 attacks only the confirmed context.
 
 Architecture:

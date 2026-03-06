@@ -551,7 +551,7 @@ class OAuthRedirectScanner(BaseScanner):
         "/api/oauth/authorize",
         "/v1/oauth/authorize",
         "/v2/oauth/authorize",
-        # Keycloak-specific paths (discovered on Zooplus)
+        # Keycloak-specific paths (discovered in real-world engagements)
         "/auth/realms/master/protocol/openid-connect/auth",
         "/auth/realms/app/protocol/openid-connect/auth",
         "/realms/master/protocol/openid-connect/auth",
@@ -585,14 +585,14 @@ class OAuthRedirectScanner(BaseScanner):
         ("///evil.com", "Triple slash"),
         ("////evil.com", "Quadruple slash"),
 
-        # Keycloak wildcard matching (Zooplus lesson)
+        # Keycloak wildcard matching (real-world lesson)
         # Keycloak supports *.domain.com wildcard redirect_uris
         # Test if attacker-controlled subdomain is accepted
         ("https://evil.legitimate.com/callback", "Keycloak wildcard subdomain (*.domain.com)"),
         ("https://attacker-controlled.legitimate.com", "Keycloak wildcard arbitrary subdomain"),
         ("https://xss.legitimate.com/steal", "Keycloak wildcard with attacker path"),
 
-        # Port-based bypass (Zooplus had different services on different ports)
+        # Port-based bypass (target had different services on different ports)
         ("https://legitimate.com:8443/evil", "Port-based bypass (8443)"),
         ("https://legitimate.com:4443/callback", "Port-based bypass (4443)"),
         ("https://legitimate.com:9090/callback", "Port-based bypass (9090)"),

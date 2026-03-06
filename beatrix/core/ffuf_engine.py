@@ -37,7 +37,7 @@ Usage:
     # Or run all injection tests on discovered endpoints
     all_findings = engine.exhaustive_injection_scan(endpoints)
 
-Author: ReconX Framework
+Author: Beatrix Framework
 Version: 1.0
 """
 
@@ -270,7 +270,7 @@ class FFufEngine:
             self.seclists.verbose = False
 
         # Temp directory for payload files
-        self.temp_dir = Path(tempfile.mkdtemp(prefix="reconx_ffuf_"))
+        self.temp_dir = Path(tempfile.mkdtemp(prefix="beatrix_ffuf_"))
 
         # Results storage
         self.findings: List[Finding] = []

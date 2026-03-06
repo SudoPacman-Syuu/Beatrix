@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test: replay all 3 Bykea informative closures through the validator"""
+"""Smoke test: replay all 3 informative closures through the validator"""
 
 from beatrix.core.types import Confidence, Finding, Severity
 from beatrix.validators import ImpactValidator, ReportReadinessGate
@@ -8,8 +8,8 @@ from beatrix.validators.impact_validator import TargetContext
 validator = ImpactValidator()
 gate = ReportReadinessGate()
 
-bykea_ctx = TargetContext(
-    domain="api.bykea.net",
+target_ctx = TargetContext(
+    domain="api.example.com",
     mobile_only=True,
     uses_token_auth=True,
     uses_cookie_auth=False,
@@ -22,13 +22,13 @@ f1 = Finding(
     title="WAF Bypass + PostgreSQL Error Disclosure",
     severity=Severity.MEDIUM,
     confidence=Confidence.FIRM,
-    url="https://track-backend.bykea.net/api/tracking",
+    url="https://backend.example.com/api/tracking",
     description="WAF bypass reveals PostgreSQL error messages.",
     impact="An attacker could potentially learn database structure.",
     evidence="ERROR: invalid input syntax for type integer",
 )
 
-v1 = validator.validate(f1, bykea_ctx)
+v1 = validator.validate(f1, target_ctx)
 print(f"Test 1 (Error disclosure): {v1}")
 print()
 
@@ -37,13 +37,13 @@ f2 = Finding(
     title="CORS Misconfiguration on Socket.IO",
     severity=Severity.HIGH,
     confidence=Confidence.FIRM,
-    url="https://api.bykea.net/socket.io/",
+    url="https://api.example.com/socket.io/",
     description="Origin header reflected in ACAO.",
     impact="Could steal user data cross-origin.",
     evidence="Access-Control-Allow-Origin: https://evil.com",
 )
 
-v2 = validator.validate(f2, bykea_ctx)
+v2 = validator.validate(f2, target_ctx)
 print(f"Test 2 (CORS mobile-only): {v2}")
 print()
 
@@ -52,13 +52,13 @@ f3 = Finding(
     title="CORS on Nominatim Geocoding Endpoint",
     severity=Severity.MEDIUM,
     confidence=Confidence.TENTATIVE,
-    url="https://tomoe.bykea.net/nominatim/search",
+    url="https://geo.example.com/nominatim/search",
     description="Nominatim geocoding exposed with CORS misconfiguration.",
     impact="Could access geocoding data cross-origin.",
     evidence="Access-Control-Allow-Origin: *",
 )
 
-v3 = validator.validate(f3, bykea_ctx)
+v3 = validator.validate(f3, target_ctx)
 print(f"Test 3 (Nominatim public): {v3}")
 print()
 

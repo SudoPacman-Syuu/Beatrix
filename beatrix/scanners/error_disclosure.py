@@ -1,9 +1,6 @@
 """
 BEATRIX Error Disclosure Scanner
 
-Born from: Bykea track-backend.bykea.net engagement (2026-02-05)
-Report #3541088 — PostgreSQL error leak, Joi validation leak, input echo
-
 Detects verbose error responses that leak:
 - Database engine + table names (PostgreSQL, MySQL, MSSQL, MongoDB, SQLite)
 - Framework internals (Joi, Express, Django, Laravel, Spring, ASP.NET)
@@ -12,8 +9,7 @@ Detects verbose error responses that leak:
 - Server version headers in error responses
 
 Technique: Probe common API patterns with invalid/edge-case inputs and
-analyze error responses for information leakage. This is the exact
-technique that found CVE-worthy findings on Bykea.
+analyze error responses for information leakage.
 
 OWASP: A05:2021 Security Misconfiguration
 CWE: CWE-209 (Generation of Error Message Containing Sensitive Information)
@@ -32,8 +28,8 @@ class ErrorDisclosureScanner(BaseScanner):
     """
     Probes endpoints with invalid inputs to trigger verbose error responses.
 
-    Battle-tested on live targets. This scanner found:
-    - PostgreSQL table names + error codes on Bykea
+    Battle-tested on live targets. This scanner detects:
+    - PostgreSQL table names + error codes
     - Joi validation internals leaking parameter names
     - Input echo in error messages (XSS stepping stone)
     """
@@ -50,13 +46,13 @@ class ErrorDisclosureScanner(BaseScanner):
 
     # API path patterns that commonly trigger verbose errors
     PROBE_PATHS = [
-        # Invoice/payment endpoints (found Bykea's PG leak)
+        # Invoice/payment endpoints (common PG leak source)
         "/v1/invoice/1",
         "/v1/invoice/anything",
         "/v1/invoices/1",
         "/api/invoice/1",
         "/api/v1/invoice/1",
-        # Booking/order endpoints (found Bykea's Joi leak)
+        # Booking/order endpoints (common Joi leak source)
         "/v1/booking/1/",
         "/v1/booking/1/anything",
         "/api/booking/1",
@@ -148,7 +144,7 @@ class ErrorDisclosureScanner(BaseScanner):
 
     # Framework/validation signatures
     FRAMEWORK_PATTERNS: List[Tuple[str, str, Severity]] = [
-        # Node.js / Hapi / Joi (found on Bykea)
+        # Node.js / Hapi / Joi
         (r'"validation"\s*:\s*\{.*"source".*"keys"', "Joi validation internals leak", Severity.LOW),
         (r'child\s+"(\w+)"\s+fails because', "Joi parameter name leak", Severity.LOW),
         (r'hapi.*error', "Hapi.js framework error", Severity.INFO),

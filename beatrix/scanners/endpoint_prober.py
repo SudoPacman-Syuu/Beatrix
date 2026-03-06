@@ -1,12 +1,12 @@
 """
 BEATRIX Endpoint Prober
 
-Born from: Bykea engagement (2026-02-05)
+Automated API endpoint discovery and attack surface mapping.
 The manual process of curling /v1/invoice, /v1/booking, /v1/autocomplete
 one by one is exactly what this module automates.
 
 Technique:
-1. Take a base URL (e.g., track-backend.bykea.net)
+1. Take a base URL (e.g., backend.example.com)
 2. Probe common API path patterns (/v1, /v2, /api, /graphql, etc.)
 3. Categorize responses: 200=alive, 401/403=auth-protected (interesting!),
    404=not found, 500=error (run error_disclosure scanner), 301/302=redirect
@@ -122,7 +122,7 @@ class EndpointProber(BaseScanner):
         "/crossdomain.xml", "/clientaccesspolicy.xml",
     ]
 
-    # Geocoding / Maps (found these on Bykea)
+    # Geocoding / Maps
     GEO_PATHS = [
         "/geocode", "/reverse-geocode", "/autocomplete",
         "/search", "/suggest", "/places",
@@ -139,7 +139,7 @@ class EndpointProber(BaseScanner):
         "/cable", "/streaming",
     ]
 
-    # E-commerce / Customer Data (Zooplus lessons)
+    # E-commerce / Customer Data (real-world lessons)
     ECOMMERCE_PATHS = [
         "/customer-data/api/v2/customers",
         "/customer-data/api/v2/address-validation-rules",

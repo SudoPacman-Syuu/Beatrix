@@ -435,7 +435,7 @@ class AutoLoginEngine:
         These get LOW confidence so discovered endpoints always win.
         """
         fallback_paths = [
-            # Versioned API patterns (v1/v2 — covers Kick.com, modern platforms)
+            # Versioned API patterns (v1/v2 — common on modern platforms)
             "/api/v1/auth/login",
             "/api/v2/auth/login",
             "/api/v1/login",

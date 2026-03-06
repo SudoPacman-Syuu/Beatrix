@@ -23,7 +23,7 @@ async def reality_check():
         # QUESTION 2: Is the data sensitive?
         print('2. Is the exposed data sensitive?')
         try:
-            r = await c.get('https://nominatim.bykea.net/reverse?lat=24.8607&lon=67.0011&format=json&addressdetails=1')
+            r = await c.get('https://nominatim.example.com/reverse?lat=24.8607&lon=67.0011&format=json&addressdetails=1')
             data = r.json()
             road = data.get('address',{}).get('road','?')
             town = data.get('address',{}).get('town','?')
@@ -54,10 +54,10 @@ async def reality_check():
             print(f'   Error: {e}')
         print()
 
-        # QUESTION 4: Any Bykea-specific data?
-        print('4. Bykea-specific data in responses?')
+        # QUESTION 4: Any target-specific data?
+        print('4. Target-specific data in responses?')
         try:
-            r3 = await c.get('https://nominatim.bykea.net/reverse?lat=24.8607&lon=67.0011&format=json&extratags=1&namedetails=1')
+            r3 = await c.get('https://nominatim.example.com/reverse?lat=24.8607&lon=67.0011&format=json&extratags=1&namedetails=1')
             keys = set(r3.json().keys())
             standard = {'place_id','licence','osm_type','osm_id','lat','lon',
                        'display_name','address','boundingbox','extratags','namedetails'}
@@ -77,7 +77,7 @@ async def reality_check():
         ok = 0
         for i in range(20):
             try:
-                r = await c.get(f'https://nominatim.bykea.net/reverse?lat={24.86+i*0.001}&lon=67.001&format=json')
+                r = await c.get(f'https://nominatim.example.com/reverse?lat={24.86+i*0.001}&lon=67.001&format=json')
                 if r.status_code == 200:
                     ok += 1
             except Exception:
@@ -87,9 +87,9 @@ async def reality_check():
         print(f'   {ok}/20 succeeded in {elapsed:.1f}s ({rps:.1f} req/s)')
         print()
 
-        # QUESTION 6: Does Bykea app use this with auth or just open?
-        print('6. Does Bykea add any auth/cookies/tokens to this service?')
-        r4 = await c.get('https://nominatim.bykea.net/reverse?lat=24.8607&lon=67.0011&format=json')
+        # QUESTION 6: Does the target app use this with auth or just open?
+        print('6. Does the target add any auth/cookies/tokens to this service?')
+        r4 = await c.get('https://nominatim.example.com/reverse?lat=24.8607&lon=67.0011&format=json')
         cookies = r4.headers.get('set-cookie', 'NONE')
         auth_headers = {k:v for k,v in r4.headers.items() if 'auth' in k.lower() or 'token' in k.lower()}
         print(f'   Set-Cookie: {cookies}')
@@ -107,7 +107,7 @@ async def reality_check():
         ]
         for ep in endpoints:
             try:
-                r = await c.get(f'https://nominatim.bykea.net{ep}')
+                r = await c.get(f'https://nominatim.example.com{ep}')
                 print(f'   {ep}: {r.status_code} ({len(r.text)} bytes)')
             except Exception as e:
                 print(f'   {ep}: {e}')
@@ -127,7 +127,7 @@ async def reality_check():
         print('SALVAGEABLE ANGLES (need more evidence):')
         print('- Resource abuse: No rate limiting on self-hosted infra')
         print('- status.php: PHP error with class name (very low)')
-        print('- If Bykea logs search queries -> log injection via callback')
+        print('- If target logs search queries -> log injection via callback')
         print('  (speculative, cannot prove)')
 
 asyncio.run(reality_check())

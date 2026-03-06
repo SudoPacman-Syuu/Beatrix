@@ -87,7 +87,7 @@ def print_banner():
 
 
 # =============================================================================
-# HELP TEXT — Kill Bill themed, human readable
+# HELP TEXT
 # =============================================================================
 
 COMMAND_HELP = {
@@ -95,7 +95,7 @@ COMMAND_HELP = {
 [bright_yellow]⚔️  HUNT — Full Vulnerability Scan[/bright_yellow]
 
 [bold]The Main Event.[/bold] Runs Beatrix against a target using the kill chain methodology.
-Think of it as unleashing the Bride on a room full of Crazy 88s.
+Runs every scanner module in sequence against your target.
 
 [bold cyan]USAGE:[/bold cyan]
   beatrix hunt TARGET [OPTIONS]
@@ -372,7 +372,7 @@ across multiple targets simultaneously.
   -o, --output PATH     Save findings JSON to file
 
 [bold cyan]EXAMPLES:[/bold cyan]
-  beatrix rapid -d shopify.com -d gitlab.com
+  beatrix rapid -d target1.com -d target2.com
   beatrix rapid -t targets.txt -o findings.json
 """,
     "haiku-hunt": """
@@ -499,7 +499,6 @@ Settings are stored in [bold]~/.beatrix/config.yaml[/bold].
 [bold cyan]SUBCOMMANDS:[/bold cyan]
   beatrix mobile intercept    Launch emulator with proxy, capture traffic
   beatrix mobile analyze      Analyze previously captured traffic
-  beatrix mobile bykea        Bykea-specific interception
 
 [bold cyan]EXAMPLES:[/bold cyan]
   beatrix mobile intercept --avd my_emulator -p com.example.app
@@ -789,7 +788,7 @@ def _show_quick_reference():
     table.add_row("recon DOMAIN", "Reconnaissance", "beatrix recon example.com --deep")
     table.add_row("batch FILE -m MOD", "Mass scanning", "beatrix batch targets.txt -m cors")
     table.add_row("bounty-hunt TARGET", "OWASP Top 10 pipeline", "beatrix bounty-hunt https://api.com")
-    table.add_row("rapid", "Multi-target quick sweep", "beatrix rapid -d shopify.com")
+    table.add_row("rapid", "Multi-target quick sweep", "beatrix rapid -d target.com")
     table.add_row("haiku-hunt TARGET", "AI-assisted hunting", "beatrix haiku-hunt example.com")
     table.add_row("ghost TARGET", "AI autonomous pentester", "beatrix ghost https://api.com")
     table.add_row("github-recon ORG", "GitHub secret scanner", "beatrix github-recon acme-corp")
@@ -3027,7 +3026,7 @@ def h1_dupecheck(ctx, program, keywords):
 
     \b
     Examples:
-        beatrix h1 dupecheck bykea github leaked credentials
+        beatrix h1 dupecheck example-program github leaked credentials
     """
     from beatrix.integrations.hackerone import HackerOneClient
 
@@ -3125,9 +3124,9 @@ def mobile(ctx):
 
 
 @mobile.command("intercept")
-@click.option("--avd", default="bykea_hunter", help="AVD name")
+@click.option("--avd", default="beatrix_hunter", help="AVD name")
 @click.option("--apk", help="APK file to install")
-@click.option("--package", "-p", default="com.bykea.pk", help="Package to launch")
+@click.option("--package", "-p", default="com.example.app", help="Package to launch")
 @click.option("--duration", "-d", type=int, default=300, help="Capture duration (seconds)")
 @click.option("--port", type=int, default=8080, help="Proxy port")
 @click.pass_context
@@ -3162,26 +3161,6 @@ def mobile_intercept(ctx, avd, apk, package, duration, port):
     table.add_row("JWT Tokens", str(len(analysis.jwt_tokens)))
     table.add_row("Credentials in Bodies", str(len(analysis.credentials_in_body)))
     console.print(table)
-
-
-@mobile.command("bykea")
-@click.option("--apk", help="Bykea APK file path")
-@click.option("--duration", "-d", type=int, default=300, help="Capture duration")
-@click.pass_context
-def mobile_bykea(ctx, apk, duration):
-    """Run Bykea-specific interception with leaked key matching."""
-    from beatrix.scanners.mobile_interceptor import run_bykea_intercept
-
-    console.print(Panel.fit(
-        "[bold red]Bykea Credential Validation[/bold red]\n"
-        "Intercepting production traffic to check for leaked keys:\n"
-        "  • bl-bkd-key\n"
-        "  • JWT secret\n"
-        "  • AES encryption keys",
-        title="[bold bright_yellow]BEATRIX × Bykea[/bold bright_yellow]",
-    ))
-
-    asyncio.run(run_bykea_intercept(duration=duration, apk_path=apk))
 
 
 @mobile.command("analyze")
@@ -4306,50 +4285,9 @@ def bounty_hunt(ctx, target, header, urls, jwt, output, verbose):
     \b
     Run 'beatrix help bounty-hunt' for details.
     """
-    import importlib.util
-
-    _spec = importlib.util.spec_from_file_location(
-        "bounty_hunter", str(Path(__file__).parent.parent.parent / "bounty_hunter.py"))
-    if _spec is None or _spec.loader is None:
-        console.print("[red]bounty_hunter.py not found — run from the Beatrix project root[/red]")
-        sys.exit(1)
-    _mod = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
-    BountyHunter = _mod.BountyHunter
-
-    headers = {}
-    for h in header:
-        if ':' in h:
-            name, value = h.split(':', 1)
-            headers[name.strip()] = value.strip()
-
-    url_list = [target]
-    for u in urls:
-        if u.startswith('/'):
-            url_list.append(f"{target.rstrip('/')}{u}")
-        else:
-            url_list.append(u)
-
-    console.print(f"\n[bright_green]💰 Full bounty hunt on [bold]{target}[/bold][/bright_green]")
-    console.print(f"[dim]   URLs: {len(url_list)} | Auth: {list(headers.keys()) or 'None'}[/dim]\n")
-
-    hunter = BountyHunter(target=target, auth_headers=headers, verbose=verbose)
-
-    try:
-        findings = asyncio.run(hunter.hunt_all(urls=url_list, jwt_tokens=list(jwt)))
-
-        if findings and output:
-            hunter.export_report(output)
-        elif findings:
-            hunter.export_report()
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Hunt interrupted.[/yellow]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"\n[red]Error: {e}[/red]")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    console.print("[yellow]bounty-hunt is deprecated. Use 'beatrix hunt' instead:[/yellow]")
+    console.print(f"  beatrix hunt {target} --preset full")
+    sys.exit(1)
 
 
 # =============================================================================

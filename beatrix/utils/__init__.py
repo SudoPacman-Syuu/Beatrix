@@ -1,7 +1,7 @@
 """
 BEATRIX Utilities
 
-Imported from ReconX v1.4 + Beatrix originals.
+Beatrix utility functions.
 """
 
 from .helpers import extract_domain

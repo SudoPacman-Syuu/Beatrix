@@ -31,12 +31,8 @@ TAKEOVER_FINGERPRINTS = {
     "wordpress": ["Do you want to register"],
 }
 
-# Default high-value targets
-DEFAULT_TARGETS = [
-    "shopify.com", "gitlab.com", "github.com", "dropbox.com",
-    "uber.com", "airbnb.com", "yahoo.com", "paypal.com",
-    "twitch.tv", "spotify.com",
-]
+# Default targets (empty — must be provided via -d or -t)
+DEFAULT_TARGETS = []
 
 
 class RapidHunter:

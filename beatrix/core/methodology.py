@@ -1,5 +1,5 @@
 """
-ReconX Security Testing Methodology Framework
+Beatrix Security Testing Methodology Framework
 
 Aligns with:
 - MITRE ATT&CK Framework (https://attack.mitre.org/)

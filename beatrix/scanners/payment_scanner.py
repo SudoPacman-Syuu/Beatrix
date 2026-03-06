@@ -1,8 +1,7 @@
 """
 BEATRIX Payment & Checkout Scanner
 
-Born from: Zooplus engagement (2025-07-17)
-Full checkout API reverse-engineered from minified JS bundles.
+Full checkout API scanner for e-commerce targets.
 Discovered separate Shop (Next.js) and Checkout (React SPA) frontends
 with distinct API surfaces. Mapped 20+ state-api endpoints, URL patterns,
 required headers (X-Checkout-Page-Id), and HTTP method mappings.
@@ -131,23 +130,23 @@ class SessionState:
 
 
 # =============================================================================
-# ZOOPLUS-SPECIFIC PRESETS
+# EXAMPLE CONFIG PRESET
 # =============================================================================
 
-ZOOPLUS_CONFIG = CheckoutConfig(
-    base_url="https://www.zooplus.com",
+EXAMPLE_CHECKOUT_CONFIG = CheckoutConfig(
+    base_url="https://www.example.com",
     checkout_base="/checkout/api/state-api",
     semi_protected_base="/semiprotected/api/checkout/state-api",
-    auth_base="https://login.zooplus.com",
-    login_url="https://login.zooplus.com/realms/zooplus/protocol/openid-connect/auth",
+    auth_base="https://login.example.com",
+    login_url="https://login.example.com/realms/default/protocol/openid-connect/auth",
     login_method="POST",
     credentials={
         "username": "",  # Set at runtime
         "password": "",  # Set at runtime
     },
-    request_delay=5.0,  # Zooplus WAF is aggressive
+    request_delay=5.0,
     burst_limit=2,
-    backoff_on_403=120.0,  # CloudFront blocks last ~2-5 min
+    backoff_on_403=120.0,
     test_product_ids=["156523", "128238", "318614", "999078", "128123"],
     endpoints=[
         # Cart Version (confirmed working)
@@ -361,11 +360,11 @@ class PaymentScanner(BaseScanner):
 
         Args:
             config: Target-specific checkout config
-            preset: Preset name ("zooplus", etc.) - loads preconfigured endpoints
+            preset: Preset name ("example", etc.) - loads preconfigured endpoints
         """
         # Load preset or use provided config
-        if preset == "zooplus":
-            self.checkout_config = ZOOPLUS_CONFIG
+        if preset == "example":
+            self.checkout_config = EXAMPLE_CHECKOUT_CONFIG
         elif config:
             self.checkout_config = config
         else:
@@ -567,8 +566,8 @@ class PaymentScanner(BaseScanner):
         self,
         username: str,
         password: str,
-        realm: str = "zooplus",
-        client_id: str = "shop-myzooplus-prod-zooplus",
+        realm: str = "default",
+        client_id: str = "shop-client-prod",
     ) -> bool:
         """
         Authenticate via Keycloak OpenID Connect.
@@ -587,7 +586,7 @@ class PaymentScanner(BaseScanner):
 
         # Step 1: Get login page
         auth_url = (
-            f"https://login.zooplus.com/realms/{realm}/"
+            f"{cfg.auth_base}/realms/{realm}/"
             f"protocol/openid-connect/auth?"
             f"client_id={client_id}&"
             f"redirect_uri={cfg.base_url}/sso/auth/code&"
@@ -1152,7 +1151,7 @@ class PaymentScanner(BaseScanner):
         """
         Test: Can we add multiple free samples or use it to discount?
 
-        Zooplus has a /set-free-sample-article endpoint.
+        Some targets have a /set-free-sample-article endpoint.
         What happens if we set a paid article as a free sample?
         """
         endpoint = self._find_endpoint("/set-free-sample-article")
@@ -1532,7 +1531,7 @@ class PaymentScanner(BaseScanner):
 
     async def run_standalone(
         self,
-        preset: str = "zooplus",
+        preset: str = "example",
         username: str = "",
         password: str = "",
         authenticate: bool = True,
@@ -1541,7 +1540,7 @@ class PaymentScanner(BaseScanner):
         Convenience method to run scan standalone (no framework).
 
         Usage:
-            scanner = PaymentScanner(preset="zooplus")
+            scanner = PaymentScanner(preset="example")
             findings = await scanner.run_standalone(
                 username="user@example.com",
                 password="password123",
@@ -1574,7 +1573,7 @@ def main():
         description="BEATRIX Payment Scanner — checkout flow vulnerability testing"
     )
     parser.add_argument("--target", "-t", required=True, help="Target base URL")
-    parser.add_argument("--preset", "-p", choices=["zooplus"], help="Use preset config")
+    parser.add_argument("--preset", "-p", choices=["example"], help="Use preset config")
     parser.add_argument("--username", "-u", help="Login username")
     parser.add_argument("--password", help="Login password")
     parser.add_argument("--no-auth", action="store_true", help="Skip authentication")

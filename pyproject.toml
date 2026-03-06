@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "The Omega Project"}
+    {name = "SudoPacman-Syuu"}
 ]
 keywords = ["security", "pentesting", "bug-bounty", "vulnerability-scanner"]
 

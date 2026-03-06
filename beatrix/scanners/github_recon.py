@@ -8,10 +8,8 @@ Searches a target organization's public GitHub repositories for:
 - Git history leaks (secrets committed then "sanitized")
 - Infrastructure disclosure (DB hosts, internal URLs, cloud configs)
 
-This module won the Bykea bounty. Built from that exact workflow.
-
 Usage:
-    scanner = GitHubRecon("bykea")
+    scanner = GitHubRecon("target-org")
     async with scanner:
         findings = await scanner.full_recon()
 
@@ -223,8 +221,8 @@ class GitHubRecon(BaseScanner):
     Searches public repositories for leaked credentials,
     configuration files, and secrets in git history.
 
-    Born from the Bykea engagement where this exact workflow
-    produced a paid bounty for leaked AES encryption keys.
+    This exact workflow has produced paid bounties for
+    leaked AES encryption keys during real engagements.
     """
 
     name = "github_recon"
@@ -821,8 +819,8 @@ class GitHubRecon(BaseScanner):
         """
         Walk git history looking for secrets that were committed then removed.
 
-        This is the technique that found the Bykea AES keys — the developer
-        committed production keys, then later replaced them with "supersecret!!!!!".
+        This technique catches secrets committed then removed — e.g., a developer
+        commits production keys, then later replaces them with "supersecret!!!!!".
         The git diff permanently preserves the original values.
         """
         findings = []

@@ -448,7 +448,7 @@ This suggests different code paths are executed based on username validity.
         """
         Test for email/account enumeration via registration and guest checkout endpoints.
 
-        Lesson from Zooplus (Feb 2026): The guest checkout endpoint returned:
+        Lesson from a real-world engagement: The guest checkout endpoint returned:
         - 200 with customerId + customerType='GC' for new emails (guest created)
         - 200 with customerId=null + CHECKOUT_PREVIEW_CUSTOMER_EXISTING_EMAIL for registered emails
         Same HTTP status, but different JSON body = enumeration via response content.
@@ -468,9 +468,9 @@ This suggests different code paths are executed based on username validity.
         test_email = f"beatrix_enum_test_{int(asyncio.get_running_loop().time())}@nonexistent-domain-test.com"
         likely_emails = ["admin@test.com", "test@test.com", "info@test.com"]
 
-        # ---- Guest checkout enumeration (Zooplus pattern) ----
+        # ---- Guest checkout enumeration (e-commerce pattern) ----
         guest_checkout_paths = [
-            # Exact Zooplus path
+            # Common e-commerce path
             '/semiprotected/api/checkout/state-api/v2/customer/basic-guest-customer',
             # Common variations
             '/api/checkout/guest',
@@ -502,7 +502,7 @@ This suggests different code paths are executed based on username validity.
                         headers={"Content-Type": "application/json"}
                     )
 
-                    # Zooplus pattern: same 200 status, but different JSON content
+                    # E-commerce pattern: same 200 status, but different JSON content
                     if existing_resp.status_code == new_resp.status_code:
                         try:
                             new_json = new_resp.json() if new_resp.text.strip().startswith('{') else {}
@@ -519,7 +519,7 @@ This suggests different code paths are executed based on username validity.
                             'existing_email', 'email_taken', 'already_registered',
                             'customer_existing', 'account_exists', 'duplicate_email',
                             'email_in_use', 'existing_customer', 'registered',
-                            # Zooplus-specific
+                            # E-commerce-specific
                             'checkout_preview_customer_existing_email',
                         ]
 
@@ -538,7 +538,7 @@ registered vs unregistered email addresses, allowing account enumeration.
 
 **NO AUTHENTICATION REQUIRED.**
 
-**Pattern (identical to Zooplus finding):**
+**Pattern (common e-commerce finding):**
 
 **Unregistered email:** {test_email}
 Response: customerId assigned, guest account created
@@ -639,7 +639,7 @@ without any authentication, CAPTCHA, or rate limiting.
             '/api/auth/register', '/api/v1/register', '/api/v2/register',
             '/account/create', '/api/account/create', '/api/accounts',
             '/api/customer/register', '/api/customers/register',
-            '/customer-data/api/v2/customers',  # Zooplus-style
+            '/customer-data/api/v2/customers',  # e-commerce pattern
             '/api/users', '/users/register',
         ]
 
@@ -662,7 +662,7 @@ without any authentication, CAPTCHA, or rate limiting.
                         headers={"Content-Type": "application/json"}
                     )
 
-                    # Check for differential response (Zooplus pattern: 200 vs 409)
+                    # Check for differential response (e-commerce pattern: 200 vs 409)
                     if new_resp.status_code != existing_resp.status_code:
                         findings.append(Finding(
                             title=f"Email Enumeration via Registration ({path})",
@@ -678,7 +678,7 @@ new vs existing email addresses, allowing account enumeration.
 **Existing email:** {likely_email}
 **Response:** {existing_resp.status_code}
 
-**Pattern (Zooplus-style):**
+**Pattern (e-commerce style):**
 - New email → {new_resp.status_code} (account creation attempted)
 - Existing email → {existing_resp.status_code} (conflict/error)
 
@@ -798,10 +798,10 @@ a reset link has been sent."
         """
         Test for OAuth/OpenID Connect misconfigurations.
 
-        Lessons from Zooplus (Feb 2026):
+        Lessons from a real-world engagement:
         - Keycloak well-known endpoint exposed realm configuration
-        - redirect_uri validated with wildcard path matching (any path on *.zooplus.*)
-        - PKCE not enforced on public client (frontend-authorizer-zooplus)
+        - redirect_uri validated with wildcard path matching (any path on *.example.*)
+        - PKCE not enforced on public client (frontend-authorizer)
         - Public client = no client_secret required for code exchange
         - Auth codes stolen via arbitrary redirect_uri path → exchanged for PII tokens
         - Multiple Keycloak clients with different configs (public vs confidential)
@@ -833,7 +833,7 @@ a reset link has been sent."
         parsed_base = urlparse(base_url)
         domain_parts = parsed_base.netloc.replace('www.', '').split('.')
         if len(domain_parts) >= 2:
-            brand = domain_parts[0]  # e.g., 'zooplus' from www.zooplus.com
+            brand = domain_parts[0]  # e.g., 'example' from www.example.com
             wellknown_paths.extend([
                 f'/auth/realms/{brand}/.well-known/openid-configuration',
                 f'/realms/{brand}/.well-known/openid-configuration',
@@ -943,11 +943,11 @@ Found OpenID Connect configuration at {url}
 
             # 3a: Test if redirect_uri uses wildcard path matching
             # KEY LESSON: Test with the TARGET APP domain, not evil.com
-            # Zooplus accepted https://www.zooplus.com/ANY-PATH-HERE
-            target_domain = parsed_base.netloc  # e.g., www.zooplus.com
+            # Target accepted https://www.example.com/ANY-PATH-HERE
+            target_domain = parsed_base.netloc  # e.g., www.example.com
 
             redirect_tests = [
-                # Path-based wildcard on TARGET domain (highest value — this is what worked on Zooplus)
+                # Path-based wildcard on TARGET domain (highest value — this is what works in practice)
                 (f"https://{target_domain}/beatrix-oauth-test-{int(asyncio.get_running_loop().time())}",
                  "path_wildcard_target", Severity.HIGH),
                 # Completely different path on target
@@ -1024,7 +1024,7 @@ Found OpenID Connect configuration at {url}
                                for _, name, _, _ in accepted_redirects)
 
             if path_accepted and external_rejected:
-                # Classic Zooplus pattern: domain validated, path wildcarded
+                # Classic e-commerce pattern: domain validated, path wildcarded
                 findings.append(Finding(
                     title=f"OAuth redirect_uri Wildcard Path Matching (client: {client_id})",
                     description=f"""
@@ -1042,7 +1042,7 @@ as a valid redirect_uri, but correctly rejects external domains.
 **Rejected redirect_uris:**
 {chr(10).join(f'  - {uri} ({name})' for uri, name in rejected_redirects)}
 
-**Impact (HIGH — Exact Zooplus pattern):**
+**Impact (HIGH — Common e-commerce pattern):**
 Any XSS, open redirect, or user-controlled content on {target_domain}
 can be chained to steal OAuth authorization codes. The code leaks via:
 1. Referer header to third-party resources loaded on the redirect page
@@ -1118,7 +1118,7 @@ Combined with redirect_uri wildcard, an attacker can:
 2. Exchange the code for tokens WITHOUT a code_verifier
 3. Obtain access_token, refresh_token, and id_token
 
-This was the exact attack chain on Zooplus (Feb 2026).
+This was the exact attack chain found in a real-world engagement.
 """.strip(),
                         severity=Severity.MEDIUM,
                         confidence=Confidence.FIRM,
@@ -1172,7 +1172,7 @@ but the authorization code was invalid — proving no secret is needed)
 4. POST code to {token_endpoint} with just client_id (no secret!)
 5. Receive: access_token (PII), refresh_token (persistent), id_token
 
-**This is the exact vulnerability found on Zooplus in Feb 2026.**
+**This is the exact vulnerability found in a real-world engagement.**
 """.strip(),
                                     severity=Severity.HIGH,
                                     confidence=Confidence.CERTAIN,
@@ -1306,7 +1306,7 @@ The client '{client_id}' processed a password grant request
         - Login page hidden fields
         - Redirect URLs in the page
 
-        Lesson from Zooplus: Found 'frontend-authorizer-zooplus' in
+        Lesson from a real-world engagement: Found 'frontend-authorizer' in
         checkout login page's frontendAuthorizerConfig JSON object.
         """
         client_ids = set()
@@ -1489,7 +1489,7 @@ The 2FA verification may be bypassable using: {bypass_data}
         Main scanning entry point.
 
         Enhanced with:
-        - Email enumeration via registration/password reset (Zooplus lesson)
+        - Email enumeration via registration/password reset (e-commerce lesson)
         - OAuth/Keycloak misconfiguration testing
         - PKCE enforcement checking
         - redirect_uri wildcard detection

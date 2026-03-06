@@ -1,9 +1,8 @@
 """
 BEATRIX JS Bundle Analyzer
 
-Born from: Bykea track.bykea.net engagement (2026-02-05)
-Discovered track-backend.bykea.net, betadispatch.bykea.net:3000,
-geocode-beta.bykea.net, internal API routes, auth mechanism, and
+Automated JS bundle analysis for information disclosure.
+Discovers internal backend hosts, API routes, auth mechanisms, and
 localStorage keys — all from downloading and grepping JS chunks.
 
 Technique:
@@ -50,8 +49,8 @@ class JSBundleAnalyzer(BaseScanner):
     """
     Downloads and analyzes JavaScript bundles for information disclosure.
 
-    Battle-tested: This exact technique discovered 4 new backend hosts
-    and the full API structure on Bykea from a geo-locked React app.
+    Battle-tested: This technique has discovered internal backend hosts
+    and full API structures from geo-locked React apps.
     """
 
     name = "js_bundle"
@@ -236,7 +235,7 @@ class JSBundleAnalyzer(BaseScanner):
         """Find all JS bundle URLs via manifests and HTML parsing"""
         urls: Set[str] = set()
 
-        # Try asset-manifest.json first (React/CRA apps — how we cracked Bykea)
+        # Try asset-manifest.json first (React/CRA apps)
         for manifest_path in self.MANIFEST_PATHS:
             try:
                 resp = await self.get(urljoin(base_url, manifest_path))

@@ -1,7 +1,6 @@
 # BEATRIX Project Status
 
-**Codename:** The Omega Project
-**Version:** 1.0.0 "The Bride"
+**Version:** 1.0.0
 **Last Updated:** March 5, 2026
 **Current Phase:** Stable — WAF bypass for nuclei, origin IP flow hardened, auth pipeline in progress
 **Framework LOC:** ~73,800 (112 Python files total, ~66,300 in inner package)
@@ -13,7 +12,7 @@
 | Component | Lines | Files | Status | Notes |
 |-----------|-------|-------|--------|-------|
 | Core Engine | 22,349 | 27 | ✅ Working | Engine, kill chain, types, methodology, external tools, fuzzer, OOB, correlation, **seclists_manager (dynamic wordlists)**, **poc_server (PoC validation HTTP server)**, **auth_config**, **auto_login**, **finding_enricher** |
-| Scanner Modules | 29,496 | 40 | ✅ Working | 29 registered BaseScanner modules + 8 standalone modules + support |
+| Scanner Modules | 29,496 | 40 | ✅ Working | 32 registered BaseScanner modules + 8 standalone modules + support |
 | CLI Framework | 4,644 | 3 | ✅ Working | 26 commands via Click + Rich |
 | AI Integration | 1,893 | 4 | ✅ Working | GHOST agent, HaikuGrunt, Bedrock/Anthropic |
 | Recon Module | 472 | 1 | ✅ Working | Subdomain enum, tech detect, JS analysis |
@@ -66,7 +65,6 @@ beatrix help          # Display help information
 | `run_nmap` | nmap | 1 Recon | Port/service scanning |
 | `run_whatweb` | whatweb | 1 Recon | Technology fingerprinting |
 | `run_webanalyze` | webanalyze | 1 Recon | Tech detection (Wappalyzer replacement) |
-| `run_wafw00f` | wafw00f | 1 Recon | WAF detection |
 | `run_ffuf` | ffuf | 2 Weaponization | Directory/endpoint fuzzing |
 | `run_nuclei` | nuclei | 3 Delivery | CVE template scanning |
 | `run_sqlmap` | sqlmap | 4 Exploitation | SQL injection exploitation |
@@ -97,7 +95,7 @@ All runners live in `beatrix/core/external_tools.py` (1,144 LOC). `ExternalToolk
 
 ```
 beatrix/                       # Inner framework package
-├── __init__.py                # v1.0.0 "The Bride"
+├── __init__.py                # v1.0.0
 ├── core/                      # Engine + orchestration (22.3K LOC, 27 files)
 │   ├── engine.py              # BeatrixEngine orchestrator
 │   ├── types.py               # Finding, Severity, Confidence, Target, ScanContext
@@ -163,7 +161,9 @@ beatrix/                       # Inner framework package
 │   ├── polyglot_generator.py  # XSS polyglot + DOM clobbering
 │   ├── power_injector.py      # Deep parameter injection
 │   ├── insertion.py           # Insertion point detection
-│   ├── reconx_compat.py       # ReconX compatibility layer
+│   ├── param_miner.py         # Hidden parameter discovery
+│   ├── sequencer.py           # Token randomness analysis
+│   ├── backslash_scanner.py   # Backslash-powered path normalization attacks
 │   └── github_recon.py        # GitHub secret scanning
 ├── ai/                        # AI layer (1.9K LOC, 4 files)
 │   ├── assistant.py           # AIAssistant, HaikuGrunt, Bedrock/Anthropic
@@ -215,376 +215,12 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 
 ---
 
-## Session Log
-
-### Session 1 — February 5, 2026
-
-**Focus:** Project initialization & initial framework build
-
-- Created project structure and documentation
-- Ported core engine, types, kill chain from ReconX
-- Ported scanner modules (CORS, injection, IDOR, auth, SSRF, etc.)
-- Built CLI framework with Click/Rich
-- Integrated AI layer (HaikuGrunt, Bedrock backend)
-- Built validators, reporters, utilities
-
-### Session 2 — February 6, 2026
-
-**Focus:** GHOST port, codebase consolidation, framework cleanup
-
-- Ported GHOST autonomous agent from Java to Python (700 LOC, all 10 tools)
-- Wired `beatrix ghost` CLI command
-- Created `beatrix/recon/` module (consolidated from standalone `recon.py`)
-- Created `beatrix/integrations/` package (moved HackerOne client into framework)
-- Created `beatrix/hunters/` module (consolidated `rapid_hunter.py` + `haiku_hunter.py`)
-- Fixed `sys.path` hacks, renamed shadowing `ScanResult` → `MultiScanResult`
-- Verified all framework imports pass, all CLI commands register
-
-### Session 3 — February 6, 2026
-
-**Focus:** Installer fix, tool wiring, first bug audit
-
-- Fixed installer bash crash (`((found++))` → `found=$((found + 1))`)
-- Replaced dead wappalyzer with webanalyze throughout
-- Created `beatrix/core/external_tools.py` — 13 async subprocess tool runners (1,144 LOC)
-- Wired 12 previously cosmetic-only tools into actual scanner code
-- First comprehensive audit: found and fixed 19 bugs across the codebase
-- **Commits:** `1f29431`, `0bb9882`, `ce3a1a4`
-
-### Session 4 — February 6, 2026
-
-**Focus:** Integration depth audit + pipeline audit
-
-- Deep integration audit: found and fixed 13 integration problems (output discarded, features never called, missing request context, multi-instantiation)
-- End-to-end pipeline audit: found and fixed 7 pipeline bugs
-  - CRITICAL: `_handle_exploitation` referenced undefined `toolkit` variable, silently preventing sqlmap/dalfox/commix/jwt_tool from ever running
-  - `_run_scanner_on_urls` had no timeout, silent exception swallowing
-  - OOB detector initialized too late, `_handle_actions` reading empty context
-  - SSRF bypassing rate limiter, `KillChainPhase.modules` listing fictional module names
-- **Commits:** `d31c8bb`, `124be1a`
-
-### Session 5 — February 7, 2026
-
-**Focus:** Final re-audit, remaining bug fixes, documentation rewrite
-
-**Bugs fixed:**
-- `install.sh`: `check_optional_tools` listed "wappalyzer" instead of "webanalyze" — tool always shown as missing
-- `kill_chain.py` Phase 6 (`_handle_c2`): OOB detector initialized but never polled — now actually polls for callbacks and creates CRITICAL findings from confirmed interactions
-- `cli/main.py`: `batch` command called `asyncio.run()` in a loop destroying/recreating event loops — now uses single `asyncio.run()` wrapping async function
-- `chain_reporting.py`: Bare fallback import `from correlation_engine import ...` — replaced with proper `raise ImportError` with context
-
-**Warnings fixed:**
-- `ExternalToolkit` instantiated multiple times per hunt — now lazy singleton property on `KillChainExecutor` (`self.toolkit`)
-- `external_tools.py` stderr sent to `DEVNULL` — now captured via `asyncio.subprocess.PIPE`, logged on non-zero exit
-
-**Documentation:**
-- README.md: Complete rewrite — accurate module counts, per-phase module tables, external tool integration table
-- ARCHITECTURE.md: Complete rewrite from scratch — old version had fictional paths
-- PROJECT_STATUS.md: Complete rewrite with accurate stats
-- Manual (index.html): Updated module counts, tool references, kill chain descriptions
-
-### Session 11 — March 5, 2026
-
-**Focus:** Auth pipeline fixes, scan blockers, WAF bypass for nuclei, origin IP hardening, documentation audit
-
-**Critical bugs fixed:**
-- `auth_config.py`: Auth config not found under sudo — `Path.home()` returns `/root/` but config is at user home. Added `_resolve_config_path()` using `SUDO_USER` env var
-- `auth_config.py`: IDOR user1/user2 login credentials silently ignored — parser only read headers/cookies, not `login` sub-key
-- `cli/main.py`: IDOR auto-login never ran for user1/user2 — only main user was auto-logged in. Added login blocks for both IDOR users in `hunt` and `strike` commands
-- `scanners/idor.py`: Cross-account IDOR testing never happened — `user2_auth` stored but never passed to `test_candidate()`. Added `cross_account_headers` parameter and real cross-account access testing
-- `cli/__init__.py`: RuntimeWarning `'beatrix.cli.main' found in sys.modules` — rewrote with lazy `__getattr__` import
-- `cli/__main__.py`: Created for clean `python -m beatrix.cli` invocation
-- `install.sh` + wrapper: Changed from `-m beatrix.cli.main` to `-m beatrix.cli`
-- `scanners/nuclei.py`: Removed dead `xm1k3/cent-nuclei-templates` repo (404) that prompted for GitHub credentials. Added `GIT_TERMINAL_PROMPT=0` safety net
-
-**Event loop / Ctrl+C fix:**
-- Added `asyncio.CancelledError` handling to `subfinder.py`, `external_tools.py`, `nuclei.py` — prevents "Event loop is closed" tracebacks on Ctrl+C
-- Added `sys.unraisablehook` suppressor in `cli/main.py` to silence remaining asyncio cleanup warnings
-
-**Nuclei WAF bypass (3 features):**
-- Realistic User-Agent: Chrome 131 UA header replaces default nuclei UA (bypasses UA-based WAF rules)
-- WAF-aware rate limiting: auto-detects CDN via response headers (Cloudflare, Akamai, Fastly), reduces request rate from 150/50 to 30/15 rps
-- Origin IP bypass: rewrites scan URLs to target origin IP (from Phase 0 discovery), adds `-H Host:`, `-sni`, `-no-mhe` flags for proper TLS/Host header handling
-- Wired into kill chain at Phase 1 (recon), Phase 1 (network), and Phase 4 (exploit) nuclei invocations
-- WAF auto-detect added to `strike` command via HEAD request for standalone `beatrix strike -m nuclei` runs
-
-**Origin IP → nuclei flow hardening (3 bugs fixed):**
-- TLS SNI mismatch: origin IP scans now pass `-sni domain` flag so TLS handshake uses correct hostname
-- Subdomain URL corruption: replaced naive `str.replace(domain, ip)` with proper `urlparse` hostname-only matching — subdomains like `api.example.com` no longer get mangled
-- Finding URL reverse mapping: nuclei findings against origin IP now show the original domain URL in reports
-
-**Scan quality fixes:**
-- `redirect.py`: Added `_STATIC_EXTENSIONS` filter (30 extensions: .css, .js, .png, .woff, .svg, etc.) — scanner returns immediately for static asset URLs, eliminating noise
-- `cors.py`: Fixed empty error messages — both exception handlers now include `{type(e).__name__}: {e}`
-- `crawler.py`: Fixed empty error message — initial fetch failure now shows actual exception class and message
-- `reporters/__init__.py`: Fixed `datetime.utcnow()` deprecation — replaced with `datetime.now(tz=timezone.utc)`, eliminates Python 3.12 warnings
-
-**Test fixes:**
-- `test_scanner_smoke.py`: 3 tests referenced renamed `_build_tags()` → `_build_recon_tags()` / `_build_exploit_tags()`
-- `test_comprehensive.py`: 3 JSON reporter tests expected bare list instead of `{"findings": [...]}` envelope
-- **All 400 tests pass, 3 skipped, 0 warnings**
-
-**Documentation audit & update:**
-- Full audit of all 3 docs files against actual codebase
-- SWEET_SCANNER_MAP.md: Complete rewrite — was generic architecture patterns, now accurate component map with kill chain phases, module registry, presets, execution flow, external tools, auth pipeline
-- ARCHITECTURE.md: Added missing files (auth_config.py, auto_login.py, finding_enricher.py), fixed auto_register.py description, fixed payment.py → payment_scanner.py
-- PROJECT_STATUS.md: Fixed LOC counts, file counts, kill chain phase tables, external tools table, CLI command list, core file tree
-- Created BEATRIX_ISSUES.md: 23-item comprehensive issues document
-
----
-
-## Scanner Coverage (OWASP Top 10:2021)
-
-| OWASP | Scanner | Status |
-|-------|---------|--------|
-| A01 Broken Access Control | IDORScanner, AuthScanner, MassAssignmentScanner, EndpointProber | ✅ |
-| A02 Cryptographic Failures | CORSScanner, HeaderSecurityScanner, GraphQLScanner | ✅ |
-| A03 Injection | InjectionScanner (57K+ dynamic payloads), SSTIScanner, XXEScanner, DeserializationScanner, PowerInjector | ✅ |
-| A04 Insecure Design | PaymentScanner, BusinessLogicScanner, FileUploadScanner | ✅ |
-| A05 Security Misconfiguration | ErrorDisclosureScanner, JSBundleAnalyzer, CachePoisoningScanner | ✅ |
-| A06 Vulnerable Components | NucleiScanner (18,000+ templates — official + 3 external repos, WAF bypass) | ✅ |
-| A07 Auth Failures | AuthScanner, CredentialValidator | ✅ |
-| A08 Software Integrity | PrototypePollutionScanner, DeserializationScanner | ✅ |
-| A09 Logging Failures | (covered via error_disclosure probing) | ✅ |
-| A10 SSRF | SSRFScanner (44 payloads, cloud metadata, gopher) | ✅ |
-| — Subdomain Takeover | SubdomainTakeoverScanner | ✅ |
-| — Open Redirect | OpenRedirectScanner, OAuthRedirectScanner | ✅ |
-| — HTTP Smuggling | HTTPSmugglingScanner | ✅ |
-| — ReDoS | ReDoSScanner | ✅ |
-| — WebSocket | WebSocketScanner | ✅ |
-| — CSS Injection | CSSExfiltrator | ✅ |
-
----
-
-## Source Materials
-
-| Source | Purpose | Size |
-|--------|---------|------|
-| ReconX v1.3 | Reference (older) | ~34K LOC |
-| ReconX v1.4 | Primary port source | ~44K LOC |
-| GHOST/Sweet Scanner | AI agent source | ~5.6K LOC Java |
-| Sweet Scanner decompiled | Scanning patterns reference | ~18K Java files |
-
----
-
 ## Next Steps
 
 - [ ] Move `bounty_hunter.py` into `beatrix/hunters/bounty.py` (proper framework module)
-- [ ] Move `hunt.py` pipeline into a CLI command (`beatrix full-hunt`)
 - [ ] Add unit tests for GHOST agent
-- [x] `hunt --file` / `-f` — hunt multiple targets from a .txt file (full kill chain per target, aggregate summary)
 - [ ] Add unit tests for scanner modules
 - [ ] Integration test: full kill chain on a test target
 - [ ] GHOST: add Bedrock Sonnet support for complex investigations
-- [ ] Explore Agent Bridge for multi-Claude coordination during hunts
 - [ ] Auto-login: handle OTP/2FA flows that require email verification codes
 - [ ] Auto-login: detect false-positive auth (Cloudflare-only cookies vs real session)
-- [x] Dynamic wordlist engine (SecLists + PayloadsAllTheThings)
-- [x] Standardize JSON output format (envelope with metadata)
-- [x] Fix `validate` command crash on bare-list JSON
-- [x] Harden installer (extended extras, dependency verification)
-- [x] Built-in PoC validation server (eliminates interact.sh dependency)
-- [x] LocalPoCClient — drop-in InteractshClient replacement with dedup
-- [x] Scanner integrations for PoC server (CORS, SSRF, XXE, deserialization, CSS exfiltrator)
-- [x] Wire unused modules into pipeline (response_analyzer, smart_fuzzer, vrt_classifier, poc_chain_engine, WAF bypass)
-- [x] Remove dead code (insertion_point_provider.py, multi_scanner.py)
-- [x] Remove unused Python dependencies (9 removed from pyproject.toml + install.sh)
-- [x] Nuclei WAF bypass (realistic UA, WAF-aware rate limiting, origin IP bypass)
-- [x] Origin IP → nuclei flow hardening (TLS SNI, URL rewriting, finding reverse mapping)
-- [x] Redirect scanner static asset filter
-- [x] Fix empty error messages in CORS and crawler scanners
-- [x] Fix `datetime.utcnow()` deprecation warnings
-
----
-
-### Session 6 — February 23, 2026
-
-**Focus:** Dynamic wordlist engine, PayloadsAllTheThings integration, JSON output standardization
-
-**New module — `seclists_manager.py` (851 LOC):**
-- `SecListsManager` class: dynamic wordlist fetcher with disk + memory cache (7-day TTL)
-- 90 GitHub raw URLs in `DIRECT_URL_CATALOG`: 27 from SecLists, 63 from PayloadsAllTheThings
-- 11 payload categories: `sqli`, `xss`, `cmdi`, `ssti`, `lfi`, `ssrf`, `nosqli`, `ldap`, `xxe`, `redirect`, `crlf`
-- Fallback payloads for offline operation
-- Singleton pattern via `get_manager()`
-- All 90 URLs verified returning HTTP 200, 57,045 unique payloads after dedup
-
-**injection.py — Dynamic payload augmentation:**
-- Added `_init_seclists()`, `_augment_with_seclists()`, `_load_builtin_payloads()` methods
-- InjectionScanner now augments built-in payloads with SecListsManager for all 5 attack categories
-- Validated: 56,481 total payloads loaded (cmdi: 8,776, path: 35,933, sqli: 1,419, ssti: 55, xss: 10,298)
-
-**FFufEngine — Now functional:**
-- `HAS_SECLISTS = True` since `seclists_manager.py` now exists
-- Exhaustive payload loaders working: XSS (6,350), SQLi (389), LFI (1,760), RCE (8,262)
-
-**JSON output standardization:**
-- All `-o` flag paths now produce `{"findings": [...], "metadata": {...}}` envelope
-- `_export_json()` in main.py — updated with envelope + metadata
-- `reporter.export_json()` in reporters/__init__.py — updated with envelope + metadata
-- `findings export --fmt json` — updated with envelope + filter metadata
-- `validate` command — now handles both envelope and bare-list JSON inputs
-
-**install.sh hardening:**
-- All install methods now try `.[extended]` extras first, fallback to base
-- Added `CORE_PYTHON_DEPS` array (28 packages) with import verification
-- Added `verify_python_deps()` and `repair_python_deps()` functions
-
-**Commits:** `b24db94`
-
----
-
-### Session 7 — February 23, 2026
-
-**Focus:** Built-in PoC validation server, zero-dependency OOB callback infrastructure
-
-**New module — `poc_server.py` (890 LOC):**
-- `PoCServer` class: pure `asyncio.start_server` HTTP server — no external dependencies
-- Auto-binds free port via `port=0`, auto-detects local IP via UDP probe to 8.8.8.8
-- Routes: `/cb/{uid}` (OOB callbacks), `/poc/{id}` (PoC pages), `/collect/{id}` (exfil), `/clickjack`, `/enumerate`, `/enumerate/results`, `/health`
-- CORS PoC generation: XHR-based credential leak demonstration pages
-- Clickjacking PoC: iframe overlay with drag-and-drop interaction
-- URL enumeration: browser history/timing-based URL detection
-- Data exfiltration collection endpoint with full request logging
-- JS-safe string escaping (`_js_string_escape`) for template contexts
-- Helper dataclasses: `OOBCallback`, `ExfilData`, `EnumerationResult`
-- HTML templates: `CORS_POC_TEMPLATE`, `CLICKJACK_TEMPLATE`, `ENUMERATE_TEMPLATE`
-
-**`LocalPoCClient` (oob_detector.py addition):**
-- Async context manager wrapping `PoCServer` + `OOBDetector`
-- Drop-in replacement for `InteractshClient` (same `create_payload()` / `poll()` API)
-- `create_payload(vuln_type)` → `OOBPayload` with callback URL
-- `poll()` → `List[OOBInteraction]` with offset-based dedup (only returns NEW callbacks)
-- Auto-start/stop lifecycle via `async with`
-
-**Kill chain integration (`kill_chain.py`):**
-- `PoCServer` started before Phase 3 (Delivery), injected into `ctx.extra["poc_server"]`
-- Scanners in Phase 3-4 consume `poc_server` for OOB callbacks and PoC generation
-- Phase 6 (`_handle_c2`) uses `LocalPoCClient` to poll for confirmed callbacks → CRITICAL findings
-- `PoCServer.stop()` called in `finally` cleanup block
-
-**Scanner integrations (5 modules):**
-- `cors.py`: `_register_live_poc()` calls `poc_server.register_cors_poc()` for browser-ready exploitation PoCs
-- `ssrf.py`: `_inject_oob_payloads()` uses `poc_server.register_oob_payload()` + `oob_url()` for blind SSRF callbacks
-- `xxe.py`: `_inject_poc_server_collaborator()` registers OOB payloads; new `_build_local_oob_payloads()` generates direct callback URLs
-- `deserialization.py`: auto-populates `collaborator_domain` from `poc_server.base_url` for ysoserial payloads
-- `css_exfiltrator.py`: `_setup_callback_server()` uses `poc_server.base_url` for exfil collection
-
-**Commits:** `14853d2`
-
----
-
-### Session 8 — February 23, 2026
-
-**Focus:** Deep bug audit of PoC server infrastructure — 9 bugs found and fixed
-
-**Critical bugs (2):**
-- `xxe.py`: `register_oob_payload()` called with positional dict arg instead of keyword args (`vuln_type=`, `target_url=`) — would crash at runtime
-- `xxe.py`: Used `poc_server.host` (bind address `0.0.0.0`) instead of `poc_server.base_url` parsed netloc — all OOB URLs unreachable
-
-**High severity bugs (2):**
-- `xxe.py`: Prepended canary as subdomain to `IP:port` producing invalid URLs like `http://canary.10.0.11.240:41641/` — replaced with new `_build_local_oob_payloads()` using direct `/cb/{uid}` callback URLs
-- `css_exfiltrator.py`: Same `0.0.0.0` bind address bug in `callback_domain` — fixed to parse `base_url`
-
-**Medium severity bugs (3):**
-- `oob_detector.py`: `_poll_local()` returned ALL callbacks on every poll (no dedup) — added `_last_poll_count` offset tracking, now only returns new callbacks since last poll
-- `xxe.py`: Discarded `register_oob_payload` return value — now uses `oob_url()` properly in local payloads
-- `css_exfiltrator.py`: Reads `poc_server` from `self.config` not `ctx.extra` — documented as acceptable (different module architecture: BaseModule not BaseScanner)
-
-**Low severity bugs (2):**
-- `poc_server.py`: Unused `import time` — removed
-- `poc_server.py`: `_html_escape()` used in JavaScript `<script>` contexts mangling `&` in URLs — added `_js_string_escape()`, updated all template formatters
-
-**Testing:** All 14 functional tests pass (PoCServer: 8, LocalPoCClient dedup: 3, imports: 3). All files compile cleanly via `py_compile`.
-
-**Commits:** `fa690fc`
-
----
-
-### Session 9 — February 24, 2026
-
-**Focus:** Codebase audit — remove dead code, wire unused modules, remove unused deps
-
-**Audit findings:**
-- 12 unused modules identified: 2 to remove, 6 to wire in, 4 to keep as-is
-- 9 unused Python dependencies in pyproject.toml
-
-**Dead code removed (2 modules, ~721 LOC):**
-- `beatrix/core/insertion_point_provider.py` (307 LOC) — superseded by `scanners/insertion.py`
-- `beatrix/multi_scanner.py` (414 LOC) — superseded by haiku/rapid/quick_hunt entry points
-
-**Unused dependencies removed (9 packages):**
-- Removed from `pyproject.toml` and `install.sh`: beautifulsoup4, lxml, python-dotenv, sqlalchemy, aiosqlite, anthropic, aiofiles, python-dateutil, regex
-
-**Modules wired into pipeline (6):**
-
-1. **`response_analyzer`** → `scanners/injection.py`
-   - Baseline response capture before payload testing
-   - 30-dimension behavioral blind detection via `responses_differ()` + `is_blind_indicator()`
-   - New "behavior" detection type with min_attrs=2 threshold
-
-2. **`advanced_waf_bypass`** → `scanners/injection.py`
-   - WAF bypass payload fallback: when initial payloads find nothing, generates up to 5 bypass variants via `get_waf_bypass_payloads()`
-   - Retests each bypass variant through existing detection pipeline
-
-3. **`smart_fuzzer`** → `core/kill_chain.py` Phase 4
-   - Runs after nuclei, before deep exploitation tools
-   - Takes parameterized URLs, builds FUZZ-marked URLs, runs `SmartFuzzer.scan()`
-   - Converts `VerifiedFinding` → `Finding` objects
-
-4. **`vrt_classifier`** → `reporters/__init__.py` + `core/kill_chain.py` Phase 7
-   - VRT enrichment in both single and batch reports (priority label, CVSS score, vector string)
-   - New `_format_vrt_section()` helper for detailed single-finding reports
-   - Phase 7 classifies all findings with Bugcrowd VRT before aggregation
-
-5. **`poc_chain_engine`** → `core/kill_chain.py` Phase 7
-   - When ≥2 findings, feeds them into `EventCorrelationEngine` → `PoCChainEngine`
-   - Generates exploit chains from correlated findings
-   - Stores `poc_chains` and `correlation_engine` in kill chain context
-
-6. **`waf_bypass`** → exported via `utils/__init__.py` (used by advanced_waf_bypass internally)
-
-**Modules kept as-is (4):**
-- `scan_check_types.py` — Architecture reference for future scanner standardization
-- `packet_crafter.py` — Specialized scapy recon, requires root privileges
-- `privilege_graph.py` — BloodHound-inspired graphing, needs networkx + multi-role support
-- `ssh_auditor.py` — Specialized SSH target auditing
-
-**All integrations use lazy imports** with `try/except ImportError` + `HAS_*` flags — nothing breaks if a module fails to load.
-
----
-
-### Session 10 — March 3, 2026
-
-**Focus:** Install script future-proofing, standalone module CLI wiring, documentation sync
-
-**Install script (`install.sh`) — Complete rewrite for Python compatibility:**
-- Dynamic Python discovery via `compgen -c python3.` sorted newest-first — no more hardcoded version list
-- New install order: uv → venv → pipx → pip --user (was: pipx → pip → venv)
-- New `install_with_uv()` function — auto-installs uv if missing, fastest install method
-- `install_with_venv()` rewritten with error handling for missing `python3-venv` package
-- `install_with_pip_system()` REMOVED — eliminated PEP 668 externally-managed-environment conflicts
-- `VENV_DIR="${BEATRIX_VENV:-$HOME/.beatrix}"` — customizable venv location
-- `check_pip()` now non-fatal (warns, doesn't abort)
-- `verify_python_deps()` uses venv pip for repairs
-- `install_external_tools` Python section uses `$PIP_CMD` that prefers venv pip
-- jwt_tool wrapper uses venv Python
-
-**Standalone module CLI wiring (5 new command groups, ~340 LOC added to main.py):**
-1. `beatrix browser scan` — wraps `quick_browser_scan()` with --login-url, --email, --password, --visible
-2. `beatrix creds validate|batch` — wraps `CredentialValidator` with type choices (jwt_secret, api_key, aws_key, github_token, stripe_key, etc.)
-3. `beatrix origin-ip` — wraps `run_origin_discovery()` with multiple domains, --verbose, --output
-4. `beatrix inject` — wraps `PowerInjector.scan()` with --deep, --types, --timeout, --concurrency, --ai, --output
-5. `beatrix polyglot generate|mxss|clobber` — wraps `get_xss_payloads()`, `get_mxss_payloads()`, `get_dom_clobbering_payloads()`
-
-**Documentation updates:**
-- README.md: Added 5 new commands to command reference table, updated install methods section (uv/venv priority), updated architecture command count
-- ARCHITECTURE.md: Updated date, command count (20 → 25), data flow section
-- PROJECT_STATUS.md: Updated CLI stats (~3,700 LOC, 25 commands), added 5 new commands to listing, added Session 10 log
-- Manual (index.html): Added sidebar TOC entries, command detail sections, and install method updates for all 5 new commands
-
-**CLI stats:** 20 → 25 top-level commands/groups
-
----
-
-*"Those of you lucky enough to have your lives, take them with you. However, leave the limbs you've lost. They belong to me now."*

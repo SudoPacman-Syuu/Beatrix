@@ -105,7 +105,7 @@ class HackerOneClient:
         3. Environment variables H1_USERNAME, H1_API_TOKEN
 
         Args:
-            username: HackerOne handle (e.g., "sudopacman-syuu")
+            username: HackerOne handle (e.g., "your-h1-handle")
             api_token: API token from HackerOne settings
             config_dir: Path to config directory containing credentials.csv
         """
@@ -268,7 +268,7 @@ class HackerOneClient:
         Searches hacktivity and existing reports for similar findings.
 
         Args:
-            program_handle: The H1 program handle (e.g., "bykea")
+            program_handle: The H1 program handle (e.g., "example-program")
             keywords: Search terms to look for (e.g., ["github", "leaked", "credentials"])
             vuln_type: Optional VRT type to filter by
 
@@ -399,7 +399,7 @@ class HackerOneClient:
         This is the method that actually submits. No drafts, no half-measures.
 
         Args:
-            program_handle: Target program handle (e.g., "bykea")
+            program_handle: Target program handle (e.g., "example-program")
             title: Report title
             vulnerability_information: Full report body (markdown)
             impact: Impact statement

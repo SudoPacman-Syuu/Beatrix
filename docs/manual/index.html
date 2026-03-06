@@ -535,7 +535,7 @@
     <div id="top" class="hero">
         <h1>BEATRIX</h1>
         <p>THE BLACK MAMBA OF BUG BOUNTY FRAMEWORKS</p>
-        <span class="version-badge">29 Modules · 13 Tool Integrations · 21 External Tools · Full OWASP Top 10</span>
+        <span class="version-badge">32 Modules · 13 Tool Integrations · 21 External Tools · Full OWASP Top 10</span>
     </div>
 
     <div class="container">
@@ -572,7 +572,7 @@
                 
                 <li><a href="#json-format">4b. JSON Output Format</a></li>
                 
-                <li><a href="#modules">5. The Arsenal (29 Modules)</a></li>
+                <li><a href="#modules">5. The Arsenal (32 Modules)</a></li>
                 <li class="sub-item"><a href="#mod-recon">Phase 1: Reconnaissance</a></li>
                 <li class="sub-item"><a href="#mod-weap">Phase 2: Weaponization</a></li>
                 <li class="sub-item"><a href="#mod-deliv">Phase 3: Delivery</a></li>
@@ -600,7 +600,7 @@
 
             <section id="intro">
                 <h2>1. Introduction</h2>
-                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 29 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration directly to your terminal.</p>
+                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration directly to your terminal.</p>
                 <p>Beatrix is built for operators who prefer a terminal over a GUI. It bridges the gap between high-level automation (for rapid, wide-scale sweeps) and low-level manual control (for surgical, targeted strikes).</p>
                 
                 <div class="warning">
@@ -845,7 +845,7 @@ beatrix help findings</code></pre>
                     <summary>arsenal — List All Scanner Modules</summary>
                     <div class="detail-body">
                         <pre><code>beatrix arsenal</code></pre>
-                        <p>Displays the full Beatrix arsenal — all 29 scanner modules with descriptions, categories, and OWASP mappings. No arguments needed.</p>
+                        <p>Displays the full Beatrix arsenal — all 32 scanner modules with descriptions, categories, and OWASP mappings. No arguments needed.</p>
                     </div>
                 </details>
 
@@ -1023,7 +1023,7 @@ beatrix hunt -f TARGETS_FILE [OPTIONS]</code></pre>
                             <tr><th>Preset</th><th>Description</th><th>Est. Time</th></tr>
                             <tr><td><code>quick</code></td><td>Recon only — subdomain enum, tech detect</td><td>~5 min</td></tr>
                             <tr><td><code>standard</code></td><td>Balanced scan — recon + top vuln scanners</td><td>~15 min</td></tr>
-                            <tr><td><code>full</code></td><td>Complete kill chain — all 38+ modules + full network recon</td><td>~45–60 min</td></tr>
+                            <tr><td><code>full</code></td><td>Complete kill chain — all 32 modules + full network recon</td><td>~45–60 min</td></tr>
                             <tr><td><code>stealth</code></td><td>Low-and-slow to avoid WAF detection</td><td>~45 min</td></tr>
                             <tr><td><code>injection</code></td><td>Injection-focused (SQLi, XSS, SSTI, CMDi)</td><td>~20 min</td></tr>
                             <tr><td><code>api</code></td><td>API-focused (IDOR, auth, GraphQL, CORS)</td><td>~15 min</td></tr>
@@ -1282,21 +1282,20 @@ beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</cod
                 <details id="cmd-mobile">
                     <summary>mobile — Mobile App Traffic Interception</summary>
                     <div class="detail-body">
-                        <pre><code>beatrix mobile intercept|bykea|analyze</code></pre>
+                        <pre><code>beatrix mobile intercept|analyze</code></pre>
                         <p>Automates the entire mobile app interception workflow: emulator launch, proxy config, certificate injection, and traffic analysis.</p>
 
                         <table>
                             <tr><th>Subcommand</th><th>Usage</th><th>Description</th></tr>
                             <tr><td><code>intercept</code></td><td><code>beatrix mobile intercept --apk app.apk</code></td><td>Launch emulator + capture traffic</td></tr>
-                            <tr><td><code>bykea</code></td><td><code>beatrix mobile bykea --apk bykea.apk</code></td><td>Bykea-specific interception with leaked key matching</td></tr>
                             <tr><td><code>analyze</code></td><td><code>beatrix mobile analyze capture.json</code></td><td>Analyze a previously captured traffic file</td></tr>
                         </table>
 
                         <p><strong>Intercept flags:</strong></p>
                         <table class="flag-table">
-                            <tr><td>--avd NAME</td><td>Android Virtual Device name (default: bykea_hunter)</td></tr>
+                            <tr><td>--avd NAME</td><td>Android Virtual Device name (default: beatrix_hunter)</td></tr>
                             <tr><td>--apk PATH</td><td>APK file to install on emulator</td></tr>
-                            <tr><td>-p, --package PKG</td><td>Package name to launch (default: com.bykea.pk)</td></tr>
+                            <tr><td>-p, --package PKG</td><td>Package name to launch (default: com.example.app)</td></tr>
                             <tr><td>-d, --duration SECS</td><td>Capture duration in seconds (default: 300)</td></tr>
                             <tr><td>--port PORT</td><td>Proxy port (default: 8080)</td></tr>
                         </table>
@@ -1580,8 +1579,8 @@ beatrix polyglot clobber</code></pre>
             </section>
 
             <section id="modules">
-                <h2>5. The Arsenal (29 Modules + 13 Tool Integrations)</h2>
-                <p>Beatrix packs 29 registered scanner modules plus 13 external tool integrations. You can view them in your terminal using <code>beatrix arsenal</code>. Here is the comprehensive breakdown of every capability.</p>
+                <h2>5. The Arsenal (32 Modules + 13 Tool Integrations)</h2>
+                <p>Beatrix packs 32 registered scanner modules plus 13 external tool integrations. You can view them in your terminal using <code>beatrix arsenal</code>. Here is the comprehensive breakdown of every capability.</p>
 
                 <h3 id="mod-recon">Phase 1: Reconnaissance</h3>
                 <p>The foundation of the framework. Without crawling and probing, scanners only see a bare URL with zero parameters, zero endpoints, and zero forms. This phase builds the <code>ScanContext</code> attack surface.</p>
@@ -1626,7 +1625,7 @@ beatrix polyglot clobber</code></pre>
                 <details>
                     <summary>3. JS Bundle Analyzer (js_bundle.py) <span class="tag">Recon</span></summary>
                     <div class="detail-body">
-                        <p><strong>Description:</strong> A passive recon module that downloads and analyzes JavaScript bundles for information disclosure. This exact technique discovered 4 new backend hosts on a Bykea engagement.</p>
+                        <p><strong>Description:</strong> A passive recon module that downloads and analyzes JavaScript bundles for information disclosure. This technique can discover backend hosts hidden behind CDN/WAF infrastructure.</p>
                         <p><strong>Extraction Capabilities:</strong></p>
                         <ul>
                             <li><strong>Manifest Discovery:</strong> Hunts for <code>asset-manifest.json</code>, <code>webpack-manifest.json</code>, and Next.js <code>_buildManifest.js</code> to locate all chunks.</li>
@@ -1649,7 +1648,7 @@ beatrix polyglot clobber</code></pre>
                             <li><strong>Repository Enumeration:</strong> Uses the GitHub API to list all public repos for the target org, sorting by most recently updated.</li>
                             <li><strong>File Tree Scanning:</strong> Pulls the git tree and filters for interesting files (<code>.env</code>, <code>config/production.json</code>, <code>docker-compose.yml</code>, <code>wp-config.php</code>, <code>id_rsa</code>).</li>
                             <li><strong>Secret Scanning:</strong> Scans file content against 15+ critical regex patterns. It actively ignores placeholder values (<code>changeme</code>, <code>your-api-key</code>) and common CI/test credentials (<code>postgres:postgres</code>, <code>testuser</code>) to ensure high-fidelity alerts.</li>
-                            <li><strong>Git History Analysis (The "Bykea" Technique):</strong> This is where the magic happens. It pulls the commit history, looking for suspicious commit messages (<code>remove</code>, <code>sanitize</code>, <code>redact</code>, <code>secret</code>). It then pulls the diff for those commits. If a line containing a secret was <em>removed</em> (starts with <code>-</code>) and replaced with a placeholder, it flags the permanently recoverable secret from the git history.</li>
+                            <li><strong>Git History Analysis:</strong> This is where the magic happens. It pulls the commit history, looking for suspicious commit messages (<code>remove</code>, <code>sanitize</code>, <code>redact</code>, <code>secret</code>). It then pulls the diff for those commits. If a line containing a secret was <em>removed</em> (starts with <code>-</code>) and replaced with a placeholder, it flags the permanently recoverable secret from the git history.</li>
                         </ul>
                     </div>
                 </details>
@@ -1768,7 +1767,7 @@ beatrix polyglot clobber</code></pre>
                 <details>
                     <summary>9. CORS Scanner (cors.py) <span class="tag">A02</span></summary>
                     <div class="detail-body">
-                        <p><strong>Description:</strong> Detects Cross-Origin Resource Sharing (CORS) misconfigurations that allow attackers to read sensitive data cross-origin. This exact module found a critical CORS misconfiguration on Anduril's developer portal.</p>
+                        <p><strong>Description:</strong> Detects Cross-Origin Resource Sharing (CORS) misconfigurations that allow attackers to read sensitive data cross-origin. This exact module found a critical CORS misconfiguration on a target developer portal.</p>
                         <p><strong>Technical Execution:</strong></p>
                         <ul>
                             <li><strong>Origin Generation:</strong> Dynamically generates malicious origins based on the target domain (e.g., <code>https://evil.com</code>, <code>null</code>, <code>https://evil.com.target.com</code>, <code>https://target.com.evil.com</code>, <code>http://target.com</code>).</li>
@@ -1918,7 +1917,7 @@ beatrix polyglot clobber</code></pre>
                         <ul>
                             <li><strong>JWT Analysis:</strong> Decodes JWTs offline to check for the <code>alg: "none"</code> vulnerability (allowing signature bypass), brute-forces the signature against a dictionary of common weak secrets (e.g., "secret", "123456"), and checks for missing or excessive <code>exp</code> (expiration) claims.</li>
                             <li><strong>Username Enumeration:</strong> Sends login requests with likely-valid and definitely-invalid usernames. It compares the HTTP responses to detect enumeration via different error messages (e.g., "Invalid password" vs "User not found") or via statistical timing differences (>300ms delta).</li>
-                            <li><strong>Email Enumeration:</strong> Tests registration, password reset, and guest checkout endpoints (specifically targeting e-commerce patterns like Zooplus) to see if the API leaks whether an email is already registered via status codes or JSON body differences.</li>
+                            <li><strong>Email Enumeration:</strong> Tests registration, password reset, and guest checkout endpoints (specifically targeting e-commerce patterns) to see if the API leaks whether an email is already registered via status codes or JSON body differences.</li>
                         </ul>
                     </div>
                 </details>
@@ -1953,7 +1952,7 @@ beatrix polyglot clobber</code></pre>
                 <details>
                     <summary>21. Payment & Checkout Scanner (payment_scanner.py) <span class="tag">A04</span></summary>
                     <div class="detail-body">
-                        <p><strong>Description:</strong> Specialized business logic scanner focused entirely on e-commerce checkout and payment flows. Built specifically to target complex SPA/API architectures like Zooplus.</p>
+                        <p><strong>Description:</strong> Specialized business logic scanner focused entirely on e-commerce checkout and payment flows. Built specifically to target complex SPA/API architectures.</p>
                         <p><strong>Technical Execution:</strong></p>
                         <ul>
                             <li><strong>State-API Mapping:</strong> Contains pre-configured endpoint maps for complex checkout flows (e.g., <code>/cart-version</code>, <code>/set-article-quantity</code>, <code>/add-coupon</code>, <code>/checkout/place-order</code>).</li>
@@ -2197,9 +2196,7 @@ beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</cod
                 </ul>
             </section>
 
-            <div class="quote">
-                "Those of you lucky enough to have your lives, take them with you. However, leave the limbs you've lost. They belong to me now."
-            </div>
+
         </main>
     </div>
 

@@ -3,7 +3,7 @@ BEATRIX CORS Scanner
 
 Detects CORS misconfigurations that could allow cross-origin attacks.
 
-Based on real-world findings (Anduril login.developer.anduril.com confirmed vuln).
+Based on real-world findings from bug bounty engagements.
 
 Checks:
 - Reflected Origin in ACAO header
@@ -168,7 +168,7 @@ class CORSScanner(BaseScanner):
                 self.log(f"Error during scan: {result}")
 
         # Also test with authentication headers if available
-        # Lesson from Zooplus: CORS with credentials on authenticated endpoints
+        # Lesson from a real-world engagement: CORS with credentials on authenticated endpoints
         # is what makes a finding impactful (PII leakage)
         if context.cookies or context.headers:
             auth_headers = {}

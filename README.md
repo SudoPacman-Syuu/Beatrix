@@ -4,7 +4,7 @@
 
 **License:** Source Available — Free for non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE).
 
-A command-line bug bounty hunting framework. 29 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, 7-phase Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal.
+A command-line bug bounty hunting framework. 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, 7-phase Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal.
 
 Globally installable on any Linux system. Call it from anywhere.
 
@@ -94,7 +94,7 @@ beatrix arsenal                      # full module reference
 | `recon DOMAIN` | Reconnaissance | `beatrix recon example.com --deep` |
 | `batch FILE -m MOD` | Mass scanning | `beatrix batch targets.txt -m cors` |
 | `bounty-hunt TARGET` | OWASP Top 10 pipeline | `beatrix bounty-hunt https://api.com` |
-| `rapid` | Multi-target quick sweep | `beatrix rapid -d shopify.com` |
+| `rapid` | Multi-target quick sweep | `beatrix rapid -d example.com` |
 | `haiku-hunt TARGET` | AI-assisted hunting | `beatrix haiku-hunt example.com` |
 | `ghost TARGET` | AI autonomous pentester | `beatrix ghost https://api.com` |
 | `github-recon ORG` | GitHub secret scanner | `beatrix github-recon acme-corp` |
@@ -146,7 +146,7 @@ beatrix list --modules
 
 Every `hunt` follows the Cyber Kill Chain methodology:
 
-1. �️ **CDN Bypass** — Detects Cloudflare/Akamai/Fastly/CloudFront via IP range + header fingerprinting. Discovers origin IPs through 6+ techniques (DNS history, crt.sh SSL certs, MX records, subdomain correlation, misconfiguration checks, WHOIS). If origin found, all network scans target the real server instead of CDN edge. Optional API keys (SecurityTrails, Censys, Shodan) via environment variables.
+1. 🛡️ **CDN Bypass** — Detects Cloudflare/Akamai/Fastly/CloudFront via IP range + header fingerprinting. Discovers origin IPs through 6+ techniques (DNS history, crt.sh SSL certs, MX records, subdomain correlation, misconfiguration checks, WHOIS). If origin found, all network scans target the real server instead of CDN edge. Optional API keys (SecurityTrails, Censys, Shodan) via environment variables.
 2. 🔍 **Reconnaissance** — Subdomain enum (`subfinder`, `amass`), crawling (`katana`, `gospider`, `hakrawler`, `gau`), **full 65535-port TCP scan** (`nmap -sS -p-`) against origin IP when available, service fingerprinting, NSE vuln/discovery/auth scripts, UDP top-50 scan, **firewall fingerprinting + bypass testing** (`scapy`), **SSH deep audit** (`paramiko`), JS analysis, endpoint probing, tech fingerprinting (`whatweb`, `webanalyze`), **nuclei recon** (fast tech/panel/WAF detection), **nuclei network** (protocol checks on non-HTTP services)
 2. ⚔️ **Weaponization** — Subdomain takeover, error disclosure, cache poisoning, prototype pollution
 3. 📦 **Delivery** — CORS, open redirects, OAuth redirect, HTTP smuggling, WebSocket testing
@@ -173,7 +173,7 @@ beatrix hunt example.com --preset injection
 
 ### Scanner Modules (Arsenal)
 
-Run `beatrix arsenal` for the full table. 29 registered modules across 5 kill chain phases:
+Run `beatrix arsenal` for the full table. 32 registered modules across 5 kill chain phases:
 
 **Phase 1 — Reconnaissance:**
 
@@ -444,12 +444,12 @@ Store your username/email and password and Beatrix will automatically log in bef
 beatrix auth login example.com
 
 # Or pass credentials via CLI flags
-beatrix hunt target.com --login-user user@example.com --login-pass 'P@ssw0rd'
-beatrix hunt target.com --login-user user@example.com --login-pass 'P@ssw0rd' --login-url https://target.com/api/auth/login
+beatrix hunt target.com --login-user user@example.com --login-pass 'your-password-here'
+beatrix hunt target.com --login-user user@example.com --login-pass 'your-password-here' --login-url https://target.com/api/auth/login
 
 # Or via environment variables
 export BEATRIX_LOGIN_USER="user@example.com"
-export BEATRIX_LOGIN_PASS="P@ssw0rd"
+export BEATRIX_LOGIN_PASS="your-password-here"
 export BEATRIX_LOGIN_URL="https://target.com/api/auth/login"  # optional
 beatrix hunt target.com
 ```
@@ -536,16 +536,16 @@ Auth config supports per-target credentials and IDOR dual-session testing (see `
 beatrix h1 programs
 
 # Search for a program
-beatrix h1 programs -s "shopify"
+beatrix h1 programs -s "example-program"
 
 # Check for duplicates before submitting
-beatrix h1 dupecheck shopify cors misconfiguration
+beatrix h1 dupecheck example-program cors misconfiguration
 
 # Submit a report
-beatrix h1 submit shopify -t "CORS Misconfiguration" -f report.md -i "Account takeover" -s high
+beatrix h1 submit example-program -t "CORS Misconfiguration" -f report.md -i "Account takeover" -s high
 
 # Dry run
-beatrix h1 submit shopify -t "CORS" -f report.md -i "ATO" -s high --dry-run
+beatrix h1 submit example-program -t "CORS" -f report.md -i "ATO" -s high --dry-run
 ```
 
 ### GitHub Secret Scanning
@@ -677,7 +677,7 @@ beatrix list --presets
 beatrix/
 ├── cli/main.py              # CLI entry point — 26 commands via Click + Rich
 ├── core/
-│   ├── engine.py            # BeatrixEngine — orchestrates everything, 29 modules
+│   ├── engine.py            # BeatrixEngine — orchestrates everything, 32 modules
 │   ├── kill_chain.py        # 7-phase kill chain executor + 3-phase network pipeline
 │   ├── nmap_scanner.py      # Full TCP/UDP scanning, NSE vuln/discovery/auth scripts
 │   ├── packet_crafter.py    # Scapy firewall fingerprint, source-port/fragment bypass, TTL map
@@ -719,5 +719,3 @@ This tool is designed for **authorized security testing only**. Only use Beatrix
 The operators of this tool are responsible for ensuring all applicable laws and regulations are followed.
 
 ---
-
-*"You and I have unfinished business."*

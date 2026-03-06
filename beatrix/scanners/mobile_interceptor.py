@@ -9,8 +9,8 @@ Automates the full mobile app interception workflow:
 4. Capture and analyze all HTTP/S traffic
 5. Extract secrets, API keys, tokens, endpoints from live traffic
 
-Built for the Bykea engagement — intercept production mobile app traffic
-to validate leaked credentials against live systems.
+Intercept production mobile app traffic to validate leaked credentials
+against live systems.
 
 Dependencies:
     - Android SDK (emulator, adb, avdmanager)
@@ -61,13 +61,13 @@ class InterceptedRequest:
 @dataclass
 class MobileInterceptConfig:
     """Configuration for mobile interception session"""
-    avd_name: str = "bykea_hunter"
+    avd_name: str = "beatrix_hunter"
     proxy_host: str = "127.0.0.1"
     proxy_port: int = 8080
     apk_path: Optional[str] = None
     package_name: Optional[str] = None
-    location_lat: float = 29.9688  # Sibi, Pakistan (per Bykea policy)
-    location_lon: float = 67.8773
+    location_lat: float = 37.7749  # San Francisco (default)
+    location_lon: float = -122.4194
     android_home: str = ""
     capture_file: str = ""
     timeout: int = 300  # seconds to capture before auto-stop
@@ -481,7 +481,7 @@ class MobileInterceptor:
             timeout=10,
         )
 
-        print(f"[BEATRIX] Location set to {lat}, {lon} (Sibi, Pakistan)")
+        print(f"[BEATRIX] Location set to {lat}, {lon}")
 
     async def _install_apk(self):
         """Install APK on emulator"""
@@ -571,7 +571,6 @@ class MobileInterceptor:
 
         Args:
             known_secrets: Dict of {name: value} for leaked keys to match against
-                           e.g., {"bl-bkd-key": "428c2ca7210279c607be6bc45eab51e6709c3a59"}
         """
         analysis = TrafficAnalysis()
         analysis.total_requests = len(self.captured_requests)
@@ -598,12 +597,12 @@ class MobileInterceptor:
                 # API key headers
                 if any(kw in hn for kw in [
                     "api-key", "apikey", "x-api", "x-key", "token",
-                    "bl-bkd-key", "x-bb-client-key", "secret", "auth",
+                    "secret", "auth",
                 ]):
                     analysis.api_keys_found[header_name] = header_value
 
                 # Any custom headers (non-standard)
-                if hn.startswith("x-") or hn.startswith("bl-"):
+                if hn.startswith("x-"):
                     analysis.interesting_headers[header_name] = header_value
 
             # Check response headers too
@@ -854,30 +853,29 @@ class MobileInterceptor:
 # CLI / CONVENIENCE
 # =============================================================================
 
-async def run_bykea_intercept(
+async def run_mobile_intercept(
     duration: int = 300,
     apk_path: Optional[str] = None,
+    package_name: Optional[str] = None,
+    avd_name: str = "beatrix_hunter",
+    known_secrets: Optional[Dict[str, str]] = None,
 ):
     """
-    Run a full Bykea interception session.
+    Run a full mobile interception session.
 
-    After capturing: checks traffic for the leaked keys.
+    After capturing: checks traffic for any supplied known secrets.
+
+    Args:
+        duration: Capture duration in seconds
+        apk_path: Path to APK to install (optional)
+        package_name: Android package name to launch (optional)
+        avd_name: Android Virtual Device name
+        known_secrets: Dict of {name: value} for leaked keys to match against
     """
-    # Known leaked secrets from the Bykea node-boilerplate
-    BYKEA_LEAKED_SECRETS = {
-        "bl-bkd-key": "428c2ca7210279c607be6bc45eab51e6709c3a59",
-        "jwt-secret": "9e06765b-93bc-4e07-bc59-2e666a51bb0b",
-        "aes-key": "C1GKh@l33fF@nt@s",
-        "aes-key-second": "C1GKh@l33fF@nt@a",
-        "db-password": "admin1234",
-    }
-
     config = MobileInterceptConfig(
-        avd_name="bykea_hunter",
+        avd_name=avd_name,
         apk_path=apk_path,
-        package_name="com.bykea.pk",
-        location_lat=29.9688,   # Sibi, Pakistan
-        location_lon=67.8773,
+        package_name=package_name,
     )
 
     interceptor = MobileInterceptor(config)
@@ -885,10 +883,10 @@ async def run_bykea_intercept(
     try:
         await interceptor.start()
 
-        # Launch the Bykea app
-        await interceptor.launch_app("com.bykea.pk")
+        if package_name:
+            await interceptor.launch_app(package_name)
 
-        print(f"\n[BEATRIX] Bykea app launched. Capturing for {duration}s...")
+        print(f"\n[BEATRIX] Capturing for {duration}s...")
         print("[BEATRIX] Interact with the app in the emulator to generate traffic.")
         print("[BEATRIX] Press Ctrl+C to stop early.\n")
 
@@ -900,16 +898,15 @@ async def run_bykea_intercept(
 
     # Analyze
     print("\n[BEATRIX] Analyzing captured traffic...")
-    analysis = interceptor.analyze_traffic(known_secrets=BYKEA_LEAKED_SECRETS)
+    analysis = interceptor.analyze_traffic(known_secrets=known_secrets)
 
-    # Check JWT tokens against leaked secret
-    if analysis.jwt_tokens:
-        jwt_secret = BYKEA_LEAKED_SECRETS["jwt-secret"]
+    # Check JWT tokens against leaked secret if provided
+    if analysis.jwt_tokens and known_secrets and "jwt-secret" in known_secrets:
+        jwt_secret = known_secrets["jwt-secret"]
         for token in analysis.jwt_tokens:
             if interceptor.check_jwt_secret(token, jwt_secret):
-                print("\n🔴 CRITICAL: Production JWT verified with leaked secret!")
+                print("\n[!] CRITICAL: Production JWT verified with leaked secret!")
                 print(f"   JWT: {token[:60]}...")
-                print(f"   Secret: {jwt_secret}")
                 analysis.matched_leaked_keys.append({
                     "secret_name": "jwt-secret (SIGNATURE VERIFIED)",
                     "secret_value": jwt_secret,
@@ -923,12 +920,11 @@ async def run_bykea_intercept(
     # Print results
     if analysis.matched_leaked_keys:
         print("\n" + "=" * 60)
-        print("🔴 LEAKED KEYS CONFIRMED IN PRODUCTION TRAFFIC")
+        print("[!] LEAKED KEYS CONFIRMED IN PRODUCTION TRAFFIC")
         print("=" * 60)
         for m in analysis.matched_leaked_keys:
-            print(f"  ✓ {m['secret_name']} found in {m['found_in']}")
+            print(f"  + {m['secret_name']} found in {m['found_in']}")
             print(f"    URL: {m['url']}")
-        print("\nThis is the evidence needed to reopen the H1 report.")
     else:
         print("\n[BEATRIX] No leaked keys found in captured traffic.")
         if analysis.api_keys_found:
@@ -938,7 +934,7 @@ async def run_bykea_intercept(
 
     # Save report
     report = interceptor.generate_report()
-    report_path = "/tmp/beatrix_bykea_intercept_report.md"
+    report_path = "/tmp/beatrix_intercept_report.md"
     with open(report_path, "w") as f:
         f.write(report)
     print(f"\n[BEATRIX] Report saved to {report_path}")
@@ -951,15 +947,20 @@ async def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="BEATRIX Mobile Traffic Interceptor")
-    parser.add_argument("--avd", default="bykea_hunter", help="AVD name")
+    parser.add_argument("--avd", default="beatrix_hunter", help="AVD name")
     parser.add_argument("--apk", help="APK file to install")
-    parser.add_argument("--package", default="com.bykea.pk", help="Package name to launch")
+    parser.add_argument("--package", help="Package name to launch")
     parser.add_argument("--duration", type=int, default=300, help="Capture duration (seconds)")
     parser.add_argument("--port", type=int, default=8080, help="Proxy port")
-    parser.add_argument("--bykea", action="store_true", help="Run Bykea-specific intercept")
+    parser.add_argument("--secrets-file", help="JSON file with known secrets to match against")
     parser.add_argument("--analyze-only", help="Analyze existing capture file")
 
     args = parser.parse_args()
+
+    known_secrets = None
+    if args.secrets_file:
+        with open(args.secrets_file) as f:
+            known_secrets = json.load(f)
 
     if args.analyze_only:
         config = MobileInterceptConfig(capture_file=args.analyze_only)
@@ -967,35 +968,22 @@ async def main():
         interceptor.config.capture_file = args.analyze_only
         interceptor._load_captures()
 
-        interceptor.analyze_traffic(
-            known_secrets={
-                "bl-bkd-key": "428c2ca7210279c607be6bc45eab51e6709c3a59",
-                "jwt-secret": "9e06765b-93bc-4e07-bc59-2e666a51bb0b",
-                "aes-key": "C1GKh@l33fF@nt@s",
-            }
-        )
-
+        interceptor.analyze_traffic(known_secrets=known_secrets)
         print(interceptor.generate_report())
         return
 
-    if args.bykea:
-        await run_bykea_intercept(
-            duration=args.duration,
-            apk_path=args.apk,
-        )
-    else:
-        config = MobileInterceptConfig(
-            avd_name=args.avd,
-            proxy_port=args.port,
-            apk_path=args.apk,
-            package_name=args.package,
-        )
+    config = MobileInterceptConfig(
+        avd_name=args.avd,
+        proxy_port=args.port,
+        apk_path=args.apk,
+        package_name=args.package,
+    )
 
-        interceptor = MobileInterceptor(config)
-        await interceptor.capture_session(duration=args.duration)
+    interceptor = MobileInterceptor(config)
+    await interceptor.capture_session(duration=args.duration)
 
-        interceptor.analyze_traffic()
-        print(interceptor.generate_report())
+    interceptor.analyze_traffic(known_secrets=known_secrets)
+    print(interceptor.generate_report())
 
 
 if __name__ == "__main__":

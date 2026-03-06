@@ -18,7 +18,7 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           CORE ENGINE (engine.py)                           │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │ Kill Chain   │  │ 29 Scanner   │  │  External    │  │  Issue       │     │
+│  │ Kill Chain   │  │ 32 Scanner   │  │  External    │  │  Issue       │     │
 │  │ Executor     │  │ Modules      │  │  Toolkit     │  │ Consolidator │     │
 │  │ (7 phases)   │  │ (BaseScanner)│  │ (13 tools)   │  │ (dedup)      │     │
 │  └──────┬───────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
@@ -177,7 +177,7 @@ beatrix/
 ├── cli/
 │   └── main.py                    # 26 CLI commands (Click + Rich)
 ├── core/
-│   ├── engine.py                  # BeatrixEngine — 29 module registry, presets
+│   ├── engine.py                  # BeatrixEngine — 32 module registry, presets
 │   ├── kill_chain.py              # KillChainExecutor — 7-phase state machine
 │   ├── external_tools.py          # 13 async tool runners (ExternalToolkit)
 │   ├── types.py                   # Finding, Severity, Confidence, ScanContext
@@ -237,7 +237,12 @@ beatrix/
 │   ├── css_exfiltrator.py         # CSS injection data exfil
 │   ├── mobile_interceptor.py      # ADB + mitmproxy traffic capture
 │   ├── polyglot_generator.py      # Multi-context payload generation
-│   └── power_injector.py          # Advanced insertion point testing
+│   ├── power_injector.py          # Advanced insertion point testing
+│   ├── insertion.py               # Insertion point discovery
+│   ├── origin_ip_discovery.py     # CDN bypass, origin IP fingerprinting
+│   ├── param_miner.py             # Hidden parameter discovery
+│   ├── sequencer.py               # Token randomness analysis
+│   └── backslash_scanner.py       # Backslash-powered path normalization attacks
 ├── ai/
 │   ├── ghost.py                   # GHOST autonomous pentester (10 tools)
 │   ├── assistant.py               # AIAssistant, HaikuGrunt, Bedrock/Anthropic

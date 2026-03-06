@@ -20,7 +20,7 @@ Scans execute phases in order. Each phase dispatches its registered scanner modu
 | **6** | Command & Control | *(inline: OOB detector, PoC server, token enumerator)* | 0 |
 | **7** | Actions on Objectives | *(inline: credential validation, Metasploit RC gen, VRT classification, PoC chain engine)* | 0 |
 
-**Total registered modules:** 29
+**Total registered modules:** 32
 
 ---
 
@@ -59,6 +59,9 @@ String key → class instance, all wired in `core/engine.py`:
 | `payment` | `PaymentScanner` | `scanners/payment_scanner.py` |
 | `nuclei` | `NucleiScanner` | `scanners/nuclei.py` (WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI) |
 | `file_upload` | `FileUploadScanner` | `scanners/file_upload.py` |
+| `backslash` | `BackslashPoweredScanner` | `scanners/backslash_scanner.py` |
+| `param_miner` | `ParamMiner` | `scanners/param_miner.py` |
+| `sequencer` | `SequencerScanner` | `scanners/sequencer.py` |
 
 ---
 
@@ -72,8 +75,8 @@ String key → class instance, all wired in `core/engine.py`:
 | `standard` | 1–4 | 21 |
 | `injection` | 1, 3, 4 | 12 |
 | `api` | 1, 3, 4 | 15 |
-| `web` | 1–5 | 29 |
-| `full` | 1–7 | all 29 |
+| `web` | 1–5 | 32 |
+| `full` | 1–7 | all 32 |
 
 ---
 

@@ -2,7 +2,7 @@
 BEATRIX Validators
 
 Post-scan validation layer that prevents theoretical reports.
-Born from 3 informative closures on Bykea (2026-02-05).
+Born from real-world informative closures during bug bounty testing.
 
 Every finding must pass through:
 1. ImpactValidator - Does this have REAL, demonstrable impact?
