@@ -75,18 +75,20 @@ class SSRFScanner(BaseScanner):
     owasp_category = "A10:2025"
 
     # Parameters commonly vulnerable to SSRF
-    # Word-boundary anchors prevent substring matches (e.g. r'to' matching
-    # 'total', 'photo').  \b ensures we match the whole word only.
-    SSRF_PARAM_PATTERNS = [
-        r'\burl\b', r'\buri\b', r'\blink\b', r'\bhref\b', r'\bsrc\b',
-        r'\bdest\b', r'\bredirect\b', r'\btarget\b', r'\bpath\b',
-        r'\bsite\b', r'\bhtml\b', r'\bpage\b', r'\bfeed\b', r'\bhost\b',
-        r'\bdomain\b', r'\bcallback\b', r'\breturn\b', r'\bnext\b',
-        r'\bdata\b', r'\breference\b', r'\bfile\b', r'\bload\b',
-        r'\bto\b', r'\bopen\b', r'\bval\b', r'\bcontinue\b', r'\bwindow\b',
-        r'\bimage\b', r'\bimg\b', r'\bicon\b', r'\blogo\b', r'\bresource\b',
-        r'\bproxy\b', r'\bfetch\b', r'\brequest\b', r'\bdownload\b',
-        r'\bcontent\b', r'\bdocument\b', r'\borigin\b', r'\bapi\b',
+    # Listed as plain words; _is_ssrf_param() wraps each in a custom
+    # word boundary that treats _ - . as separators (unlike \b which
+    # considers _ part of a word).  This prevents 'to' matching 'total'
+    # or 'photo' while still matching 'redirect_to' and 'image_url'.
+    SSRF_PARAM_WORDS = [
+        'url', 'uri', 'link', 'href', 'src',
+        'dest', 'redirect', 'target', 'path',
+        'site', 'html', 'page', 'feed', 'host',
+        'domain', 'callback', 'return', 'next',
+        'data', 'reference', 'file', 'load',
+        'to', 'open', 'val', 'continue', 'window',
+        'image', 'img', 'icon', 'logo', 'resource',
+        'proxy', 'fetch', 'request', 'download',
+        'content', 'document', 'origin', 'api',
     ]
 
     def __init__(self, config: Optional[Dict] = None):
@@ -214,10 +216,16 @@ class SSRFScanner(BaseScanner):
         return payloads
 
     def _is_ssrf_param(self, param_name: str) -> bool:
-        """Check if parameter name suggests SSRF vulnerability"""
+        """Check if parameter name suggests SSRF vulnerability.
+
+        Uses a custom word boundary (non-alphanumeric) so that:
+          - 'redirect_url' matches 'url'  (underscore is a separator)
+          - 'total' does NOT match 'to'   (letter is not a separator)
+        """
         param_lower = param_name.lower()
-        for pattern in self.SSRF_PARAM_PATTERNS:
-            if re.search(pattern, param_lower, re.IGNORECASE):
+        for word in self.SSRF_PARAM_WORDS:
+            pattern = rf'(?<![a-zA-Z0-9]){word}(?![a-zA-Z0-9])'
+            if re.search(pattern, param_lower):
                 return True
         return False
 
