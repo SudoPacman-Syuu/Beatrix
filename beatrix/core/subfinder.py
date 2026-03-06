@@ -68,7 +68,6 @@ class SubfinderRunner:
                 "-d", domain,
                 "-silent",          # Only output subdomains
                 "-timeout", "15",   # Source timeout (seconds)
-                "-nW",              # Remove wildcard subdomains
             ]
 
             process = await asyncio.create_subprocess_exec(
