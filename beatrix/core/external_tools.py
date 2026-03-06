@@ -79,6 +79,10 @@ class ExternalTool:
                 process.kill()
                 await process.wait()
                 return None
+            except asyncio.CancelledError:
+                process.kill()
+                await process.wait()
+                raise
 
             if process.returncode not in (0, None):
                 # Log stderr for debugging but still return stdout (many tools

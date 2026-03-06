@@ -101,7 +101,7 @@ def test_nuclei_build_tags_no_tech():
     """Build tags with no technologies should return base tags only."""
     from beatrix.scanners.nuclei import NucleiScanner
     scanner = NucleiScanner()
-    tags = scanner._build_tags()
+    tags = scanner._build_exploit_tags()
     # Base tags must include these critical categories
     for tag in ["misconfig", "exposure", "cve", "default-login", "takeover", "rce", "xss", "sqli"]:
         assert tag in tags, f"Missing base tag: {tag}"
@@ -112,7 +112,7 @@ def test_nuclei_build_tags_with_tech():
     from beatrix.scanners.nuclei import NucleiScanner
     scanner = NucleiScanner()
     scanner.set_technologies(["WordPress", "nginx", "PHP"])
-    tags = scanner._build_tags()
+    tags = scanner._build_recon_tags()
     for tag in ["wordpress", "wp-plugin", "wp-theme", "nginx", "php"]:
         assert tag in tags, f"Missing tech tag: {tag}"
 
@@ -122,7 +122,7 @@ def test_nuclei_build_tags_with_tech_dict():
     from beatrix.scanners.nuclei import NucleiScanner
     scanner = NucleiScanner()
     scanner.set_technologies({"WordPress": "5.9", "nginx": "1.22", "PHP": "8.1"})
-    tags = scanner._build_tags()
+    tags = scanner._build_recon_tags()
     for tag in ["wordpress", "wp-plugin", "nginx", "php"]:
         assert tag in tags, f"Missing tech tag from dict: {tag}"
 

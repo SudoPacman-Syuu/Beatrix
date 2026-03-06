@@ -518,6 +518,25 @@ class BeatrixEngine:
             # Create scan context
             context = ScanContext.from_url(target if "://" in target else f"https://{target}")
 
+            # For nuclei: detect WAF and set realistic UA even in strike mode
+            if module == "nuclei" and hasattr(scanner, 'set_waf'):
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=10, follow_redirects=True, verify=False) as client:
+                        resp = await client.head(context.url, headers={
+                            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                                          "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                        })
+                        server = (resp.headers.get("server", "") + resp.headers.get("cf-ray", "")).lower()
+                        if "cloudflare" in server or resp.headers.get("cf-ray"):
+                            scanner.set_waf("Cloudflare")
+                        elif "akamai" in server:
+                            scanner.set_waf("Akamai")
+                        elif "fastly" in server:
+                            scanner.set_waf("Fastly")
+                except Exception:
+                    pass
+
             # Run the module with async context
             async with scanner:
                 findings = []

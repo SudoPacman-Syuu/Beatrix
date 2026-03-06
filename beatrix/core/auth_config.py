@@ -83,7 +83,7 @@ class AuthCredentials:
     bearer_token: Optional[str] = None
 
     # Login credentials — Beatrix performs the login and captures the session
-    login_url: Optional[str] = None        # e.g. https://kick.com/login
+    login_url: Optional[str] = None        # e.g. https://example.com/login
     login_username: Optional[str] = None   # email or username
     login_password: Optional[str] = None   # password
     login_method: Optional[str] = None     # "form" | "json" | "auto" (default: auto)
@@ -449,6 +449,38 @@ class AuthConfigLoader:
         return cls._user_home() / ".beatrix" / "auth.yaml"
 
     @classmethod
+    def _resolve_config_path(cls) -> Path:
+        """Resolve auth config path, handling sudo correctly.
+
+        When running via 'sudo beatrix', Path.home() returns /root/ but the
+        auth.yaml lives under the real user's home.  Check SUDO_USER first.
+        """
+        default = cls.DEFAULT_CONFIG_PATH
+        if default.exists():
+            return default
+
+        # Under sudo, try the original user's home
+        sudo_user = os.environ.get("SUDO_USER")
+        if sudo_user:
+            import pwd
+            try:
+                real_home = Path(pwd.getpwnam(sudo_user).pw_dir)
+                alt = real_home / ".beatrix" / "auth.yaml"
+                if alt.exists():
+                    return alt
+            except KeyError:
+                pass
+
+        # Fallback: check relative to the venv (the wrapper hardcodes it)
+        venv = os.environ.get("VIRTUAL_ENV")
+        if venv:
+            alt = Path(venv) / "auth.yaml"
+            if alt.exists():
+                return alt
+
+        return default
+
+    @classmethod
     def load(
         cls,
         target: str,
@@ -483,7 +515,7 @@ class AuthConfigLoader:
         creds = AuthCredentials()
 
         # 1. Load from config file (lowest priority)
-        file_path = Path(config_path) if config_path else cls._default_config_path()
+        file_path = Path(config_path) if config_path else cls._resolve_config_path()
         if file_path.exists():
             file_creds = cls._load_config_file(file_path, target)
             creds = cls._merge(creds, file_creds)

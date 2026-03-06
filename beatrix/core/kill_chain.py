@@ -1143,6 +1143,11 @@ class KillChainExecutor:
                         if auth and hasattr(auth, 'nuclei_header_flags'):
                             nuclei_net.set_auth(auth.nuclei_header_flags())
 
+                        # WAF-aware for network scan
+                        cdn = context.get("network", {}).get("cdn_detected")
+                        if cdn and hasattr(nuclei_net, 'set_waf'):
+                            nuclei_net.set_waf(cdn)
+
                         net_ctx = ScanContext.from_url(url)
                         self._emit("info", message=f"Nuclei network scan: {len(network_targets)} non-HTTP services")
 
@@ -1395,6 +1400,16 @@ class KillChainExecutor:
                     auth = context.get("auth")
                     if auth and hasattr(auth, 'nuclei_header_flags'):
                         nuclei.set_auth(auth.nuclei_header_flags())
+
+                    # WAF-aware rate limiting for recon phase too
+                    cdn = context.get("network", {}).get("cdn_detected")
+                    if cdn and hasattr(nuclei, 'set_waf'):
+                        nuclei.set_waf(cdn)
+
+                    # Origin IP bypass for recon
+                    scan_target = context.get("network", {}).get("scan_target")
+                    if scan_target and scan_target != domain and hasattr(nuclei, 'set_origin_ip'):
+                        nuclei.set_origin_ip(scan_target, domain)
 
                     recon_ctx = ScanContext.from_url(url)
                     recon_ctx.extra = {"technologies": context.get("technologies", {})}
@@ -1775,6 +1790,18 @@ class KillChainExecutor:
             if auth and hasattr(auth, 'nuclei_header_flags'):
                 nuclei.set_auth(auth.nuclei_header_flags())
                 self._emit("info", message="Nuclei: authenticated scanning enabled")
+
+            # WAF-aware rate limiting — drop rates when CDN/WAF is detected
+            cdn = context.get("network", {}).get("cdn_detected")
+            if cdn and hasattr(nuclei, 'set_waf'):
+                nuclei.set_waf(cdn)
+
+            # Origin IP bypass — scan the origin directly instead of the CDN edge
+            origin_ips = context.get("network", {}).get("origin_ips", [])
+            scan_target = context.get("network", {}).get("scan_target")
+            if scan_target and scan_target != domain and hasattr(nuclei, 'set_origin_ip'):
+                nuclei.set_origin_ip(scan_target, domain)
+                self._emit("info", message=f"Nuclei: bypassing CDN via origin IP {scan_target}")
 
             # Wire interactsh — unify OOB detection with Beatrix's OOB detector
             if context.get("oob_domain"):

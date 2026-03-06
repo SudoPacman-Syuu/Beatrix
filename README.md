@@ -2,6 +2,8 @@
 
 > *"Revenge is a dish best served with a working PoC."*
 
+**License:** Source Available — Free for non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE).
+
 A command-line bug bounty hunting framework. 29 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, 7-phase Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal.
 
 Globally installable on any Linux system. Call it from anywhere.
@@ -148,7 +150,7 @@ Every `hunt` follows the Cyber Kill Chain methodology:
 2. 🔍 **Reconnaissance** — Subdomain enum (`subfinder`, `amass`), crawling (`katana`, `gospider`, `hakrawler`, `gau`), **full 65535-port TCP scan** (`nmap -sS -p-`) against origin IP when available, service fingerprinting, NSE vuln/discovery/auth scripts, UDP top-50 scan, **firewall fingerprinting + bypass testing** (`scapy`), **SSH deep audit** (`paramiko`), JS analysis, endpoint probing, tech fingerprinting (`whatweb`, `webanalyze`), **nuclei recon** (fast tech/panel/WAF detection), **nuclei network** (protocol checks on non-HTTP services)
 2. ⚔️ **Weaponization** — Subdomain takeover, error disclosure, cache poisoning, prototype pollution
 3. 📦 **Delivery** — CORS, open redirects, OAuth redirect, HTTP smuggling, WebSocket testing
-4. 💥 **Exploitation** — Injection (SQLi/XSS/CMDi) with response_analyzer behavioral detection and WAF bypass fallback, SSRF, IDOR, BAC, auth bypass, SSTI, XXE, deserialization, GraphQL, mass assignment, business logic, ReDoS, payment, **nuclei exploit scan** (CVEs, workflows, authenticated, interactsh OOB), **nuclei headless** (DOM XSS, prototype pollution). SmartFuzzer runs ffuf-verified fuzzing on parameterized URLs. Confirmed findings are escalated to deep exploitation tools (`sqlmap`, `dalfox`, `commix`, `jwt_tool`)
+4. 💥 **Exploitation** — Injection (SQLi/XSS/CMDi) with response_analyzer behavioral detection and WAF bypass fallback, SSRF, IDOR, BAC, auth bypass, SSTI, XXE, deserialization, GraphQL, mass assignment, business logic, ReDoS, payment, **nuclei exploit scan** (CVEs, workflows, authenticated, interactsh OOB, **WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI**), **nuclei headless** (DOM XSS, prototype pollution). SmartFuzzer runs ffuf-verified fuzzing on parameterized URLs. Confirmed findings are escalated to deep exploitation tools (`sqlmap`, `dalfox`, `commix`, `jwt_tool`)
 5. 🔧 **Installation** — File upload bypass, polyglot uploads, path traversal
 6. 📡 **Command & Control** — OOB callback correlation via built-in `PoCServer` (pure asyncio HTTP server, auto-binds free port) or external `interact.sh`. Blind SSRF/XXE/RCE confirmation from callbacks registered during Phase 4. `LocalPoCClient` provides offset-based dedup polling.
 7. 🎯 **Objectives** — VRT classification (Bugcrowd VRT + CVSS 3.1), exploit chain generation via PoCChainEngine (correlates ≥2 findings), finding aggregation, deduplication, impact assessment
@@ -223,7 +225,7 @@ Run `beatrix arsenal` for the full table. 29 registered modules across 5 kill ch
 | `business_logic` | Race conditions, boundary testing |
 | `redos` | Regular expression denial of service |
 | `payment` | Checkout flow manipulation, price tampering |
-| `nuclei` | Intelligent multi-phase scanner — recon, exploit, network, headless |
+| `nuclei` | Intelligent multi-phase scanner — recon, exploit, network, headless. 18,000+ templates with WAF bypass (realistic UA, CDN-aware rate limiting, origin IP rewrite) |
 
 **Phase 5 — Installation:**
 
@@ -673,7 +675,7 @@ beatrix list --presets
 
 ```
 beatrix/
-├── cli/main.py              # CLI entry point — 25 commands via Click + Rich
+├── cli/main.py              # CLI entry point — 26 commands via Click + Rich
 ├── core/
 │   ├── engine.py            # BeatrixEngine — orchestrates everything, 29 modules
 │   ├── kill_chain.py        # 7-phase kill chain executor + 3-phase network pipeline
@@ -692,13 +694,13 @@ beatrix/
 ├── scanners/
 │   ├── base.py              # BaseScanner ABC — rate limiting, httpx client
 │   ├── crawler.py           # Target spider — foundation for all scanning
-│   ├── origin_ip_discovery.py # CDN bypass — Cloudflare/Akamai/Fastly origin IP discovery (916 LOC)
+│   ├── origin_ip_discovery.py # CDN bypass — Cloudflare/Akamai/Fastly origin IP discovery (1,039 LOC)
 │   ├── injection.py         # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads, response_analyzer + WAF bypass)
 │   ├── ssrf.py              # 44-payload SSRF scanner
 │   ├── cors.py              # 6-technique CORS bypass scanner
 │   ├── auth.py              # JWT, OAuth, 2FA, session attacks
 │   ├── idor.py              # IDOR + BAC scanners
-│   ├── nuclei.py            # Nuclei v3 — multi-phase, authenticated, intelligent templates
+│   ├── nuclei.py            # Nuclei v3 — multi-phase, authenticated, WAF bypass (realistic UA, CDN-aware rate limiting, origin IP rewrite)
 │   └── ...                  # 30 scanner modules total
 ├── validators/              # ImpactValidator + ReadinessGate
 ├── reporters/               # Markdown, JSON, HTML chain reports

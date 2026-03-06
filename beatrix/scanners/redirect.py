@@ -204,8 +204,22 @@ class OpenRedirectScanner(BaseScanner):
         },
     ]
 
+    # Static asset extensions that can never be open redirects
+    _STATIC_EXTENSIONS = frozenset({
+        ".css", ".js", ".mjs", ".map", ".png", ".jpg", ".jpeg", ".gif",
+        ".svg", ".ico", ".webp", ".avif", ".bmp", ".tiff",
+        ".woff", ".woff2", ".ttf", ".eot", ".otf",
+        ".mp4", ".webm", ".mp3", ".ogg", ".wav",
+        ".pdf", ".zip", ".gz", ".br", ".wasm",
+    })
+
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
         """Scan for open redirect vulnerabilities"""
+
+        # Skip static assets — they can never redirect
+        path_lower = urlparse(context.url).path.lower()
+        if any(path_lower.endswith(ext) for ext in self._STATIC_EXTENSIONS):
+            return
 
         self.log(f"Scanning for open redirects on {context.url}")
 
