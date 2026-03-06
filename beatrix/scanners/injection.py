@@ -569,7 +569,9 @@ class InjectionScanner(BaseScanner):
 
             # Check for vulnerability
             is_vuln, evidence = self._check_response(
-                payload, response.text, elapsed, baseline_time
+                payload, response.text, elapsed, baseline_time,
+                response_status=response.status_code,
+                response_headers=dict(response.headers) if hasattr(response, 'headers') else {},
             )
 
             if is_vuln:
@@ -589,7 +591,9 @@ class InjectionScanner(BaseScanner):
                             )
                             celapsed = time.time() - cstart
                             c_vuln, _ = self._check_response(
-                                payload, cresp.text, celapsed, baseline_time
+                                payload, cresp.text, celapsed, baseline_time,
+                                response_status=cresp.status_code,
+                                response_headers=dict(cresp.headers) if hasattr(cresp, 'headers') else {},
                             )
                             if c_vuln:
                                 confirm_count += 1
@@ -615,6 +619,8 @@ class InjectionScanner(BaseScanner):
         response_text: str,
         elapsed: float,
         baseline_time: float = 0.0,
+        response_status: int = 0,
+        response_headers: Optional[Dict[str, str]] = None,
     ) -> Tuple[bool, str]:
         """
         Check if the response indicates a vulnerability.
@@ -650,6 +656,15 @@ class InjectionScanner(BaseScanner):
             for pattern in payload.patterns:
                 match = re.search(pattern, response_text, re.IGNORECASE)
                 if match:
+                    # For reflection checks, verify the pattern is NOT already
+                    # present in the baseline response. If the same match exists
+                    # without any payload, it's static server content (e.g. nginx
+                    # error page HTML), not reflected user input.
+                    if payload.detection == "reflect":
+                        baseline_body = getattr(self, '_baseline_body', '')
+                        if baseline_body and re.search(pattern, baseline_body, re.IGNORECASE):
+                            continue  # Match exists in baseline — not reflection
+
                     # Get context around match
                     start = max(0, match.start() - 50)
                     end = min(len(response_text), match.end() + 50)
@@ -665,7 +680,7 @@ class InjectionScanner(BaseScanner):
             if baseline_body:
                 diffs = responses_differ(
                     baseline_status, baseline_headers, baseline_body,
-                    200, {}, response_text,  # test response
+                    response_status, response_headers or {}, response_text,
                 )
                 if diffs and is_blind_indicator(diffs, min_attrs=2):
                     diff_attrs = ', '.join(a.name for a in list(diffs.keys())[:5])

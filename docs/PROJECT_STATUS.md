@@ -1,8 +1,8 @@
 # BEATRIX Project Status
 
 **Version:** 1.0.0
-**Last Updated:** March 5, 2026
-**Current Phase:** Stable — WAF bypass for nuclei, origin IP flow hardened, auth pipeline in progress
+**Last Updated:** March 6, 2026
+**Current Phase:** Stable — Nuclei integration fully fixed (16 issues), injection/JS bundle/auth scanner false positives fixed, origin IP pipeline hardened with ASN validation
 **Framework LOC:** ~73,800 (112 Python files total, ~66,300 in inner package)
 
 ---
@@ -34,7 +34,7 @@ beatrix recon         # Subdomain/tech/JS/endpoint recon
 beatrix ghost         # GHOST autonomous pentesting agent
 beatrix rapid         # Multi-target sweep (takeover, debug, CORS)
 beatrix haiku-hunt    # AI-assisted hunting via Bedrock
-beatrix bounty-hunt   # Full OWASP Top 10 hunt
+beatrix bounty-hunt   # [DEPRECATED] → use `beatrix hunt --preset full`
 beatrix validate      # Validate findings from JSON
 beatrix github-recon  # GitHub org/user secret scanning
 beatrix h1            # HackerOne operations (programs/dupecheck/submit)
@@ -217,6 +217,12 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 
 ## Next Steps
 
+- [x] Fix nuclei integration (16 issues — all fixed, see `nuclei-audit.md`)
+- [x] Fix injection scanner false positives (behavioral detection, XSS reflection)
+- [x] Fix JS bundle scanner framework noise (SvelteKit/React internals)
+- [x] Fix auth scanner rate-limit on non-existent endpoints
+- [x] Fix install.sh (httpx shim, root config, nuclei templates, chromium deps)
+- [x] Fix subfinder `-nW` flag
 - [ ] Move `bounty_hunter.py` into `beatrix/hunters/bounty.py` (proper framework module)
 - [ ] Add unit tests for GHOST agent
 - [ ] Add unit tests for scanner modules

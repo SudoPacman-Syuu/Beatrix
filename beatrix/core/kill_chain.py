@@ -1812,26 +1812,42 @@ class KillChainExecutor:
                 # e.g. "abc123.oast.fun" → "oast.fun"
                 parts = oob_domain.split(".", 1)
                 if len(parts) > 1:
-                    nuclei.set_interactsh(server=f"https://{parts[1]}")
+                    interactsh_server = f"https://{parts[1]}"
+                    # Pass auth token if available (for self-hosted interactsh)
+                    interactsh_token = None
+                    interactsh_client = context.get("interactsh_client")
+                    if interactsh_client and hasattr(interactsh_client, 'auth_token'):
+                        interactsh_token = interactsh_client.auth_token
+                    nuclei.set_interactsh(server=interactsh_server, token=interactsh_token)
                     self._emit("info", message=f"Nuclei: OOB detection via {parts[1]}")
 
             # --- Exploit pass: CVEs, injections, auth bypass, workflows ---
             self._emit("info", message=f"Nuclei exploit scan: {len(all_urls)} URLs with intelligent template selection")
             exploit_result = {"findings": [], "assets": [], "context": {}, "modules": ["nuclei_exploit"], "requests": 0}
+            nuclei_timeout = self.SCANNER_TIMEOUT_OVERRIDES.get("nuclei", self.SCANNER_TIMEOUT)
             try:
                 exploit_ctx = ScanContext.from_url(url)
                 exploit_ctx.extra = {
                     "technologies": context.get("technologies", {}),
                     "auth": auth,
                 }
-                async with nuclei:
-                    async for finding in nuclei.scan_exploit(exploit_ctx):
-                        if not finding.scanner_module:
-                            finding.scanner_module = "nuclei"
-                        exploit_result["findings"].append(finding)
-                        self._emit("finding", scanner="nuclei", finding=finding)
+
+                async def _run_exploit():
+                    async with nuclei:
+                        async for finding in nuclei.scan_exploit(exploit_ctx):
+                            if not finding.scanner_module:
+                                finding.scanner_module = "nuclei"
+                            exploit_result["findings"].append(finding)
+                            self._emit("finding", scanner="nuclei", finding=finding)
+
+                await asyncio.wait_for(_run_exploit(), timeout=nuclei_timeout)
                 results.append(exploit_result)
                 self._emit("scanner_done", scanner="nuclei_exploit", findings=len(exploit_result["findings"]))
+            except asyncio.TimeoutError:
+                self._emit("scanner_error", scanner="nuclei_exploit",
+                           error=f"Timed out after {nuclei_timeout}s (partial: {len(exploit_result['findings'])} findings)")
+                if exploit_result["findings"]:
+                    results.append(exploit_result)
             except Exception as e:
                 self._emit("scanner_error", scanner="nuclei_exploit", error=str(e))
 
@@ -1840,15 +1856,24 @@ class KillChainExecutor:
             try:
                 headless_ctx = ScanContext.from_url(url)
                 self._emit("info", message="Nuclei headless scan: DOM-based vulnerability checks")
-                async with nuclei:
-                    async for finding in nuclei.scan_headless(headless_ctx):
-                        if not finding.scanner_module:
-                            finding.scanner_module = "nuclei_headless"
-                        headless_result["findings"].append(finding)
-                        self._emit("finding", scanner="nuclei_headless", finding=finding)
+
+                async def _run_headless():
+                    async with nuclei:
+                        async for finding in nuclei.scan_headless(headless_ctx):
+                            if not finding.scanner_module:
+                                finding.scanner_module = "nuclei_headless"
+                            headless_result["findings"].append(finding)
+                            self._emit("finding", scanner="nuclei_headless", finding=finding)
+
+                await asyncio.wait_for(_run_headless(), timeout=nuclei_timeout)
                 if headless_result["findings"]:
                     results.append(headless_result)
                     self._emit("scanner_done", scanner="nuclei_headless", findings=len(headless_result["findings"]))
+            except asyncio.TimeoutError:
+                self._emit("scanner_error", scanner="nuclei_headless",
+                           error=f"Timed out after {nuclei_timeout}s (partial: {len(headless_result['findings'])} findings)")
+                if headless_result["findings"]:
+                    results.append(headless_result)
             except Exception as e:
                 self._emit("scanner_error", scanner="nuclei_headless", error=str(e))
         else:
@@ -1877,7 +1902,10 @@ class KillChainExecutor:
                         fuzz_query = urlencode(fuzz_params, doseq=True)
                         fuzz_marked = urlunparse(parsed._replace(query=fuzz_query))
                         try:
-                            verified = await fuzzer.scan(fuzz_marked, parameter=param_name)
+                            verified = await asyncio.wait_for(
+                                fuzzer.scan(fuzz_marked, parameter=param_name),
+                                timeout=self.SCANNER_TIMEOUT,
+                            )
                             for vf in verified:
                                 sev_map = {"critical": _S.CRITICAL, "high": _S.HIGH, "medium": _S.MEDIUM, "low": _S.LOW}
 
@@ -2025,8 +2053,12 @@ class KillChainExecutor:
                                     scanner_module="smart_fuzzer",
                                 )], "assets": [], "context": {}, "modules": ["smart_fuzzer"], "requests": 0})
                                 self._emit("info", message=f"SmartFuzzer CONFIRMED {vf.category.value} in {param_name}")
-                        except Exception:
-                            pass
+                        except asyncio.TimeoutError:
+                            self._emit("scanner_error", scanner="smart_fuzzer",
+                                       error=f"Timed out on {param_name} after {self.SCANNER_TIMEOUT}s")
+                        except Exception as e:
+                            self._emit("scanner_error", scanner="smart_fuzzer",
+                                       error=f"Error fuzzing {param_name}: {e}")
                 self._emit("info", message=f"SmartFuzzer complete: {len(fuzzer.findings)} verified findings")
             except ImportError:
                 self._emit("info", message="SmartFuzzer unavailable (ffuf not installed)")
@@ -2201,8 +2233,9 @@ class KillChainExecutor:
                                         if tampered_token:
                                             enriched_evidence["tampered_token"] = tampered_token
                                             enriched_evidence["tamper_claim"] = "role → admin"
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        self._emit("scanner_error", scanner="jwt_tool",
+                                                   error=f"JWT tamper failed: {e}")
                                     break
 
                             desc_parts = [
@@ -2514,8 +2547,8 @@ class KillChainExecutor:
                 # Also check if any exploitation findings warrant Metasploit PoCs
                 # This is available after the scan completes — for now emit guidance
                 self._emit("info", message="Metasploit available — RC files can be generated for confirmed RCE/SQLi findings post-scan")
-        except Exception:
-            pass
+        except Exception as e:
+            self._emit("scanner_error", scanner="metasploit", error=str(e))
 
         # ── Step 3: VRT classification — enrich all findings with Bugcrowd priority + CVSS ──
         try:

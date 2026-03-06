@@ -99,6 +99,29 @@ class JSBundleAnalyzer(BaseScanner):
         re.compile(r'\.(?:get|post|put|patch|delete)\(["\']([^"\']+)["\']'),
     ]
 
+    # Framework internal paths that look like API routes but aren't —
+    # these are error/warning codes, diagnostic slugs, and internal constants
+    # from frontend frameworks that appear in JS bundles as URL fragments.
+    FRAMEWORK_NOISE_PATTERNS = re.compile(
+        r'^/(?:'
+        # SvelteKit internal warning/error codes
+        r'hydration_failed|hydration_mismatch|effect_orphan|effect_in_teardown'
+        r'|effect_in_unowned_derived|effect_update_depth_exceeded'
+        r'|lifecycle_legacy_only|lifecycle_outside_component'
+        r'|state_unsafe_mutation|state_prototype_fixed|state_descriptors_fixed'
+        r'|svelte_boundary_reset_(?:noop|onerror)|missing_context'
+        r'|props_invalid_value|select_multiple_invalid_value'
+        r'|invalid_default_snippet|async_derived_orphan'
+        r'|experimental_async_required|fork_discarded|fork_timing'
+        r'|get_abort_signal_outside_reaction|hydratable_missing_but_expected'
+        # React internal paths
+        r'|__webpack_hmr|__nextjs_original-stack-frame'
+        r'|_next/static|_next/data|_next/image'
+        # Common non-API paths extracted from full URLs
+        r'|svg|xhtml|xmlns'
+        r')$', re.IGNORECASE
+    )
+
     # Internal hostname patterns (generic — no hardcoded target domains)
     HOST_PATTERNS = [
         # Internal/dev/staging subdomains — require at least one more TLD segment after
@@ -334,6 +357,12 @@ class JSBundleAnalyzer(BaseScanner):
             for match in pattern.finditer(code):
                 endpoint = match.group(1)
                 if len(endpoint) > 3 and not endpoint.endswith(('.js', '.css', '.png', '.svg', '.ico')):
+                    # Skip framework internal paths (SvelteKit error codes, etc.)
+                    if self.FRAMEWORK_NOISE_PATTERNS.match(endpoint):
+                        continue
+                    # Skip bare HTTP header names or single-word non-path strings
+                    if not endpoint.startswith(('/', 'http')) and '/' not in endpoint:
+                        continue
                     intel.api_endpoints.append(endpoint)
 
         # Internal hosts

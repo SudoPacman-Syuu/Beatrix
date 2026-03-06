@@ -1384,6 +1384,11 @@ The client '{client_id}' processed a password grant request
 
         # If most requests succeeded, no rate limiting
         if success_count >= num_requests - 2:
+            # Skip if the endpoint doesn't actually exist (all 404s) —
+            # can't report missing rate limiting on a non-existent page
+            if responses and all(code == 404 for code in responses):
+                return findings
+
             findings.append(Finding(
                 title="Missing Rate Limiting on Authentication Endpoint",
                 description=f"""

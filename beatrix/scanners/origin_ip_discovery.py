@@ -64,6 +64,12 @@ HOSTING_PROVIDER_RANGES = [
     "185.230.63.0/24", "185.230.60.0/22",
     # WordPress.com (Automattic)
     "192.0.64.0/18",
+    # Webflow (ASN 209242 — shared hosting for Webflow sites)
+    "198.202.208.0/20",     # 198.202.208.0 – 198.202.223.255
+    # Ghost(Pro)
+    "178.128.0.0/15",       # subset of DigitalOcean used by Ghost(Pro)
+    # Fly.io (commonly used by SaaS/hosting)
+    "66.241.124.0/24", "137.66.0.0/16",
 ]
 
 # Subdomains that typically point to third-party SaaS, not the origin.
@@ -723,8 +729,63 @@ class OriginIPDiscovery:
             "vercel", "github.io", "pages.dev", "only a shopify store",
         ]
 
+        # ASN names that indicate shared hosting / CDN / SaaS infrastructure.
+        # An origin IP should NOT belong to these — they're multi-tenant.
+        HOSTING_ASN_KEYWORDS = [
+            "cloudflare", "akamai", "fastly", "amazon", "aws", "google cloud",
+            "microsoft", "azure", "digitalocean", "linode", "vultr", "ovh",
+            "hetzner", "shopify", "squarespace", "wix", "webflow", "netlify",
+            "vercel", "heroku", "github", "automattic", "wordpress",
+            "godaddy", "bluehost", "hostgator", "namecheap", "dreamhost",
+            "incapsula", "imperva", "sucuri", "stackpath", "limelight",
+        ]
+
+        async def _lookup_asn(ip: str) -> Optional[str]:
+            """DNS-based ASN lookup via Team Cymru (no extra deps needed)."""
+            try:
+                import dns.resolver
+                # Reverse the IP octets and query .origin.asn.cymru.com
+                octets = ip.split(".")
+                if len(octets) != 4:
+                    return None
+                query = f"{octets[3]}.{octets[2]}.{octets[1]}.{octets[0]}.origin.asn.cymru.com"
+                answers = dns.resolver.resolve(query, "TXT")
+                for rdata in answers:
+                    txt = str(rdata).strip('"')
+                    # Format: "ASN | prefix | CC | registry | date"
+                    parts = [p.strip() for p in txt.split("|")]
+                    if len(parts) >= 1:
+                        asn_number = parts[0]
+                        # Now look up the ASN name
+                        try:
+                            name_answers = dns.resolver.resolve(
+                                f"AS{asn_number}.asn.cymru.com", "TXT"
+                            )
+                            for nr in name_answers:
+                                return str(nr).strip('"')
+                        except Exception:
+                            return txt
+                return None
+            except Exception:
+                return None
+
         async def check_ip(ip_info: Dict) -> Optional[Dict]:
             ip = ip_info['ip']
+
+            # N-02: ASN infrastructure check — reject IPs from known hosting ASNs
+            asn_info = await _lookup_asn(ip)
+            if asn_info:
+                ip_info['asn_info'] = asn_info
+                asn_lower = asn_info.lower()
+                if any(kw in asn_lower for kw in HOSTING_ASN_KEYWORDS):
+                    ip_info['validated'] = False
+                    ip_info['hosting_provider_detected'] = True
+                    ip_info['rejection_reason'] = f"ASN belongs to hosting/CDN provider: {asn_info}"
+                    ip_info['confidence'] = min(
+                        ip_info.get('confidence', 0.5) * 0.2, 0.1
+                    )
+                    return ip_info
+
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
                     for scheme in ("https", "http"):
@@ -745,9 +806,28 @@ class OriginIPDiscovery:
                                 except Exception:
                                     body = ""
 
-                                # If the response body contains hosting provider branding,
-                                # this IP belongs to that provider, not our target.
+                                # If the response body OR headers contain hosting
+                                # provider branding, this IP belongs to that
+                                # provider, not our target.
+                                # Check body
                                 is_hosting = any(sig in body for sig in HOSTING_SIGNATURES)
+
+                                # N-04: Also check response headers (server,
+                                # x-served-by, x-powered-by, via) — hosting
+                                # providers often identify themselves there even
+                                # when the body renders the customer's content.
+                                if not is_hosting:
+                                    hosting_headers = " ".join(
+                                        str(resp.headers.get(h, ""))
+                                        for h in ("server", "x-served-by",
+                                                   "x-powered-by", "via",
+                                                   "x-hosted-by")
+                                    ).lower()
+                                    is_hosting = any(
+                                        sig in hosting_headers
+                                        for sig in HOSTING_SIGNATURES
+                                    )
+
                                 if is_hosting:
                                     ip_info['validated'] = False
                                     ip_info['hosting_provider_detected'] = True

@@ -566,11 +566,34 @@ install_external_tools() {
         # ── Download nuclei templates ─────────────────────────────
         # Nuclei needs ~18,000 YAML templates to scan. Without them,
         # the first scan triggers a 500MB+ download mid-hunt.
+        # Run as the real user (not root) so templates land in the
+        # correct home directory with proper ownership.
         if command_exists nuclei; then
             info "Downloading nuclei templates (one-time, ~500MB)..."
-            nuclei -update-templates &>/dev/null && \
-                success "nuclei templates downloaded" || \
-                warn "Failed to download nuclei templates (run 'nuclei -update-templates' manually)"
+            if [[ -n "${SUDO_USER:-}" && "$EUID" -eq 0 ]]; then
+                sudo -u "$SUDO_USER" nuclei -update-templates &>/dev/null && \
+                    success "nuclei templates downloaded (as $SUDO_USER)" || \
+                    warn "Failed to download nuclei templates (run 'nuclei -update-templates' manually)"
+            else
+                nuclei -update-templates &>/dev/null && \
+                    success "nuclei templates downloaded" || \
+                    warn "Failed to download nuclei templates (run 'nuclei -update-templates' manually)"
+            fi
+        fi
+
+        # ── Chromium system deps for nuclei headless mode ─────────
+        # Nuclei's headless mode (go-rod) downloads its own Chrome
+        # binary but requires system shared libraries. Without these,
+        # headless scans crash with "libatk-1.0.so.0: cannot open".
+        if [[ "$PKG_MANAGER" == "apt" ]]; then
+            info "Installing chromium system dependencies for headless mode..."
+            sudo apt-get install -y -qq \
+                libatk1.0-0 libatk-bridge2.0-0 libcups2 libgbm1 \
+                libgtk-3-0 libnss3 libxcomposite1 libxdamage1 \
+                libxfixes3 libxrandr2 libpango-1.0-0 libdrm2 \
+                libxshmfence1 libxkbcommon0 libasound2 2>/dev/null && \
+                success "chromium system dependencies" || \
+                warn "Failed to install some chromium deps — headless mode may not work"
         fi
     else
         warn "Skipping Go tools (Go not available)"

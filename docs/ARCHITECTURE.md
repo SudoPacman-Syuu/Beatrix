@@ -1,7 +1,7 @@
 # BEATRIX Architecture
 
 **Version:** 1.0.0  
-**Last Updated:** March 5, 2026
+**Last Updated:** March 6, 2026
 
 ---
 
@@ -66,7 +66,7 @@ module key shown below.
 | 1. Reconnaissance | `_handle_recon` | `crawl`, `endpoint_prober`, `js_analysis`, `headers`, `github_recon` + external: subfinder, amass, nmap, katana, gospider, hakrawler, gau, whatweb, webanalyze, dirsearch |
 | 2. Weaponization | `_handle_weaponization` | `takeover`, `error_disclosure`, `cache_poisoning`, `prototype_pollution` |
 | 3. Delivery | `_handle_delivery` | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` |
-| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` (WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI) + SmartFuzzer (ffuf verification) + external: sqlmap, dalfox, commix, jwt_tool |
+| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass + baseline XSS filter), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` (WAF bypass: realistic UA, CDN-aware rate limiting, additive origin IP scan with TLS SNI, FTL error detection, stats parsing) + SmartFuzzer (ffuf verification) + external: sqlmap, dalfox, commix, jwt_tool |
 | 5. Installation | `_handle_installation` | `file_upload` |
 | 6. C2 | `_handle_c2` | OOB detector polling — `LocalPoCClient` (built-in) or `InteractshClient` (external). PoCServer callbacks are polled with dedup tracking. |
 | 7. Actions | `_handle_actions` | VRT classification (Bugcrowd VRT + CVSS 3.1) → PoCChainEngine (exploit chain generation from correlated findings) → aggregation via `KillChainState.all_findings` |
@@ -161,7 +161,7 @@ Beatrix includes a **built-in PoC validation server** — a pure `asyncio` HTTP 
 | A03 Injection | `injection` (57K+ payloads), `ssti`, `xxe`, `deserialization` + sqlmap/dalfox/commix |
 | A04 Insecure Design | `payment`, `business_logic`, `file_upload` |
 | A05 Security Misconfiguration | `error_disclosure`, `cache_poisoning`, `js_analysis` |
-| A06 Vulnerable Components | `nuclei` (18,000+ templates — official + 3 external repos, WAF bypass) |
+| A06 Vulnerable Components | `nuclei` (18,000+ templates — official + 3 external repos, WAF bypass, ASN-validated origin IP, FTL error detection) |
 | A07 Auth Failures | `auth` + jwt_tool |
 | A08 Software Integrity | `prototype_pollution`, `deserialization` |
 | A09 Logging Failures | (covered via error_disclosure probing) |
@@ -206,7 +206,7 @@ beatrix/
 ├── scanners/
 │   ├── base.py                    # BaseScanner ABC — rate limiter, httpx client
 │   ├── crawler.py                 # Target spider — soft-404, forms, params, tech
-│   ├── injection.py               # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads via SecLists + PATT, response_analyzer behavioral detection, WAF bypass fallback)
+│   ├── injection.py               # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads via SecLists + PATT, response_analyzer behavioral detection, baseline-filtered XSS reflection, WAF bypass fallback)
 │   ├── ssrf.py                    # 44-payload SSRF scanner
 │   ├── cors.py                    # 6-technique CORS bypass
 │   ├── auth.py                    # JWT, OAuth, 2FA, Keycloak, session
@@ -228,7 +228,7 @@ beatrix/
 │   ├── endpoint_prober.py         # 200+ path probe with soft-404 detection
 │   ├── js_bundle.py               # JS secrets, source maps, API routes
 │   ├── github_recon.py            # GitHub org scanning
-│   ├── nuclei.py                  # Nuclei template engine wrapper (WAF bypass, origin IP, CDN-aware rate limiting)
+│   ├── nuclei.py                  # Nuclei template engine wrapper (WAF bypass, origin IP additive scan, CDN-aware rate limiting, FTL error detection, stats parsing, timeout caps)
 │   ├── file_upload.py             # Extension bypass, polyglot, path traversal
 │   ├── payment_scanner.py          # Checkout flow manipulation
 │   ├── redos.py                   # Regex DoS detection
@@ -239,7 +239,7 @@ beatrix/
 │   ├── polyglot_generator.py      # Multi-context payload generation
 │   ├── power_injector.py          # Advanced insertion point testing
 │   ├── insertion.py               # Insertion point discovery
-│   ├── origin_ip_discovery.py     # CDN bypass, origin IP fingerprinting
+│   ├── origin_ip_discovery.py     # CDN bypass, origin IP fingerprinting, ASN validation (Team Cymru DNS)
 │   ├── param_miner.py             # Hidden parameter discovery
 │   ├── sequencer.py               # Token randomness analysis
 │   └── backslash_scanner.py       # Backslash-powered path normalization attacks

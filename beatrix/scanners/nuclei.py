@@ -29,10 +29,11 @@ Architecture:
 import asyncio
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
-from typing import AsyncIterator, Dict, List, Optional
+from typing import AsyncIterator, Dict, List, Optional, Set
 
 from beatrix.core.types import Confidence, Finding, Severity
 
@@ -188,7 +189,7 @@ class NucleiScanner(BaseScanner):
         self.timeout_seconds = self._base_timeout
 
         # URL lists for different scan modes
-        self._urls_to_scan: List[str] = []
+        self._urls_to_scan: Set[str] = set()
         self._network_targets: List[str] = []  # host:port for network scans
 
         # Severity filter
@@ -462,7 +463,7 @@ class NucleiScanner(BaseScanner):
 
     def add_urls(self, urls: List[str]) -> None:
         """Add URLs to scan — called by kill chain to feed discovered URLs."""
-        self._urls_to_scan.extend(urls)
+        self._urls_to_scan.update(urls)
 
     def add_network_targets(self, targets: List[str]) -> None:
         """Add network targets (host:port) for protocol scanning."""
@@ -672,22 +673,27 @@ class NucleiScanner(BaseScanner):
     def _calculate_timeout(self, url_count: int, mode: str = "exploit") -> int:
         """Calculate wall-clock timeout based on URL count and mode.
 
-        No hard caps — effectiveness is the priority.  Nuclei manages its
-        own template concurrency and will finish when it's done.
+        Caps all modes at 3300s (55 min) to stay under the kill_chain's
+        3600s outer timeout with margin for cleanup.
         """
+        MAX_TIMEOUT = 3300  # 55 minutes — under kill_chain's 3600s cap
+
         if mode == "recon":
             # Recon uses lightweight info/low templates — fast per URL
-            return max(180, 120 + url_count * 3)
+            t = max(180, 120 + url_count * 3)
         elif mode == "network":
             # Network probes are quick but need time for many services
-            return max(180, 180 + len(self._network_targets) * 5)
+            t = max(180, 180 + len(self._network_targets) * 5)
         elif mode == "headless":
             # Headless spins up a browser per URL — needs real time
-            return max(300, 120 + url_count * 30)
+            # Cap per-URL time at 15s to prevent runaway with large URL sets
+            t = max(300, 120 + url_count * 15)
         else:
             # Exploit: full template set per URL — proportional scaling
             extra = max(0, url_count - 50) * 2
-            return max(int(self._base_timeout), int(self._base_timeout + extra))
+            t = max(int(self._base_timeout), int(self._base_timeout + extra))
+
+        return min(t, MAX_TIMEOUT)
 
     # =====================================================================
     # SCAN MODES
@@ -798,13 +804,18 @@ class NucleiScanner(BaseScanner):
         if not self.nuclei_path or not await self._ensure_templates():
             return
 
-        urls = [context.url]
-        urls.extend(self._urls_to_scan)  # ALL URLs — DOM XSS hides in deep pages
+        urls = list({context.url} | self._urls_to_scan)  # ALL URLs — DOM XSS hides in deep pages
 
         self.timeout_seconds = int(self._calculate_timeout(len(urls), mode="headless"))
         self.log(f"[HEADLESS] Scanning {len(urls)} URLs with browser mode")
 
+        # Check all template directories for headless templates
         headless_templates = list(self._template_dir.glob("**/headless/**/*.yaml"))
+        if self._custom_template_dir.exists():
+            headless_templates.extend(self._custom_template_dir.glob("**/headless/**/*.yaml"))
+        for extra_dir in self._extra_template_dirs:
+            if extra_dir.exists():
+                headless_templates.extend(extra_dir.glob("**/headless/**/*.yaml"))
         if not headless_templates:
             self.log("No headless templates found — skipping")
             return
@@ -885,24 +896,31 @@ class NucleiScanner(BaseScanner):
         if not tags:
             tags = self._build_exploit_tags()
 
-        # Origin IP bypass: rewrite URLs to target the origin directly
-        # instead of going through the CDN. The Host header ensures the
-        # origin server routes the request to the correct vhost.
-        # Only rewrite exact domain matches (not subdomains like api.domain.com).
-        effective_targets = targets
+        # Origin IP bypass: add origin-targeted URLs as ADDITIONAL targets
+        # alongside the normal CDN-routed URLs. This scans both paths:
+        #   1. Through CDN (original URLs) — catches CDN-specific issues
+        #   2. Direct to origin (rewritten URLs) — bypasses WAF/CDN protections
+        # The Host header is ONLY added when origin targets are included,
+        # ensuring nuclei sends it for origin-IP URLs.
+        # NOTE: We only add a handful of origin URLs (the root domain matches)
+        # to avoid doubling the entire scan.  Subdomains are NOT rewritten.
+        effective_targets = list(targets)
+        origin_targets_added = False
         if self._origin_ip and self._target_domain:
             from urllib.parse import urlparse, urlunparse
-            rewritten = []
             for t in targets:
                 parsed = urlparse(t) if "://" in t else None
                 if parsed and parsed.hostname == self._target_domain:
-                    # Replace only the hostname, preserving scheme/path/query
-                    rewritten.append(urlunparse(parsed._replace(netloc=
+                    origin_url = urlunparse(parsed._replace(netloc=
                         parsed.netloc.replace(self._target_domain, self._origin_ip, 1)
-                    )))
-                else:
-                    rewritten.append(t)
-            effective_targets = rewritten
+                    ))
+                    effective_targets.append(origin_url)
+                    origin_targets_added = True
+            if origin_targets_added:
+                self.log(
+                    f"[nuclei] Added {len(effective_targets) - len(targets)} "
+                    f"origin-bypass URLs targeting {self._origin_ip}"
+                )
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
             for target in effective_targets:
@@ -919,7 +937,6 @@ class NucleiScanner(BaseScanner):
                 "-timeout", "30",
                 "-retries", "2",
                 "-rate-limit", str(self._rate_limit),
-                "-rl", str(self._rate_limit_per_host),
                 "-bulk-size", "50",
                 "-concurrency", "25",
                 "-stats",
@@ -934,12 +951,15 @@ class NucleiScanner(BaseScanner):
             # default UA ("Nuclei - Open-source project (projectdiscovery.io)")
             cmd.extend(["-H", f"User-Agent: {self._user_agent}"])
 
-            # Origin IP bypass — add Host header so the origin vhost routes
-            # correctly when we're targeting the IP directly
-            if self._origin_ip and self._target_domain:
-                cmd.extend(["-H", f"Host: {self._target_domain}"])
-                # TLS SNI must match the domain so the origin server presents
-                # the right certificate (otherwise TLS handshake fails)
+            # Origin IP bypass — we've added origin-targeted URLs alongside
+            # normal ones. We do NOT set a global Host header because that
+            # would override the Host for CDN-routed URLs too.  Origin URLs
+            # (http://<ip>/path) will send Host: <ip> — many origin servers
+            # accept this for default-vhost routing.  For strict vhosts, a
+            # separate origin-only scan with explicit Host would be needed.
+            if origin_targets_added:
+                # TLS SNI helps the origin serve the right cert when accessed
+                # via HTTPS.  safe to set globally — CDN URLs already match.
                 cmd.extend(["-sni", self._target_domain])
                 # Don't skip the host after cert/connection errors — origin IPs
                 # may have transient issues but are still worth scanning
@@ -998,8 +1018,13 @@ class NucleiScanner(BaseScanner):
                         text = raw.decode("utf-8", errors="replace").strip()
                         if text:
                             stderr_lines.append(text)
+                            # Immediately log fatal/critical errors
+                            text_lower = text.lower()
+                            if any(kw in text_lower for kw in
+                                   ("[ftl]", "[fat]", "fatal", "panic")):
+                                self.log(f"[nuclei] FATAL: {text}")
                             # Log stats/progress lines so the user sees activity
-                            if any(kw in text.lower() for kw in
+                            elif any(kw in text_lower for kw in
                                    ("templates", "hosts", "requests", "errors",
                                     "matched", "duration", "rps")):
                                 self.log(f"[nuclei] {text}")
@@ -1070,12 +1095,84 @@ class NucleiScanner(BaseScanner):
                     process.kill()
                 await process.wait()
             total_elapsed = int(time.monotonic() - wall_start)
-            self.log(f"Nuclei complete: {findings_count} findings in {total_elapsed}s")
+
+            # Check for fatal errors in stderr
+            fatal_errors = [s for s in stderr_lines if any(
+                kw in s.lower() for kw in ("[ftl]", "[fat]", "fatal", "panic")
+            )]
+
+            # Check process exit code
+            if process.returncode and process.returncode != 0:
+                if fatal_errors:
+                    self.log(f"Nuclei FAILED (exit {process.returncode}) after {total_elapsed}s: {fatal_errors[0]}")
+                else:
+                    self.log(f"Nuclei FAILED (exit {process.returncode}) after {total_elapsed}s — {findings_count} findings before failure")
+            elif fatal_errors:
+                self.log(f"Nuclei completed with ERRORS after {total_elapsed}s: {fatal_errors[0]}")
+            else:
+                self.log(f"Nuclei complete: {findings_count} findings in {total_elapsed}s")
 
             # Log the last few stderr lines (usually the scan summary)
             if stderr_lines:
-                for sline in stderr_lines[-5:]:
+                # If 0 findings, log all stderr for diagnostics
+                lines_to_log = stderr_lines if findings_count == 0 else stderr_lines[-5:]
+                for sline in lines_to_log:
                     self.log(f"[nuclei stderr] {sline}")
+
+            # N-10: Parse scan stats from stderr
+            templates_loaded = 0
+            targets_loaded = 0
+            total_requests = 0
+            total_errors = 0
+            for sline in stderr_lines:
+                # "Templates loaded for current scan: 6543"
+                m = re.search(r'[Tt]emplates\s+loaded[^:]*:\s*(\d+)', sline)
+                if m:
+                    templates_loaded = int(m.group(1))
+                # "Targets loaded for current scan: 15"
+                m = re.search(r'[Tt]argets\s+loaded[^:]*:\s*(\d+)', sline)
+                if m:
+                    targets_loaded = int(m.group(1))
+                # Stats lines: "Requests: 45000/1234560" or "Requests: 45000"
+                m = re.search(r'[Rr]equests:\s*(\d+)', sline)
+                if m:
+                    total_requests = int(m.group(1))
+                # "Errors: 12" in stats lines
+                m = re.search(r'[Ee]rrors:\s*(\d+)', sline)
+                if m:
+                    total_errors = int(m.group(1))
+
+            self.log(
+                f"[nuclei] Scan stats: templates={templates_loaded} "
+                f"targets={targets_loaded} requests={total_requests} "
+                f"errors={total_errors} findings={findings_count}"
+            )
+
+            # Warn on suspicious stats
+            if templates_loaded == 0 and not fatal_errors:
+                self.log("[nuclei] WARNING: 0 templates loaded — templates may not be installed")
+            if targets_loaded == 0 and not fatal_errors:
+                self.log("[nuclei] WARNING: 0 targets loaded — target list may be empty")
+            if total_requests > 0 and total_errors > 0:
+                error_pct = (total_errors / total_requests) * 100
+                if error_pct > 50:
+                    self.log(
+                        f"[nuclei] WARNING: {error_pct:.0f}% of requests errored "
+                        f"({total_errors}/{total_requests}) — connectivity or target issues likely"
+                    )
+
+            # Sanity check: flag impossibly fast completions
+            url_count = len(effective_targets)
+            effective_rate = self._rate_limit_per_host or self._rate_limit or 150
+            # Minimum plausible time: at least 1 request per URL at the rate limit
+            min_plausible_seconds = max(1, url_count // max(1, effective_rate))
+            if (findings_count == 0 and total_elapsed < min_plausible_seconds
+                    and url_count > 10 and not fatal_errors):
+                self.log(
+                    f"[nuclei] WARNING: {url_count} URLs scanned in {total_elapsed}s "
+                    f"with 0 findings — expected at least {min_plausible_seconds}s at "
+                    f"{effective_rate} rps. Nuclei may not have scanned effectively."
+                )
 
         except Exception as e:
             self.log(f"Nuclei error: {e}")
@@ -1147,12 +1244,41 @@ class NucleiScanner(BaseScanner):
 
             evidence = "\n".join(evidence_parts)
 
-            # Confidence based on severity and template type
+            # Confidence scoring — uses template metadata, not just severity.
+            # Start with a base, then adjust based on evidence quality.
             confidence = Confidence.FIRM
-            if sev_str in ("critical", "high"):
+
+            # Strong positive signals
+            has_extracted = bool(extracted)
+            has_interaction = bool(interaction)
+            has_curl = bool(curl_cmd)
+            has_cvss = bool(info.get("classification", {}).get("cvss-score"))
+
+            # OOB interaction is the strongest signal — server actually called back
+            if has_interaction:
                 confidence = Confidence.CERTAIN
-            elif sev_str == "info":
+            # Extracted results with high severity — template grabbed real data
+            elif has_extracted and sev_str in ("critical", "high"):
+                confidence = Confidence.CERTAIN
+            # CVE/CVSS classified + high severity — well-researched template
+            elif has_cvss and sev_str in ("critical", "high"):
+                confidence = Confidence.CERTAIN
+            # Medium severity with evidence
+            elif sev_str == "medium" and (has_extracted or has_curl):
                 confidence = Confidence.FIRM
+            # Info-only templates are informational, not vulnerabilities
+            elif sev_str == "info":
+                confidence = Confidence.TENTATIVE
+
+            # Negative signals: fuzzing/detect tags suggest best-effort matching
+            if isinstance(tags, list):
+                tag_set = {t.lower() for t in tags}
+                if tag_set & {"fuzz", "fuzzing", "detect", "misc"}:
+                    # Downgrade by one level
+                    if confidence == Confidence.CERTAIN:
+                        confidence = Confidence.FIRM
+                    elif confidence == Confidence.FIRM:
+                        confidence = Confidence.TENTATIVE
 
             # References
             refs = info.get("reference", [])

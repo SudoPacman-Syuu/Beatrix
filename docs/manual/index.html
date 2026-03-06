@@ -556,7 +556,6 @@
                 <li class="sub-item"><a href="#cmd-strike">strike</a></li>
                 <li class="sub-item"><a href="#cmd-hunt">hunt</a></li>
                 <li class="sub-item"><a href="#cmd-batch">batch & rapid</a></li>
-                <li class="sub-item"><a href="#cmd-bounty">bounty-hunt</a></li>
                 <li class="sub-item"><a href="#cmd-ghost">ghost</a></li>
                 <li class="sub-item"><a href="#cmd-findings">findings</a></li>
                 <li class="sub-item"><a href="#cmd-h1">h1 (HackerOne)</a></li>
@@ -579,6 +578,8 @@
                 <li class="sub-item"><a href="#mod-exploit">Phase 4: Exploitation</a></li>
                 <li class="sub-item"><a href="#mod-logic">Phase 5: Business Logic</a></li>
                 <li class="sub-item"><a href="#mod-standalone">Standalone Modules</a></li>
+                
+                <li><a href="#standalone-tools">5b. Standalone Utilities</a></li>
                 
                 <li><a href="#ai-ghost">6. GHOST: AI Pentester</a></li>
                 <li class="sub-item"><a href="#ghost-tools">The 10 Tools</a></li>
@@ -1103,25 +1104,16 @@ beatrix rapid -t bugbounty_targets.txt -o rapid_results.json</code></pre>
                 <h3>Tier 5: Advanced &amp; AI-Powered</h3>
 
                 <details id="cmd-bounty">
-                    <summary>bounty-hunt — Full OWASP Top 10 Pipeline</summary>
+                    <summary><s>bounty-hunt</s> — Deprecated</summary>
                     <div class="detail-body">
-                        <pre><code>beatrix bounty-hunt TARGET [OPTIONS]</code></pre>
-                        <p>The whole enchilada. Runs OWASP Top 10 scanning (IDOR, auth, injection, redirect, SSRF, takeover) then validates all findings through the <code>ImpactValidator</code> and <code>ReadinessGate</code> to ensure you don't submit theoretical garbage.</p>
-                        <table class="flag-table">
-                            <tr><td>-H, --header HEADER</td><td>Add HTTP header (repeatable, format: "Name: Value")</td></tr>
-                            <tr><td>-u, --urls PATH</td><td>Additional URL paths to scan (repeatable)</td></tr>
-                            <tr><td>--jwt TOKEN</td><td>JWT tokens to analyze (repeatable)</td></tr>
-                            <tr><td>-o, --output PATH</td><td>Output report filename</td></tr>
-                            <tr><td>-v, --verbose</td><td>Verbose output</td></tr>
-                        </table>
-                        <pre><code># Authenticated bounty hunt
-beatrix bounty-hunt https://api.example.com -H "Authorization: Bearer TOKEN"
+                        <p><strong>⚠️ This command has been deprecated.</strong> Use <code>beatrix hunt --preset full</code> instead, which provides the same full OWASP Top 10 pipeline with additional features including multi-target file input, AI-assisted analysis, authentication support, and configurable presets.</p>
+                        <pre><code># Old (deprecated):
+beatrix bounty-hunt https://target.com
 
-# With additional paths and JWT analysis
-beatrix bounty-hunt https://target.com -u /api/v2/users -u /admin --jwt eyJ... -v
-
-# Save full report
-beatrix bounty-hunt https://target.com -H "Cookie: session=abc" -o bounty_report.json</code></pre>
+# New (use this instead):
+beatrix hunt https://target.com --preset full
+beatrix hunt https://target.com --preset full -o report.json
+beatrix hunt https://target.com --preset full --ai -H "Authorization: Bearer TOKEN"</code></pre>
                     </div>
                 </details>
 
@@ -2045,6 +2037,51 @@ beatrix polyglot clobber</code></pre>
                 </details>
             </section>
 
+            <section id="standalone-tools">
+                <h2>5b. Standalone Utilities</h2>
+                <p>These tools live outside the main Beatrix package and are run directly with Python. They serve specialized use cases that complement the automated scan pipeline.</p>
+
+                <details id="tool-attacker-server">
+                    <summary>Attacker Server (tools/attacker_server.py) <span class="tag">Tool</span></summary>
+                    <div class="detail-body">
+                        <p>A standalone HTTP server that hosts pre-built CORS exploitation PoC pages and collects exfiltrated data. When you discover a CORS misconfiguration with Beatrix, use this to demonstrate exploitability.</p>
+                        <pre><code># Start the attacker server on port 8080
+python tools/attacker_server.py 8080
+
+# Default port is 9090
+python tools/attacker_server.py</code></pre>
+                        <p><strong>What it does:</strong></p>
+                        <ul>
+                            <li>Serves themed PoC pages that exploit CORS misconfigs to exfiltrate data from the victim's browser</li>
+                            <li>Logs all exfiltrated data to file with timestamps</li>
+                            <li>Provides a live web log viewer at <code>/logs</code></li>
+                            <li>Includes pre-built templates for common targets (customize for your own)</li>
+                        </ul>
+                        <p><strong>When to use:</strong> After <code>beatrix hunt</code> or <code>beatrix strike -m cors</code> finds a CORS misconfiguration, use this server as the attacker origin to prove the vulnerability is exploitable.</p>
+                    </div>
+                </details>
+
+                <details id="tool-hermes">
+                    <summary>Hermes Bytecode Analyzer (tools/hermes_analyzer.py) <span class="tag">Tool</span></summary>
+                    <div class="detail-body">
+                        <p>Parses React Native Hermes v96 bytecode bundles to extract security-relevant data. Designed for mobile app reverse engineering when targeting React Native applications.</p>
+                        <pre><code># Analyze a Hermes bytecode bundle
+python tools/hermes_analyzer.py /path/to/index.android.bundle
+
+# Specify output directory
+python tools/hermes_analyzer.py /path/to/bundle.hbc /tmp/analysis_output</code></pre>
+                        <p><strong>What it extracts:</strong></p>
+                        <ul>
+                            <li><strong>API Keys &amp; Secrets:</strong> AWS keys, Firebase configs, Sentry DSNs, OAuth tokens, generic API keys</li>
+                            <li><strong>URLs &amp; Endpoints:</strong> All HTTP/HTTPS URLs embedded in the bytecode</li>
+                            <li><strong>Crypto References:</strong> Derivation paths, algorithm names, key material</li>
+                            <li><strong>Function Names:</strong> Internal function names for understanding app logic</li>
+                        </ul>
+                        <p><strong>When to use:</strong> When targeting mobile bug bounty programs that use React Native. Download the APK, extract the Hermes bundle, and run this analyzer to find hardcoded secrets and API endpoints before scanning with Beatrix.</p>
+                    </div>
+                </details>
+            </section>
+
             <section id="ai-ghost">
                 <h2>6. GHOST: AI Autonomous Pentester</h2>
                 <p>GHOST (Generative Heuristic Offensive Security Tester) is Beatrix's crown jewel. It is an autonomous agent powered by Claude (Sonnet/Haiku) or AWS Bedrock that acts as a virtual pentester.</p>
@@ -2142,7 +2179,7 @@ beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</cod
 
                 <h4>Workflow 3: The Bounty Pipeline</h4>
                 <ol>
-                    <li>Run <code>beatrix bounty-hunt https://target.com -o report.json</code></li>
+                    <li>Run <code>beatrix hunt https://target.com --preset full -o report.json</code></li>
                     <li>Run <code>beatrix validate report.json</code> to ensure the findings are actually exploitable and not false positives.</li>
                     <li>Run <code>beatrix h1 dupecheck target_program [finding_keywords]</code></li>
                     <li>Run <code>beatrix h1 submit target_program -f validated_report.md</code></li>

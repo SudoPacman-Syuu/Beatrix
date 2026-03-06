@@ -1400,12 +1400,13 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
         elif event == "info":
             progress_state["log"].append(f"  ℹ  {data.get('message', '')}")
 
-        # Keep log to last 50 entries (truncate in-place to avoid rebinding
-        # the list while the printer thread indexes into it)
+        # Keep log to last 50 entries — use lock for thread safety
+        # with the printer thread that reads from the same list
         if len(progress_state["log"]) > 50:
-            excess = len(progress_state["log"]) - 50
-            del progress_state["log"][:excess]
-            _printed_count[0] = max(_printed_count[0] - excess, 0)
+            with _log_lock:
+                excess = len(progress_state["log"]) - 50
+                del progress_state["log"][:excess]
+                _printed_count[0] = max(_printed_count[0] - excess, 0)
 
     engine = BeatrixEngine(on_event=_on_event)
 
@@ -1528,20 +1529,23 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
         import threading
         _printed_count = [0]
         _stop_printer = threading.Event()
+        _log_lock = threading.Lock()
 
         def _printer():
             """Background thread that prints new log entries."""
             while not _stop_printer.is_set():
+                with _log_lock:
+                    while _printed_count[0] < len(progress_state["log"]):
+                        line = progress_state["log"][_printed_count[0]]
+                        console.print(line)
+                        _printed_count[0] += 1
+                _stop_printer.wait(0.1)
+            # Flush remaining
+            with _log_lock:
                 while _printed_count[0] < len(progress_state["log"]):
                     line = progress_state["log"][_printed_count[0]]
                     console.print(line)
                     _printed_count[0] += 1
-                _stop_printer.wait(0.1)
-            # Flush remaining
-            while _printed_count[0] < len(progress_state["log"]):
-                line = progress_state["log"][_printed_count[0]]
-                console.print(line)
-                _printed_count[0] += 1
 
         printer_thread = threading.Thread(target=_printer, daemon=True)
         printer_thread.start()
@@ -1579,8 +1583,8 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
                     ai_enabled=ai,
                     started_at=state.started_at,
                 )
-        except Exception:
-            pass  # DB save is best-effort
+        except Exception as e:
+            console.print(f"[yellow]  ⚠  Failed to save hunt to database: {e}[/yellow]")
 
         _display_hunt_results(state, engine, hunt_id=hunt_id)
 
