@@ -111,9 +111,8 @@ PROBE_HEADERS = [
     # Port manipulation
     ("X-Forwarded-Port", "1337"),
 
-    # Path/routing overrides
-    ("X-Original-URL", "/BTRXCANARY"),
-    ("X-Rewrite-URL", "/BTRXCANARY"),
+    # Path/routing overrides — note: X-Original-URL and X-Rewrite-URL
+    # are intentionally listed once above; not duplicated here.
 
     # Misc headers that apps sometimes reflect
     ("X-Forwarded-For", "BTRXCANARY"),

@@ -1163,7 +1163,7 @@ class NucleiScanner(BaseScanner):
 
             # Sanity check: flag impossibly fast completions
             url_count = len(effective_targets)
-            effective_rate = self._rate_limit_per_host or self._rate_limit or 150
+            effective_rate = self._rate_limit or 150
             # Minimum plausible time: at least 1 request per URL at the rate limit
             min_plausible_seconds = max(1, url_count // max(1, effective_rate))
             if (findings_count == 0 and total_elapsed < min_plausible_seconds

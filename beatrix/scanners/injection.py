@@ -93,14 +93,35 @@ class InjectionScanner(BaseScanner):
             self.log(f"SecLists manager unavailable, using built-in payloads: {e}")
             self._seclists = None
 
+    # Detection method priority — fast/high-signal methods first so the
+    # scan timeout covers the most effective payloads.  Error-based are
+    # instant (pattern match on DB error strings), reflects are instant
+    # (check if payload appears in response), behavioral needs baseline
+    # comparison, and time-based payloads burn 5+ seconds each.
+    _DETECTION_PRIORITY = {"error": 0, "reflect": 1, "behavior": 2, "time": 3}
+
     def _load_payloads(self) -> Dict[str, List[Payload]]:
-        """Load injection payloads by category, augmented with dynamic wordlists."""
+        """Load injection payloads by category, augmented with dynamic wordlists.
+
+        After loading, payloads within each category are sorted so that
+        fast/high-signal detection methods run first (error → reflect →
+        behavior → time).  Builtin payloads naturally stay near the top
+        because they're loaded first and the sort is stable.
+        """
 
         base_payloads = self._load_builtin_payloads()
 
         # Augment with dynamic wordlists from SecLists if available
         if self._seclists:
             self._augment_with_seclists(base_payloads)
+
+        # Sort each category: fast detection methods first, time-based last.
+        # Stable sort preserves builtin-before-seclists order within each
+        # detection type, so hand-crafted payloads always lead.
+        for cat in base_payloads:
+            base_payloads[cat].sort(
+                key=lambda p: self._DETECTION_PRIORITY.get(p.detection, 99)
+            )
 
         return base_payloads
 
@@ -448,6 +469,12 @@ class InjectionScanner(BaseScanner):
         # Determine which payload categories to test
         categories = self._select_categories(insertion_point)
         baseline_time = 0.0
+
+        # Reset per-insertion-point baseline attributes so stale data
+        # from a previous insertion point cannot leak across URLs.
+        self._baseline_body = ''
+        self._baseline_status = 200
+        self._baseline_headers: Dict[str, str] = {}
 
         # Capture baseline response for behavioral (response_analyzer) detection
         if HAS_RESPONSE_ANALYZER:

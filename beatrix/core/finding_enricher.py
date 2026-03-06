@@ -372,7 +372,7 @@ class FindingEnricher:
             for cat in ["sqli", "xss", "cmdi", "ssti", "path"]:
                 if cat in desc:
                     return cat
-            return "sqli"  # default injection
+            return "injection"  # unknown subtype — don't assume SQLi
 
         return ""
 

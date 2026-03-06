@@ -75,16 +75,18 @@ class SSRFScanner(BaseScanner):
     owasp_category = "A10:2025"
 
     # Parameters commonly vulnerable to SSRF
+    # Word-boundary anchors prevent substring matches (e.g. r'to' matching
+    # 'total', 'photo').  \b ensures we match the whole word only.
     SSRF_PARAM_PATTERNS = [
-        r'url', r'uri', r'link', r'href', r'src',
-        r'dest', r'redirect', r'target', r'path',
-        r'site', r'html', r'page', r'feed', r'host',
-        r'domain', r'callback', r'return', r'next',
-        r'data', r'reference', r'file', r'load',
-        r'to', r'open', r'val', r'continue', r'window',
-        r'image', r'img', r'icon', r'logo', r'resource',
-        r'proxy', r'fetch', r'request', r'download',
-        r'content', r'document', r'origin', r'api',
+        r'\burl\b', r'\buri\b', r'\blink\b', r'\bhref\b', r'\bsrc\b',
+        r'\bdest\b', r'\bredirect\b', r'\btarget\b', r'\bpath\b',
+        r'\bsite\b', r'\bhtml\b', r'\bpage\b', r'\bfeed\b', r'\bhost\b',
+        r'\bdomain\b', r'\bcallback\b', r'\breturn\b', r'\bnext\b',
+        r'\bdata\b', r'\breference\b', r'\bfile\b', r'\bload\b',
+        r'\bto\b', r'\bopen\b', r'\bval\b', r'\bcontinue\b', r'\bwindow\b',
+        r'\bimage\b', r'\bimg\b', r'\bicon\b', r'\blogo\b', r'\bresource\b',
+        r'\bproxy\b', r'\bfetch\b', r'\brequest\b', r'\bdownload\b',
+        r'\bcontent\b', r'\bdocument\b', r'\borigin\b', r'\bapi\b',
     ]
 
     def __init__(self, config: Optional[Dict] = None):
