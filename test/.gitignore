@@ -1,0 +1,3 @@
+# Scan outputs — never commit real target data
+*
+!.gitignore

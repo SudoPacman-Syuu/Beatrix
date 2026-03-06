@@ -26,6 +26,9 @@ venv/
 # Tests
 tests/
 
+# Scan output directory
+test/
+
 # Notes
 BURP_INSPIRATION_NOTES.md
 BURP_DEFERRED_TODO.md
