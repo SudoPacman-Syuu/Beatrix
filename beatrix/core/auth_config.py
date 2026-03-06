@@ -455,7 +455,7 @@ class AuthConfigLoader:
         When running via 'sudo beatrix', Path.home() returns /root/ but the
         auth.yaml lives under the real user's home.  Check SUDO_USER first.
         """
-        default = cls.DEFAULT_CONFIG_PATH
+        default = cls._default_config_path()
         if default.exists():
             return default
 
