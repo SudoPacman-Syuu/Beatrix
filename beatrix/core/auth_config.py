@@ -607,10 +607,12 @@ class AuthConfigLoader:
             creds.cookies.update(global_cfg.get("cookies") or {})
 
         # Per-target config (overrides global)
+        target_matched = False
         targets = data.get("targets") or {}
         if isinstance(targets, dict):
             for pattern, tcfg in targets.items():
                 if cls._target_matches(target_domain, pattern):
+                    target_matched = True
                     if isinstance(tcfg, dict):
                         creds.headers.update(tcfg.get("headers") or {})
                         creds.cookies.update(tcfg.get("cookies") or {})
@@ -625,6 +627,11 @@ class AuthConfigLoader:
                             creds.login_username_field = login_cfg.get("username_field")
                             creds.login_password_field = login_cfg.get("password_field")
 
+                        # Per-target IDOR config (preferred over top-level)
+                        idor_cfg = tcfg.get("idor") or {}
+                        if isinstance(idor_cfg, dict) and idor_cfg:
+                            cls._load_idor_config(creds, idor_cfg)
+
         # Global login credentials (if no per-target login was found)
         if not creds.has_login_creds:
             login_cfg = data.get("login") or (global_cfg.get("login") if isinstance(global_cfg, dict) else None) or {}
@@ -636,35 +643,49 @@ class AuthConfigLoader:
                 creds.login_username_field = login_cfg.get("username_field")
                 creds.login_password_field = login_cfg.get("password_field")
 
-        # IDOR accounts — support both static cookies/headers AND login credentials
-        idor_cfg = data.get("idor") or {}
-        if isinstance(idor_cfg, dict):
-            u1 = idor_cfg.get("user1") or {}
-            u2 = idor_cfg.get("user2") or {}
-            if u1:
-                u1_login = u1.get("login") or {}
-                creds.idor_user1 = AuthCredentials(
-                    headers=u1.get("headers") or {},
-                    cookies=u1.get("cookies") or {},
-                    login_username=u1_login.get("username") or u1_login.get("email") if u1_login else None,
-                    login_password=u1_login.get("password") if u1_login else None,
-                    login_url=u1_login.get("url") if u1_login else None,
-                    login_method=u1_login.get("method", "auto") if u1_login else None,
-                    login_username_field=u1_login.get("username_field") if u1_login else None,
-                    login_password_field=u1_login.get("password_field") if u1_login else None,
-                )
-            if u2:
-                u2_login = u2.get("login") or {}
-                creds.idor_user2 = AuthCredentials(
-                    headers=u2.get("headers") or {},
-                    cookies=u2.get("cookies") or {},
-                    login_username=u2_login.get("username") or u2_login.get("email") if u2_login else None,
-                    login_password=u2_login.get("password") if u2_login else None,
-                    login_url=u2_login.get("url") if u2_login else None,
-                    login_method=u2_login.get("method", "auto") if u2_login else None,
-                    login_username_field=u2_login.get("username_field") if u2_login else None,
-                    login_password_field=u2_login.get("password_field") if u2_login else None,
-                )
+        # Top-level IDOR accounts — only load if: (a) no per-target IDOR was
+        # already loaded, AND (b) the target matched a configured target entry
+        # OR no targets are configured at all (backward-compatible global use).
+        # This prevents IDOR credentials for domain X from leaking into scans
+        # of unrelated targets (e.g., IP addresses).
+        if not creds.has_idor_accounts:
+            idor_cfg = data.get("idor") or {}
+            if isinstance(idor_cfg, dict) and idor_cfg:
+                no_targets_configured = not targets or not isinstance(targets, dict)
+                if target_matched or no_targets_configured:
+                    cls._load_idor_config(creds, idor_cfg)
+
+        return creds
+
+    @classmethod
+    def _load_idor_config(cls, creds: AuthCredentials, idor_cfg: Dict[str, Any]) -> None:
+        """Load IDOR user1/user2 credentials from an idor config block."""
+        u1 = idor_cfg.get("user1") or {}
+        u2 = idor_cfg.get("user2") or {}
+        if u1:
+            u1_login = u1.get("login") or {}
+            creds.idor_user1 = AuthCredentials(
+                headers=u1.get("headers") or {},
+                cookies=u1.get("cookies") or {},
+                login_username=u1_login.get("username") or u1_login.get("email") if u1_login else None,
+                login_password=u1_login.get("password") if u1_login else None,
+                login_url=u1_login.get("url") if u1_login else None,
+                login_method=u1_login.get("method", "auto") if u1_login else None,
+                login_username_field=u1_login.get("username_field") if u1_login else None,
+                login_password_field=u1_login.get("password_field") if u1_login else None,
+            )
+        if u2:
+            u2_login = u2.get("login") or {}
+            creds.idor_user2 = AuthCredentials(
+                headers=u2.get("headers") or {},
+                cookies=u2.get("cookies") or {},
+                login_username=u2_login.get("username") or u2_login.get("email") if u2_login else None,
+                login_password=u2_login.get("password") if u2_login else None,
+                login_url=u2_login.get("url") if u2_login else None,
+                login_method=u2_login.get("method", "auto") if u2_login else None,
+                login_username_field=u2_login.get("username_field") if u2_login else None,
+                login_password_field=u2_login.get("password_field") if u2_login else None,
+            )
 
         return creds
 
