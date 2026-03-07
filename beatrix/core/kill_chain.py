@@ -452,7 +452,26 @@ class KillChainExecutor:
                     # Inject auth headers into the scanner's HTTP client
                     if context.get("auth") and hasattr(scanner, 'apply_auth'):
                         scanner.apply_auth(context["auth"])
+
+                    # A-05: Track consecutive failures per host so we skip
+                    # remaining URLs on a dead host instead of timing out
+                    # on every single URL.  Threshold = 3 consecutive.
+                    from urllib.parse import urlparse as _urlparse_host
+                    host_fail_count: Dict[str, int] = {}
+                    _HOST_FAIL_THRESHOLD = 3
+                    dead_hosts = context.get("_dead_hosts", set())
+
                     for i, url in enumerate(urls):
+                        try:
+                            parsed = _urlparse_host(url)
+                            host_key = parsed.netloc.lower()
+                        except Exception:
+                            host_key = ""
+
+                        # Skip URLs whose host is already known-dead
+                        if host_key in dead_hosts or host_fail_count.get(host_key, 0) >= _HOST_FAIL_THRESHOLD:
+                            continue
+
                         try:
                             ctx = ScanContext.from_url(url)
                             ctx.extra = context.get("crawl_extra", {})
@@ -471,7 +490,19 @@ class KillChainExecutor:
                                     finding.scanner_module = scanner_name
                                 result["findings"].append(finding)
                                 self._emit("finding", scanner=scanner_name, finding=finding)
+
+                            # Success — reset host failure counter
+                            if host_key in host_fail_count:
+                                del host_fail_count[host_key]
+
                         except Exception as e:
+                            # Track host-level failures
+                            if host_key:
+                                host_fail_count[host_key] = host_fail_count.get(host_key, 0) + 1
+                                if host_fail_count[host_key] >= _HOST_FAIL_THRESHOLD:
+                                    self._emit("scanner_error", scanner=scanner_name,
+                                               error=f"Host {host_key} failed {_HOST_FAIL_THRESHOLD}x — skipping remaining URLs")
+                                    continue
                             self._emit("scanner_error", scanner=scanner_name,
                                        error=f"Error on URL {i+1}/{len(urls)} ({url}): {e}")
                             continue
@@ -1633,9 +1664,27 @@ class KillChainExecutor:
         # Takeover works on the base domain
         results.append(await self._run_scanner("takeover", url, context))
 
-        # Error disclosure — run on discovered URLs that might have interesting error pages
+        # Error disclosure — run on discovered URLs that might have interesting error pages.
+        # Deduplicate by base_url (scheme://netloc) since error_disclosure's
+        # PROBE_PATHS only uses base_url — testing the same host ten times
+        # with different paths wastes time and produces duplicate findings.
+        from urllib.parse import urlparse as _urlparse_dedup
         discovered = context.get("discovered_urls", [url])
-        sample_urls = list(set(discovered))[:20]
+        seen_hosts: set = set()
+        sample_urls: list = []
+        for u in discovered:
+            try:
+                parsed = _urlparse_dedup(u)
+                host_key = parsed.netloc.lower()
+            except Exception:
+                continue
+            if host_key and host_key not in seen_hosts:
+                seen_hosts.add(host_key)
+                sample_urls.append(u)
+            if len(sample_urls) >= 20:
+                break
+        if not sample_urls:
+            sample_urls = [url]
         results.append(await self._run_scanner_on_urls("error_disclosure", sample_urls, context))
 
         # Cache poisoning — test for unkeyed header/param manipulation

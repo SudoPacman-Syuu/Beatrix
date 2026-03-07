@@ -9,6 +9,7 @@ payload, evidence hash.
 """
 
 import hashlib
+import re
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Dict, List, Optional
@@ -217,17 +218,60 @@ class IssueConsolidator:
                 if new_ev != old_ev:
                     return ConsolidationAction.KEEP_BOTH
 
-            # Different descriptions with unique content (e.g. different secret values)
+            # F-05: Compare descriptions after stripping dynamic content
+            # (timestamps, response snippets, request IDs, IP addresses).
+            # Without normalization, the same finding from two runs —
+            # or two requests to the same endpoint — always differs and
+            # defeats dedup.
             if (new.description and existing.description and
-                    new.description != existing.description and
                     len(new.description) > 20):
-                return ConsolidationAction.KEEP_BOTH
+                norm_new = self._normalize_description(new.description)
+                norm_old = self._normalize_description(existing.description)
+                if norm_new != norm_old:
+                    return ConsolidationAction.KEEP_BOTH
 
             # Validated > unvalidated
             if new.validated and not existing.validated:
                 return ConsolidationAction.KEEP_NEW
 
         return ConsolidationAction.KEEP_EXISTING
+
+    # Regex patterns for dynamic content that should be stripped before
+    # comparing descriptions for dedup.
+    _DYN_PATTERNS = [
+        # Timestamps — ISO-8601, RFC-2822, epoch, common date formats
+        re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.\dZ+:-]*"),
+        re.compile(r"\b\d{10,13}\b"),  # Unix epoch seconds/millis
+        # UUIDs
+        re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I),
+        # HTTP status codes in context like "HTTP 200" or "(HTTP 403)"
+        re.compile(r"HTTP\s*/?\s*\d\.\d\s+\d{3}|HTTP\s+\d{3}", re.I),
+        # IP addresses (v4)
+        re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"),
+        # Hex hashes (32+ chars)
+        re.compile(r"\b[0-9a-f]{32,}\b", re.I),
+        # Response body excerpts — anything between "Response:" and newline
+        re.compile(r"Response:.*", re.I),
+        # Uploaded-to / Location URLs — dynamic per request
+        re.compile(r"Uploaded to:.*", re.I),
+        # Nonce / token-like strings (16+ alphanumeric)
+        re.compile(r"\b[A-Za-z0-9+/]{20,}={0,2}\b"),
+    ]
+
+    def _normalize_description(self, desc: str) -> str:
+        """Strip dynamic content from a description for dedup comparison.
+
+        Replaces timestamps, UUIDs, IPs, hashes, response excerpts, and
+        other run-specific data with placeholders so that two descriptions
+        describing the *same* finding but with different dynamic values
+        compare as equal.
+        """
+        result = desc
+        for pat in self._DYN_PATTERNS:
+            result = pat.sub("", result)
+        # Collapse whitespace
+        result = re.sub(r"\s+", " ", result).strip()
+        return result
 
     def unique_findings(self) -> List[Finding]:
         """Return all unique findings."""

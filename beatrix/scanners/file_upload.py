@@ -516,15 +516,25 @@ class FileUploadScanner(BaseScanner):
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
         """Full file upload vulnerability scan"""
 
-        # Generate all test cases
+        # Generate all test cases, ordered by severity/impact.
+        # Extension bypass + traversal are highest value, then polyglot/XSS,
+        # then content-type (easiest to defend against, lowest impact).
         all_tests: List[UploadTest] = []
         all_tests.extend(self._generate_extension_tests())
-        all_tests.extend(self._generate_content_type_tests())
-        all_tests.extend(self._generate_polyglot_tests())
-        all_tests.extend(self._generate_xss_tests())
 
         if not self.safe_mode:
             all_tests.extend(self._generate_traversal_tests())
+
+        all_tests.extend(self._generate_polyglot_tests())
+        all_tests.extend(self._generate_xss_tests())
+        all_tests.extend(self._generate_content_type_tests())
+
+        # E-06: Cap total tests to avoid spending 5+ minutes on a single
+        # upload form.  The list is already ordered by impact, so we keep
+        # the highest-value tests and trim the tail.
+        _MAX_UPLOAD_TESTS = 25
+        if len(all_tests) > _MAX_UPLOAD_TESTS:
+            all_tests = all_tests[:_MAX_UPLOAD_TESTS]
 
         for test in all_tests:
             resp, uploaded_url = await self._attempt_upload(context, test)

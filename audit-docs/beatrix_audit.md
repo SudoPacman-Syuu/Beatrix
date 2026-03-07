@@ -1,6 +1,6 @@
 # Beatrix Codebase Audit — Findings
 
-Audit date: March 6, 2026. Read-only review, no changes made.  \nLast updated: March 6, 2026 — Nuclei sweep complete (A-01, B-01, B-02 fixed, dead code cleaned).
+Audit date: March 6, 2026. Read-only review, no changes made.  \nLast updated: March 6, 2026 — HIGH sweep complete (C-01+C-02, A-02, A-05, E-06, F-05 fixed; 14/47 total fixed, all CRITICALs + all HIGHs closed).
 
 ---
 

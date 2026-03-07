@@ -1,8 +1,8 @@
 # Beatrix Scanner Audit — Post-Fix Deep Dive
 
-**Date:** 2025-07-17 (initial), 2026-03-06 (Tier 1 fixes + critical fixes + nuclei sweep)  
+**Date:** 2025-07-17 (initial), 2026-03-06 (Tier 1 fixes + critical fixes + nuclei sweep + HIGH sweep)  
 **Scope:** Systematic codebase audit inspired by the franktech.net scan results  
-**Status:** 9 items fixed (commits `6f9861b`, `ae433d5`, `9fccdff`, `b6a2dd1`); 38 remaining  
+**Status:** 14 items fixed (commits `6f9861b`, `ae433d5`, `9fccdff`, `b6a2dd1`, plus HIGH sweep); 33 remaining  
 **Complements:** `BEATRIX_AUDIT.md` (bugs 1–9), `nuclei-audit.md` (N-01 through N-16)
 
 ---
@@ -26,7 +26,7 @@ After fixing the original 25 issues (Bugs 1–9 + N-01 through N-16), a new fran
 | Priority | Count | Resolved | Description |
 |----------|------:|:--------:|-------------|
 | **CRITICAL** | 3 | 2 (1 mitigated) | ~~Nuclei timeout race~~, injection payload explosion (mitigated), ~~stale URL pipeline~~ |
-| **HIGH** | 9 | 4 | ~~SSRF false-positive patterns~~, ~~finding misclassification~~, circuit breaker absence, ~~cache dedup~~, dedup failures, ~~nuclei tag fallback~~ |
+| **HIGH** | 9 | 9 | ~~SSRF false-positive patterns~~, ~~finding misclassification~~, ~~circuit breaker~~, ~~cache dedup~~, ~~dedup failures~~, ~~nuclei tag fallback~~, ~~error_disclosure dedup~~, ~~host failure tracking~~, ~~file_upload cap~~ |
 | **MEDIUM** | 21 | 1 | Sequential execution, timeout config, transport error propagation, ~~payload prioritization~~, broad pattern matching |
 | **LOW** | 15 | 1 | Logging noise, minor dedup gaps, ~~duplicate probe headers~~, cosmetic issues |
 
@@ -50,14 +50,15 @@ After fixing the original 25 issues (Bugs 1–9 + N-01 through N-16), a new fran
 
 **Scanners affected:** All 12 `_run_scanner_on_urls` invocations + 2 Nuclei bulk passes = 14 passes over the same dead URLs.
 
-### A-02: error_disclosure Base-URL Duplication (HIGH)
+### A-02: error_disclosure Base-URL Duplication (HIGH) — ✅ FIXED
 
-**Files:** `kill_chain.py` L1545, `error_disclosure.py` L195, L50–88  
+**Files:** `kill_chain.py` `_handle_weaponization()`  
+**Fix:** Replaced `list(set(discovered))[:20]` with per-netloc deduplication. Now extracts unique hosts via `urlparse().netloc.lower()` and keeps at most 1 URL per host, capped at 20 total. If no URLs pass filtering, falls back to the target URL.
 **Observed:** franktech.net scan — "Error disclosure scan on http://www.franktech.net:80" logged ~18 times.
 
-**Root cause:** Kill chain does `list(set(discovered))[:20]` — deduplicates by full URL string. But the scanner's `PROBE_PATHS` loop uses only `context.base_url` (scheme://netloc). Twenty URLs like `http://host/path1?a=1`, `http://host/path2?b=2` all produce identical probe requests on the same origin.
+~~**Root cause:** Kill chain does `list(set(discovered))[:20]` — deduplicates by full URL string. But the scanner's `PROBE_PATHS` loop uses only `context.base_url` (scheme://netloc). Twenty URLs like `http://host/path1?a=1`, `http://host/path2?b=2` all produce identical probe requests on the same origin.~~
 
-**Waste:** 20 URLs × 38 probe paths = 760 requests, of which ~720 are identical (same origin + same probe path). Only `_fuzz_existing_paths()` (5 requests per URL using the full path) produces unique work.
+~~**Waste:** 20 URLs × 38 probe paths = 760 requests, of which ~720 are identical (same origin + same probe path). Only `_fuzz_existing_paths()` (5 requests per URL using the full path) produces unique work.~~
 
 ### A-03: redirect Scanner Has No URL Cap (MEDIUM)
 
@@ -76,11 +77,14 @@ injection_targets = list(dict.fromkeys(urls_with_params + api_endpoints + extra_
 
 Dedup is by exact URL string. No grouping by host, no prioritization by parameter count, no filtering of URLs on dead hosts. A target with 50 URLs on 3 hosts could have 40 URLs on one host and 5 each on the other two — the scanner spends most time on the dominant host with no diversity guarantee.
 
-### A-05: No Host-Level Failure Tracking in `_run_scanner_on_urls` (HIGH)
+### A-05: No Host-Level Failure Tracking in `_run_scanner_on_urls` (HIGH) — ✅ FIXED
 
-**File:** `kill_chain.py` L387–392
+**File:** `kill_chain.py` `_run_scanner_on_urls()`  
+**Fix:** Added per-host consecutive failure tracking inside the URL loop. Extracts host via `urlparse().netloc.lower()` for each URL. On exception, increments `host_fail_count[host]`. After 3 consecutive failures on the same host, skips all remaining URLs for that host and emits a warning event. Also checks `context["_dead_hosts"]` (populated by A-01's DNS gate) to skip known-dead hosts immediately. Successful scans reset the counter for that host.
 
-When URL 1 on `host-x.com` fails with a connection error, the `except Exception: continue` skips to URL 2 — which may also be on `host-x.com`. No mechanism exists to mark a host as dead and skip remaining URLs on that host.
+Works in concert with C-01's circuit breaker: `BaseScanner.request()` tracks per-host transport errors and raises `CircuitBreakerOpen` after 5 failures — which propagates to this handler's `except Exception` block and increments the kill-chain-level counter.
+
+~~When URL 1 on `host-x.com` fails with a connection error, the `except Exception: continue` skips to URL 2 — which may also be on `host-x.com`. No mechanism exists to mark a host as dead and skip remaining URLs on that host.~~
 
 ### A-06: Weaponization/Delivery Phases Are Fully Sequential (MEDIUM)
 
@@ -134,24 +138,29 @@ Additionally cleaned up dead `_rate_limit_per_host` attribute (set but never use
 
 ## C. Circuit Breaker Absence (Systemic)
 
-### C-01: BaseScanner Has No Circuit Breaker (HIGH)
+### C-01: BaseScanner Has No Circuit Breaker (HIGH) — ✅ FIXED
 
-**File:** `base.py` L167–208
+**File:** `base.py` `BaseScanner.request()`  
+**Fix:** Added circuit breaker to `BaseScanner.request()`. Tracks consecutive transport errors per host using `_cb_host_failures` dict. Catches `httpx.ConnectError`, `httpx.ConnectTimeout`, `httpx.ReadTimeout`, `httpx.WriteTimeout`, `httpx.PoolTimeout`, and `httpx.RemoteProtocolError`. After `_CB_THRESHOLD` (5) consecutive transport failures on the same host, raises `CircuitBreakerOpen` (new exception, subclass of `Exception`). Successful responses reset the counter. The circuit breaker check runs BEFORE the request — once tripped, subsequent requests to the same host fail immediately with no network I/O.
 
-`BaseScanner.request()` handles only:
-- **HTTP 429** — retry with exponential backoff (up to 3 retries)
-- **HTTP 401** — session expiry tracking
+New `CircuitBreakerOpen` exception class defined at module level. Scanners with `except Exception: continue` naturally skip the breaker exception and move to the next payload/URL.
 
-It does **not** catch or track:
-- `httpx.ConnectError` (DNS failure, connection refused)
-- `httpx.TimeoutException` (read/write timeout)
-- `httpx.RemoteProtocolError` (protocol violations)
+~~`BaseScanner.request()` handles only:~~
+~~- **HTTP 429** — retry with exponential backoff (up to 3 retries)~~
+~~- **HTTP 401** — session expiry tracking~~
 
-These transport errors propagate to the caller. Most scanners catch them with bare `except Exception: continue` and move to the next payload, never tracking consecutive failures.
+~~It does **not** catch or track:~~
+~~- `httpx.ConnectError` (DNS failure, connection refused)~~
+~~- `httpx.TimeoutException` (read/write timeout)~~
+~~- `httpx.RemoteProtocolError` (protocol violations)~~
 
-### C-02: No Scanner Has a Circuit Breaker
+~~These transport errors propagate to the caller. Most scanners catch them with bare `except Exception: continue` and move to the next payload, never tracking consecutive failures.~~
 
-**Affected scanners (all 11 audited):**
+### C-02: No Scanner Has a Circuit Breaker — ✅ FIXED (via C-01)
+
+**Fix:** The circuit breaker is implemented in `BaseScanner.request()` — inherited by all 20+ scanners. No per-scanner changes needed.
+
+~~**Affected scanners (all 11 audited):**~~
 
 | Scanner | Catch Pattern | Line | Continues After Failure? |
 |---------|--------------|------|-------------------------|
@@ -167,7 +176,9 @@ These transport errors propagate to the caller. Most scanners catch them with ba
 | file_upload | implicit | — | Yes |
 | cache_poisoning | `except Exception: continue` | L339 | Yes |
 
-**Impact for SSTI specifically:** `ssti.py` fires 31 requests per URL (8 templates × 2 params + 5 headers × 3 payloads) on DNS-unresolvable hosts. Zero pre-flight DNS check, zero early exit after first failure.
+~~**Impact for SSTI specifically:** `ssti.py` fires 31 requests per URL (8 templates × 2 params + 5 headers × 3 payloads) on DNS-unresolvable hosts. Zero pre-flight DNS check, zero early exit after first failure.~~
+
+All scanners now inherit circuit breaker protection — after 5 consecutive transport errors on a host, `CircuitBreakerOpen` is raised and caught by each scanner's existing `except Exception` handler.
 
 ---
 
@@ -254,11 +265,14 @@ Uses `Finding(...)` directly instead of `self.create_finding()`, bypassing scann
 
 `target_tech` defaults to `"php"`, generating PHP-specific payloads (`.php.jpg`, `<?php` shells) even on non-PHP targets. The scanner has no tech detection to auto-select the right payload set.
 
-### E-06: file_upload Unbounded Test List (HIGH)
+### E-06: file_upload Unbounded Test List (HIGH) — ✅ FIXED
 
-**File:** `file_upload.py` L510–560
+**File:** `file_upload.py` `scan()`  
+**Fix:** Reordered test generation by impact priority (extension bypass first, then traversal, polyglot, XSS, content-type last) and added `_MAX_UPLOAD_TESTS = 25` cap. The cap trims the tail of the priority-ordered list, keeping the highest-value tests.
 
-`_generate_extension_tests()` produces ~30+ tests (double-ext: 10, case: 3, null: 1, alt: 10+, trailing: 4), plus content-type tests (5), polyglot (2), XSS (3), and traversal (7). Total ~60+ tests with no cap.
+~~`_generate_extension_tests()` produces ~30+ tests (double-ext: 10, case: 3, null: 1, alt: 10+, trailing: 4), plus content-type tests (5), polyglot (2), XSS (3), and traversal (7). Total ~60+ tests with no cap.~~
+
+Total uncapped: 46 tests. After cap: 25 (extension:25 out of 29 kept, covers all double-ext + case + null + most alt extensions).
 
 ### E-07: HTTP Smuggling Hardcoded Timing Threshold (MEDIUM)
 
@@ -314,11 +328,12 @@ If a LOW-severity finding has no impact template at its level but a CRITICAL tem
 
 Last-resort parameter extraction via URL query string picks `next(iter(qs))` — the arbitrary first query parameter. For multi-param URLs, this can assign the wrong parameter name.
 
-### F-05: Issue Consolidator Defeated by Dynamic Descriptions (HIGH)
+### F-05: Issue Consolidator Defeated by Dynamic Descriptions (HIGH) — ✅ FIXED
 
-**File:** `issue_consolidator.py` L166–175
+**File:** `issue_consolidator.py` `_decide()` + `_normalize_description()`  
+**Fix:** Added `_normalize_description()` method that strips dynamic content before comparing descriptions. Uses regex patterns to remove: ISO-8601/epoch timestamps, UUIDs, HTTP status codes, IPv4 addresses, hex hashes (32+ chars), response/upload excerpts, and base64-like tokens (20+ chars). After stripping, collapses whitespace. The `_decide()` method now normalizes both descriptions before the diff check — only genuinely different descriptions trigger `KEEP_BOTH`.
 
-`_decide()` returns `KEEP_BOTH` when descriptions differ by more than 20 chars. Scanners that append timestamps, request IDs, or dynamic content to descriptions produce unique descriptions for the same bug — defeating dedup.
+~~`_decide()` returns `KEEP_BOTH` when descriptions differ by more than 20 chars. Scanners that append timestamps, request IDs, or dynamic content to descriptions produce unique descriptions for the same bug — defeating dedup.~~
 
 ### F-06: Cross-Scanner Duplicates Not Merged (MEDIUM)
 
@@ -385,16 +400,16 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 | ID | Area | Severity | One-Line Description |
 |----|------|----------|---------------------|
 | A-01 | Kill Chain | **CRITICAL** | ~~No URL liveness gate — dead hosts waste 18–30 min of DNS timeouts~~ ✅ Fixed — async DNS gate filters dead hosts |
-| A-02 | Kill Chain | **HIGH** | error_disclosure scans same origin 20× due to query-string-only URL differentiation |
+| A-02 | Kill Chain | **HIGH** | ~~error_disclosure scans same origin 20× due to query-string-only URL differentiation~~ ✅ Fixed — per-netloc dedup |
 | A-03 | Kill Chain | **MEDIUM** | redirect scanner receives URLs with no cap |
 | A-04 | Kill Chain | **MEDIUM** | injection_targets not grouped by host |
-| A-05 | Kill Chain | **HIGH** | No host-level failure tracking in `_run_scanner_on_urls` |
+| A-05 | Kill Chain | **HIGH** | ~~No host-level failure tracking in `_run_scanner_on_urls`~~ ✅ Fixed — per-host consecutive failure tracking (threshold=3) |
 | A-06 | Kill Chain | **MEDIUM** | Weaponization/Delivery phases fully sequential (could be parallel) |
 | A-07 | Kill Chain | **LOW** | Scanner errors not aggregated in final report |
 | B-01 | Nuclei | **CRITICAL** | ~~readline_timeout kills nuclei during template loading (stdout-only idle timer)~~ ✅ Fixed — shared last_activity timer |
 | B-02 | Nuclei | **HIGH** | ~~Tag fallback silently filtered network/workflow templates~~ ✅ Fixed — removed fallback (`b6a2dd1`) |
-| C-01 | BaseScanner | **HIGH** | No circuit breaker for transport errors |
-| C-02 | All Scanners | **HIGH** | Zero scanners implement connection-failure tracking |
+| C-01 | BaseScanner | **HIGH** | ~~No circuit breaker for transport errors~~ ✅ Fixed — per-host circuit breaker (threshold=5, raises `CircuitBreakerOpen`) |
+| C-02 | All Scanners | **HIGH** | ~~Zero scanners implement connection-failure tracking~~ ✅ Fixed via C-01 — all scanners inherit circuit breaker |
 | D-01 | Injection | **CRITICAL** | SecLists payloads loaded without cap (56K+) — *mitigated by priority sort (D-03)* |
 | D-02 | Injection | **MEDIUM** | Fully sequential — 1 req at a time |
 | D-03 | Injection | **MEDIUM** | ~~No payload prioritization~~ ✅ Fixed — sorted by detection priority |
@@ -406,7 +421,7 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 | E-03 | IDOR | **LOW** | Uses raw `Finding()` bypassing `create_finding()` |
 | E-04 | XXE | **MEDIUM** | XML acceptance probe treats 500/404 as acceptance |
 | E-05 | file_upload | **MEDIUM** | Defaults to PHP payloads regardless of target tech |
-| E-06 | file_upload | **HIGH** | ~60+ tests with no cap |
+| E-06 | file_upload | **HIGH** | ~~~60+ tests with no cap~~ ✅ Fixed — capped at 25, priority-ordered |
 | E-07 | HTTP Smuggling | **MEDIUM** | Hardcoded timing threshold (5.0s) — false positives on slow networks |
 | E-08 | Prototype Pollution | **MEDIUM** | Passive patterns match common JS builtins |
 | E-09 | Cache Poisoning | **LOW** | ~~Duplicate `X-Original-URL`~~ ✅ Fixed — deduped |
@@ -415,7 +430,7 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 | F-02 | Finding Enricher | **MEDIUM** | Impact template fallback walks severity upward |
 | F-03 | Finding Enricher | **LOW** | PoC curl omits actual payload |
 | F-04 | Finding Enricher | **LOW** | Parameter extraction picks arbitrary first param |
-| F-05 | Issue Consolidator | **HIGH** | Dynamic descriptions defeat dedup |
+| F-05 | Issue Consolidator | **HIGH** | ~~Dynamic descriptions defeat dedup~~ ✅ Fixed — `_normalize_description()` strips dynamic content before comparison |
 | F-06 | Issue Consolidator | **MEDIUM** | Cross-scanner duplicates not merged (fingerprint includes module) |
 | F-07 | Issue Consolidator | **MEDIUM** | Multiple payloads for same vuln create duplicate reports |
 | F-08 | Issue Consolidator | **LOW** | Variant fingerprint prevents cascading dedup |
@@ -434,19 +449,19 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 1. ~~**A-01** — Add DNS liveness gate after URL discovery, before scanner dispatch~~ ✅ Done
 2. ~~**B-01** — Reset nuclei idle timer on stderr activity (or wait for first stdout line)~~ ✅ Done
 3. **D-01** — Cap SecLists payloads per category (e.g., `[:100]`) — *Partially addressed: payloads are now sorted by detection priority (D-03 ✅) so the timeout budget covers the best payloads first, but no hard cap applied*
-4. **C-01 + C-02** — Add circuit breaker to `BaseScanner.request()` (bail after 5 consecutive `ConnectError`/`TimeoutException` on same host)
+4. ~~**C-01 + C-02** — Add circuit breaker to `BaseScanner.request()` (bail after 5 consecutive `ConnectError`/`TimeoutException` on same host)~~ ✅ Done — per-host circuit breaker with `CircuitBreakerOpen` exception
 
 ### Tier 2 — High value (reduces false positives and duplicates)
 5. ~~**E-01** — Fix SSRF param patterns with word boundaries~~ ✅ Done (ae433d5)
 6. ~~**F-01** — Remove SQLi fallback in `_detect_vuln_type()`~~ ✅ Done (6f9861b)
-7. **F-05** — Strip dynamic content from descriptions before dedup comparison
-8. **A-02** — Deduplicate error_disclosure URLs by base_url (scheme://netloc)
-9. **E-06** — Cap file_upload tests at ~20
+7. ~~**F-05** — Strip dynamic content from descriptions before dedup comparison~~ ✅ Done — `_normalize_description()` strips timestamps/IPs/UUIDs/hashes
+8. ~~**A-02** — Deduplicate error_disclosure URLs by base_url (scheme://netloc)~~ ✅ Done — per-netloc dedup
+9. ~~**E-06** — Cap file_upload tests at ~20~~ ✅ Done — capped at 25, priority-ordered
 
 ### Tier 3 — Optimization (improves scan speed)
 10. **D-02** — Add `asyncio.gather` batching for injection payloads
 11. **A-06** — Parallelize weaponization/delivery scanner dispatch
-12. **A-05** — Track failed hosts in `_run_scanner_on_urls`, skip remaining URLs on dead hosts
+12. ~~**A-05** — Track failed hosts in `_run_scanner_on_urls`, skip remaining URLs on dead hosts~~ ✅ Done — per-host failure tracking (threshold=3)
 13. ~~**D-03** — Sort payloads by priority (error-based first, time-based last)~~ ✅ Done (6f9861b)
 
 ### Tier 4 — Polish
@@ -459,3 +474,8 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 18. ✅ **A-01** — DNS liveness gate for dead host filtering
 19. ✅ **B-01** — Nuclei idle timer shared across stdout+stderr + dead code cleanup (`_rate_limit_per_host` removed, docstring updated)
 20. ✅ **B-02** — Removed tag fallback in `_run_nuclei()` that silently filtered network/workflow templates (`b6a2dd1`)
+21. ✅ **C-01 + C-02** — Circuit breaker in `BaseScanner.request()` — per-host transport error tracking, `CircuitBreakerOpen` after 5 failures
+22. ✅ **A-02** — error_disclosure URL dedup by netloc instead of full URL string
+23. ✅ **A-05** — Host-level failure tracking in `_run_scanner_on_urls()` — skip remaining URLs after 3 consecutive failures per host
+24. ✅ **E-06** — file_upload test cap at 25, priority-ordered (extension > traversal > polyglot > XSS > content-type)
+25. ✅ **F-05** — `_normalize_description()` strips dynamic content (timestamps, IPs, UUIDs, hashes, response excerpts) before dedup comparison

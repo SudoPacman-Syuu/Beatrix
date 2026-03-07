@@ -16,6 +16,16 @@ import httpx
 
 logger = logging.getLogger("beatrix.scanners.base")
 
+
+class CircuitBreakerOpen(Exception):
+    """Raised when a host has exceeded consecutive transport-error threshold.
+
+    Scanners that catch generic ``Exception`` will naturally skip this URL
+    and move to the next one.  The kill chain's host-failure tracker (A-05)
+    can also intercept this to skip remaining URLs on the dead host.
+    """
+
+
 from beatrix.core.types import (
     Confidence,
     Finding,
@@ -126,6 +136,17 @@ class BaseScanner(ABC):
         self._auth_failure_count = 0
         self._auth_failure_threshold = 3  # consecutive 401/403s before warning
         self._session_dead_warned = False
+
+        # Circuit breaker — tracks consecutive transport errors per host.
+        # After _CB_THRESHOLD consecutive ConnectError/TimeoutException on
+        # the same host, further requests to that host raise immediately
+        # instead of waiting for another timeout.  Prevents wasting minutes
+        # retrying dead hosts across payload loops.
+        self._cb_host_failures: Dict[str, int] = {}  # host -> consecutive failure count
+        self._cb_tripped_hosts: set = set()  # hosts that have been circuit-broken
+
+    # Circuit breaker threshold — class-level constant
+    _CB_THRESHOLD: int = 5
 
     async def __aenter__(self):
         """Async context manager entry"""
@@ -242,8 +263,15 @@ class BaseScanner(ABC):
         url: str,
         **kwargs,
     ) -> httpx.Response:
-        """Make an HTTP request with rate limiting, 429 retry, and session
-        expiry detection.
+        """Make an HTTP request with rate limiting, circuit breaker, 429
+        retry, and session expiry detection.
+
+        Circuit breaker: tracks consecutive transport errors (DNS failure,
+        connection refused, timeout) per host.  After _CB_THRESHOLD
+        consecutive failures on the same host, raises
+        ``CircuitBreakerOpen`` immediately — prevents scanners from
+        spending minutes retrying a dead host across their payload loop.
+        A successful response resets the counter for that host.
 
         When auth is configured and the server returns 401/403, tracks
         consecutive failures. After hitting the threshold, logs a warning
@@ -253,10 +281,40 @@ class BaseScanner(ABC):
         if not self.client:
             raise RuntimeError("Scanner not initialized. Use 'async with' context.")
 
+        # ── Circuit breaker check ─────────────────────────────────────
+        from urllib.parse import urlparse as _urlparse
+        host = _urlparse(url).netloc.lower()
+        if host in self._cb_tripped_hosts:
+            raise CircuitBreakerOpen(
+                f"Circuit breaker open for {host} — "
+                f"{self._CB_THRESHOLD} consecutive transport errors"
+            )
+
         retry_count = 0
         while True:
-            async with self.semaphore:
-                response = await self.client.request(method, url, **kwargs)
+            try:
+                async with self.semaphore:
+                    response = await self.client.request(method, url, **kwargs)
+            except (httpx.ConnectError, httpx.ConnectTimeout,
+                    httpx.ReadTimeout, httpx.WriteTimeout,
+                    httpx.PoolTimeout, httpx.RemoteProtocolError) as exc:
+                # Transport-level failure — increment circuit breaker
+                count = self._cb_host_failures.get(host, 0) + 1
+                self._cb_host_failures[host] = count
+                if count >= self._CB_THRESHOLD:
+                    self._cb_tripped_hosts.add(host)
+                    logger.warning(
+                        f"[{self.name}] Circuit breaker OPEN for {host} — "
+                        f"{count} consecutive transport errors"
+                    )
+                    raise CircuitBreakerOpen(
+                        f"Circuit breaker open for {host} after {count} failures"
+                    ) from exc
+                raise  # Re-raise the original transport error
+
+            # Transport succeeded — reset circuit breaker for this host
+            if host in self._cb_host_failures:
+                del self._cb_host_failures[host]
 
             # Retry on rate limit with exponential backoff (max 3 retries)
             if response.status_code == 429 and retry_count < 3:
