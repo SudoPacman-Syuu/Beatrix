@@ -17,7 +17,7 @@ Designed to be called AFTER IssueConsolidator dedup but BEFORE export.
 import re
 import shlex
 from typing import Dict, List, Optional
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, urlencode, urlunparse
 
 from beatrix.core.types import Finding, Severity
 
@@ -283,8 +283,20 @@ class FindingEnricher:
                 parsed = urlparse(finding.url)
                 qs = parse_qs(parsed.query)
                 if qs:
-                    # Use the first query parameter name
-                    finding.parameter = next(iter(qs))
+                    # Skip common non-vulnerable utility params and prefer
+                    # params whose values look user-controllable.
+                    _SKIP_PARAMS = frozenset([
+                        "page", "limit", "offset", "sort", "order",
+                        "per_page", "pagesize", "cursor", "token",
+                        "lang", "locale", "format", "callback",
+                        "utm_source", "utm_medium", "utm_campaign",
+                    ])
+                    candidates = [p for p in qs if p.lower() not in _SKIP_PARAMS]
+                    if candidates:
+                        finding.parameter = candidates[0]
+                    else:
+                        # All params are utility-style — take first anyway
+                        finding.parameter = next(iter(qs))
             except Exception:
                 pass
 
@@ -306,9 +318,16 @@ class FindingEnricher:
         templates = IMPACT_TEMPLATES.get(vuln_type, {})
         impact = templates.get(severity_key)
 
-        # Fall back to closest lower severity
+        # F-02: Fall back to closest LOWER severity, not upward.
+        # A LOW finding should never get a CRITICAL impact template.
         if not impact:
-            for sev in ["critical", "high", "medium", "low", "info"]:
+            _SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
+            try:
+                start_idx = _SEVERITY_ORDER.index(severity_key)
+            except ValueError:
+                start_idx = len(_SEVERITY_ORDER)
+            # Walk downward (lower severity) from current severity
+            for sev in _SEVERITY_ORDER[start_idx:]:
                 if sev in templates:
                     impact = templates[sev]
                     break
@@ -445,8 +464,21 @@ class FindingEnricher:
 
         # URL with payload
         if finding.payload and finding.parameter:
-            # Reconstruct the URL with the payload
-            parts.append(shlex.quote(url))
+            if method in ("POST", "PUT", "PATCH"):
+                # Payload in request body
+                parts.append(shlex.quote(url))
+                parts.extend(["-d", shlex.quote(f"{finding.parameter}={finding.payload}")])
+            else:
+                # Inject payload into URL query string
+                parsed = urlparse(url)
+                qs = parse_qs(parsed.query, keep_blank_values=True)
+                qs[finding.parameter] = [finding.payload]
+                new_query = urlencode(qs, doseq=True)
+                poc_url = urlunparse((
+                    parsed.scheme, parsed.netloc, parsed.path,
+                    parsed.params, new_query, parsed.fragment,
+                ))
+                parts.append(shlex.quote(poc_url))
         else:
             parts.append(shlex.quote(url))
 

@@ -60,14 +60,14 @@ After fixing the original 25 issues (Bugs 1–9 + N-01 through N-16), a new fran
 
 ~~**Waste:** 20 URLs × 38 probe paths = 760 requests, of which ~720 are identical (same origin + same probe path). Only `_fuzz_existing_paths()` (5 requests per URL using the full path) produces unique work.~~
 
-### A-03: redirect Scanner Has No URL Cap (MEDIUM)
+### A-03: redirect Scanner Has No URL Cap (MEDIUM) — ✅ FIXED
 
 **File:** `kill_chain.py` L1567–1569  
 **Observed:** franktech.net scan — redirect scanner received 51 URLs.
 
 The redirect scanner receives `urls_with_params` with **no cap**. Every other scanner has a cap (injection: 50, error_disclosure: 20, prototype_pollution: 15). On crawl-heavy targets, this list can be arbitrarily large.
 
-### A-04: injection_targets Built Without Host Grouping (MEDIUM)
+### A-04: injection_targets Built Without Host Grouping (MEDIUM) — ✅ FIXED
 
 **File:** `kill_chain.py` L1686–1702
 
@@ -86,7 +86,7 @@ Works in concert with C-01's circuit breaker: `BaseScanner.request()` tracks per
 
 ~~When URL 1 on `host-x.com` fails with a connection error, the `except Exception: continue` skips to URL 2 — which may also be on `host-x.com`. No mechanism exists to mark a host as dead and skip remaining URLs on that host.~~
 
-### A-06: Weaponization/Delivery Phases Are Fully Sequential (MEDIUM)
+### A-06: Weaponization/Delivery Phases Are Fully Sequential (MEDIUM) — ✅ FIXED
 
 **File:** `kill_chain.py` L1529–1610
 
@@ -94,7 +94,7 @@ Weaponization runs `takeover` → `error_disclosure` → `cache_poisoning` → `
 
 Only the recon phase uses `asyncio.gather` for parallel dispatch (5 scanners).
 
-### A-07: Scanner Errors Not Aggregated in Final Report (LOW)
+### A-07: Scanner Errors Not Aggregated in Final Report (LOW) — ✅ FIXED
 
 **File:** `kill_chain.py` L120, `cli/main.py` L1386–1388
 
@@ -184,7 +184,7 @@ All scanners now inherit circuit breaker protection — after 5 consecutive tran
 
 ## D. Injection Scanner Efficiency
 
-### D-01: Unbounded SecLists Payload Loading (CRITICAL) — Partially Addressed
+### D-01: Unbounded SecLists Payload Loading (CRITICAL) — ✅ FIXED
 
 **File:** `injection.py` L105–149, `seclists_manager.py` L651–762
 
@@ -196,7 +196,7 @@ With 50 URLs × 3 params × 56K payloads = 8.4 million potential requests. At 1 
 
 **Partial mitigation (6f9861b):** Payloads are now stable-sorted by detection priority (D-03 ✅) — error-based first, time-based last. Combined with the per-category `break` on first finding, the 600s timeout now covers the highest-signal portion of the payload space. A hard cap was considered but rejected to preserve fuzzing coverage — the sort ensures the timeout budget is spent on payloads most likely to produce results.
 
-### D-02: Fully Sequential Execution (MEDIUM)
+### D-02: Fully Sequential Execution (MEDIUM) — ✅ FIXED
 
 **File:** `injection.py` L434, L466
 
@@ -212,19 +212,19 @@ Both the URL loop and the payload loop are strictly sequential — one `await se
 - No adaptive deprioritization after repeated negatives *(still open)*
 - ~~No "fast-first" strategy — time-based payloads (5+ seconds each) are intermixed with instant error-based ones~~
 
-### D-04: Redundant Baselines Per Insertion Point (LOW)
+### D-04: Redundant Baselines Per Insertion Point (LOW) — ✅ FIXED
 
 **File:** `injection.py` L452–454
 
 Behavioral and time-based baselines are fetched once per insertion point, not once per URL. A URL with 3 parameters generates 6 baseline requests (3 behavioral + 3 time-based) instead of the optimal 2.
 
-### D-05: No Early Termination Across Parameters (LOW)
+### D-05: No Early Termination Across Parameters (LOW) — ✅ FIXED
 
 **File:** `injection.py` L480
 
 After finding SQLi on parameter `id`, the scanner still tests all payloads across all categories on parameters `page`, `sort`, etc. Finding SQLi on one param doesn't reduce the work on remaining params.
 
-### D-06: 600s Timeout Inadequate (MEDIUM)
+### D-06: 600s Timeout Inadequate (MEDIUM) — ✅ FIXED
 
 **File:** `kill_chain.py` L255
 
@@ -241,25 +241,25 @@ The injection scanner gets the default `SCANNER_TIMEOUT = 600` with no override.
 
 ~~`SSRF_PARAM_PATTERNS` uses `re.search` with patterns like `r'to'`, `r'val'`, `r'open'`, `r'data'`. These match substrings: `total`, `validate`, `opened`, `dataset` all trigger false-positive candidate detection.~~
 
-### E-02: IDOR Scanner Fires Write Methods Blindly (MEDIUM)
+### E-02: IDOR Scanner Fires Write Methods Blindly (MEDIUM) — ✅ FIXED
 
 **File:** `idor.py` L610
 
 Sends PUT/PATCH/DELETE with empty JSON `{}` body to every candidate URL without first checking if the endpoint supports those methods. Generates 405 response spam and could inadvertently modify data on poorly-protected endpoints.
 
-### E-03: IDOR Uses Raw Finding() Constructor (LOW)
+### E-03: IDOR Uses Raw Finding() Constructor (LOW) — ✅ FIXED
 
 **File:** `idor.py` L667–714
 
 Uses `Finding(...)` directly instead of `self.create_finding()`, bypassing scanner metadata injection (`scanner_module`, `owasp_category`, `found_at`). Makes findings inconsistent with output from other scanners.
 
-### E-04: XXE XML Acceptance Probe Too Permissive (MEDIUM)
+### E-04: XXE XML Acceptance Probe Too Permissive (MEDIUM) — ✅ FIXED
 
 **File:** `xxe.py` L427–436
 
 `_probe_xml_acceptance` treats any status code that isn't 415/406/403 as "accepts XML." A 500 or 404 response triggers the full XXE payload battery — wasting time on endpoints that don't actually process XML.
 
-### E-05: file_upload Defaults to PHP Target Tech (MEDIUM)
+### E-05: file_upload Defaults to PHP Target Tech (MEDIUM) — ✅ FIXED
 
 **File:** `file_upload.py` L202
 
@@ -274,13 +274,13 @@ Uses `Finding(...)` directly instead of `self.create_finding()`, bypassing scann
 
 Total uncapped: 46 tests. After cap: 25 (extension:25 out of 29 kept, covers all double-ext + case + null + most alt extensions).
 
-### E-07: HTTP Smuggling Hardcoded Timing Threshold (MEDIUM)
+### E-07: HTTP Smuggling Hardcoded Timing Threshold (MEDIUM) — ✅ FIXED
 
 **File:** `http_smuggling.py` L192–194
 
 `TIMEOUT_THRESHOLD = 5.0s` and `BASELINE_TOLERANCE = 2.0s` are class constants, not configurable. On slow networks or high-latency targets, normal response times could exceed these thresholds, causing false positives.
 
-### E-08: Prototype Pollution Passive Patterns Too Broad (MEDIUM)
+### E-08: Prototype Pollution Passive Patterns Too Broad (MEDIUM) — ✅ FIXED
 
 **File:** `prototype_pollution.py` L389–400
 
@@ -293,7 +293,7 @@ Passive scan matches `Object.assign(` or `JSON.parse` in response bodies. Nearly
 
 ~~`X-Original-URL` appears twice in `PROBE_HEADERS`, causing the same header to be tested twice.~~
 
-### E-10: CORS Evil Domain Not Configurable (LOW)
+### E-10: CORS Evil Domain Not Configurable (LOW) — ✅ FIXED
 
 **File:** `cors.py` L47
 
@@ -310,19 +310,19 @@ Passive scan matches `Object.assign(` or `JSON.parse` in response bodies. Nearly
 
 ~~`_detect_vuln_type()` falls back to `return "sqli"` when `module == "injection"` but no subtype keyword matches. Any unrecognized injection finding gets SQLi's CWE, impact template, and reproduction steps — inflating severity and misclassifying the vulnerability.~~
 
-### F-02: Impact Template Fallback Walks Upward (MEDIUM)
+### F-02: Impact Template Fallback Walks Upward (MEDIUM) — ✅ FIXED
 
 **File:** `finding_enricher.py` L308–313
 
 If a LOW-severity finding has no impact template at its level but a CRITICAL template exists, it gets the critical-level impact text. This inflates the perceived impact of low-severity findings.
 
-### F-03: PoC Curl Command Omits Payload (LOW)
+### F-03: PoC Curl Command Omits Payload (LOW) — ✅ FIXED
 
 **File:** `finding_enricher.py` L426–428
 
 `_enrich_poc_curl()` builds a curl command against the clean URL without the actual injection payload. The PoC is therefore not reproducible — it hits the unmodified endpoint.
 
-### F-04: Parameter Extraction Picks Arbitrary First Param (LOW)
+### F-04: Parameter Extraction Picks Arbitrary First Param (LOW) — ✅ FIXED
 
 **File:** `finding_enricher.py` L247–254
 
@@ -335,37 +335,37 @@ Last-resort parameter extraction via URL query string picks `next(iter(qs))` —
 
 ~~`_decide()` returns `KEEP_BOTH` when descriptions differ by more than 20 chars. Scanners that append timestamps, request IDs, or dynamic content to descriptions produce unique descriptions for the same bug — defeating dedup.~~
 
-### F-06: Cross-Scanner Duplicates Not Merged (MEDIUM)
+### F-06: Cross-Scanner Duplicates Not Merged (MEDIUM) — ✅ FIXED
 
 **File:** `issue_consolidator.py` L89–90
 
 Fingerprint includes `module` (scanner_module). If `injection` and `smart_fuzzer` both find SQLi on the same URL/param, they get different fingerprints and appear as separate findings.
 
-### F-07: Multiple Payloads Create Duplicate Reports (MEDIUM)
+### F-07: Multiple Payloads Create Duplicate Reports (MEDIUM) — ✅ FIXED
 
 **File:** `issue_consolidator.py` L155–158
 
 `KEEP_BOTH` for differing payloads with same severity. Three different SQLi payloads confirming the same vulnerability on the same parameter produce three separate findings. Only the first confirmed payload is needed.
 
-### F-08: Variant Fingerprint Prevents Cascading Dedup (LOW)
+### F-08: Variant Fingerprint Prevents Cascading Dedup (LOW) — ✅ FIXED
 
 **File:** `issue_consolidator.py` L127–131
 
 `KEEP_BOTH` generates `new_fp = fp + f"_{len(self._findings)}"`. This synthetic fingerprint means later duplicates of the variant finding never match it, so dedup is completely bypassed for all subsequent occurrences.
 
-### F-09: Title Normalization Missing Many Vuln Types (LOW)
+### F-09: Title Normalization Missing Many Vuln Types (LOW) — ✅ FIXED
 
 **File:** `issue_consolidator.py` L75
 
 `_normalize_title()` doesn't cover: deserialization, file upload, cache poisoning, mass assignment, prototype pollution, http smuggling. These fall through to the slugified title, making dedup fragile for those types.
 
-### F-10: Response Analyzer Uses MD5 for Body Hashing (MEDIUM)
+### F-10: Response Analyzer Uses MD5 for Body Hashing (MEDIUM) — ✅ FIXED
 
 **File:** `response_analyzer.py` L178–179
 
 `hashlib.md5()` is used for body fingerprinting. MD5 is collision-prone; for the security scanner, SHA-256 would be both more correct and only marginally slower.
 
-### F-11: Blind Indicator Requires min_attrs=2 (LOW)
+### F-11: Blind Indicator Requires min_attrs=2 (LOW) — ✅ FIXED
 
 **File:** `response_analyzer.py` L404–410
 
@@ -375,19 +375,19 @@ Fingerprint includes `module` (scanner_module). If `injection` and `smart_fuzzer
 
 ## G. BaseScanner Infrastructure
 
-### G-01: BaseScanner.log() Uses print() Instead of Logger (LOW)
+### G-01: BaseScanner.log() Uses print() Instead of Logger (LOW) — ✅ FIXED
 
 **File:** `base.py` L339
 
 `log()` calls `print()` directly despite `logger = logging.getLogger(...)` being defined at L15. This bypasses log levels, handlers, and formatting.
 
-### G-02: No Cross-Scanner Rate Limiting (LOW)
+### G-02: No Cross-Scanner Rate Limiting (LOW) — ✅ FIXED
 
 **File:** `base.py` L107
 
 The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain runs scanners sequentially this isn't a problem, but the parallel recon batch (5 scanners) shares no global rate limit.
 
-### G-03: Per-Request Timeout Not Configurable Per Scanner (LOW)
+### G-03: Per-Request Timeout Not Configurable Per Scanner (LOW) — ✅ FIXED
 
 **File:** `base.py` L122
 
@@ -401,45 +401,45 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 |----|------|----------|---------------------|
 | A-01 | Kill Chain | **CRITICAL** | ~~No URL liveness gate — dead hosts waste 18–30 min of DNS timeouts~~ ✅ Fixed — async DNS gate filters dead hosts |
 | A-02 | Kill Chain | **HIGH** | ~~error_disclosure scans same origin 20× due to query-string-only URL differentiation~~ ✅ Fixed — per-netloc dedup |
-| A-03 | Kill Chain | **MEDIUM** | redirect scanner receives URLs with no cap |
-| A-04 | Kill Chain | **MEDIUM** | injection_targets not grouped by host |
+| A-03 | Kill Chain | **MEDIUM** | ~~redirect scanner receives URLs with no cap~~ ✅ Fixed — capped at 30 |
+| A-04 | Kill Chain | **MEDIUM** | ~~injection_targets not grouped by host~~ ✅ Fixed — round-robin host grouping |
 | A-05 | Kill Chain | **HIGH** | ~~No host-level failure tracking in `_run_scanner_on_urls`~~ ✅ Fixed — per-host consecutive failure tracking (threshold=3) |
-| A-06 | Kill Chain | **MEDIUM** | Weaponization/Delivery phases fully sequential (could be parallel) |
-| A-07 | Kill Chain | **LOW** | Scanner errors not aggregated in final report |
+| A-06 | Kill Chain | **MEDIUM** | ~~Weaponization/Delivery phases fully sequential~~ ✅ Fixed — asyncio.gather parallel dispatch |
+| A-07 | Kill Chain | **LOW** | ~~Scanner errors not aggregated in final report~~ ✅ Fixed — error table in hunt results |
 | B-01 | Nuclei | **CRITICAL** | ~~readline_timeout kills nuclei during template loading (stdout-only idle timer)~~ ✅ Fixed — shared last_activity timer |
 | B-02 | Nuclei | **HIGH** | ~~Tag fallback silently filtered network/workflow templates~~ ✅ Fixed — removed fallback (`b6a2dd1`) |
 | C-01 | BaseScanner | **HIGH** | ~~No circuit breaker for transport errors~~ ✅ Fixed — per-host circuit breaker (threshold=5, raises `CircuitBreakerOpen`) |
 | C-02 | All Scanners | **HIGH** | ~~Zero scanners implement connection-failure tracking~~ ✅ Fixed via C-01 — all scanners inherit circuit breaker |
-| D-01 | Injection | **CRITICAL** | SecLists payloads loaded without cap (56K+) — *mitigated by priority sort (D-03)* |
-| D-02 | Injection | **MEDIUM** | Fully sequential — 1 req at a time |
+| D-01 | Injection | **CRITICAL** | ~~SecLists payloads loaded without cap (56K+)~~ ✅ Fixed — 100/category cap (configurable via `seclists_cap`) |
+| D-02 | Injection | **MEDIUM** | ~~Fully sequential — 1 req at a time~~ ✅ Fixed — asyncio.gather batching (5/batch, time-based sequential) |
 | D-03 | Injection | **MEDIUM** | ~~No payload prioritization~~ ✅ Fixed — sorted by detection priority |
-| D-04 | Injection | **LOW** | Redundant baselines per insertion point |
-| D-05 | Injection | **LOW** | No early termination across parameters |
-| D-06 | Injection | **MEDIUM** | 600s timeout covers <0.01% of payload space |
+| D-04 | Injection | **LOW** | ~~Redundant baselines per insertion point~~ ✅ Fixed — baseline per URL, not per IP |
+| D-05 | Injection | **LOW** | ~~No early termination across parameters~~ ✅ Fixed — `_found_categories` cross-param skip |
+| D-06 | Injection | **MEDIUM** | ~~600s timeout covers <0.01% of payload space~~ ✅ Fixed — injection timeout increased to 1200s |
 | E-01 | SSRF | **HIGH** | ~~Param patterns match substrings~~ ✅ Fixed — custom word boundaries |
-| E-02 | IDOR | **MEDIUM** | Fires PUT/PATCH/DELETE blindly without OPTIONS check |
-| E-03 | IDOR | **LOW** | Uses raw `Finding()` bypassing `create_finding()` |
-| E-04 | XXE | **MEDIUM** | XML acceptance probe treats 500/404 as acceptance |
-| E-05 | file_upload | **MEDIUM** | Defaults to PHP payloads regardless of target tech |
+| E-02 | IDOR | **MEDIUM** | ~~Fires PUT/PATCH/DELETE blindly without OPTIONS check~~ ✅ Fixed — OPTIONS preflight filters unsupported methods |
+| E-03 | IDOR | **LOW** | ~~Uses raw `Finding()` bypassing `create_finding()`~~ ✅ Fixed — converted to `create_finding()` |
+| E-04 | XXE | **MEDIUM** | ~~XML acceptance probe treats 500/404 as acceptance~~ ✅ Fixed — reject 500/404/501/502/503 |
+| E-05 | file_upload | **MEDIUM** | ~~Defaults to PHP payloads regardless of target tech~~ ✅ Fixed — auto-detection from response headers |
 | E-06 | file_upload | **HIGH** | ~~~60+ tests with no cap~~ ✅ Fixed — capped at 25, priority-ordered |
-| E-07 | HTTP Smuggling | **MEDIUM** | Hardcoded timing threshold (5.0s) — false positives on slow networks |
-| E-08 | Prototype Pollution | **MEDIUM** | Passive patterns match common JS builtins |
+| E-07 | HTTP Smuggling | **MEDIUM** | ~~Hardcoded timing threshold (5.0s)~~ ✅ Fixed — configurable via `timeout_threshold`/`baseline_tolerance` |
+| E-08 | Prototype Pollution | **MEDIUM** | ~~Passive patterns match common JS builtins~~ ✅ Fixed — removed Object.assign, tightened JSON.parse |
 | E-09 | Cache Poisoning | **LOW** | ~~Duplicate `X-Original-URL`~~ ✅ Fixed — deduped |
-| E-10 | CORS | **LOW** | Evil domain not configurable |
+| E-10 | CORS | **LOW** | ~~Evil domain not configurable~~ ✅ Fixed — `config.get("evil_domain")` override |
 | F-01 | Finding Enricher | **HIGH** | ~~Misclassifies unknown injection types as SQLi~~ ✅ Fixed — returns "injection" |
-| F-02 | Finding Enricher | **MEDIUM** | Impact template fallback walks severity upward |
-| F-03 | Finding Enricher | **LOW** | PoC curl omits actual payload |
-| F-04 | Finding Enricher | **LOW** | Parameter extraction picks arbitrary first param |
+| F-02 | Finding Enricher | **MEDIUM** | ~~Impact template fallback walks severity upward~~ ✅ Fixed — walks downward from finding's severity |
+| F-03 | Finding Enricher | **LOW** | ~~PoC curl omits actual payload~~ ✅ Fixed — injects payload into URL (GET) or `-d` body (POST) |
+| F-04 | Finding Enricher | **LOW** | ~~Parameter extraction picks arbitrary first param~~ ✅ Fixed — `_SKIP_PARAMS` skips utility params |
 | F-05 | Issue Consolidator | **HIGH** | ~~Dynamic descriptions defeat dedup~~ ✅ Fixed — `_normalize_description()` strips dynamic content before comparison |
-| F-06 | Issue Consolidator | **MEDIUM** | Cross-scanner duplicates not merged (fingerprint includes module) |
-| F-07 | Issue Consolidator | **MEDIUM** | Multiple payloads for same vuln create duplicate reports |
-| F-08 | Issue Consolidator | **LOW** | Variant fingerprint prevents cascading dedup |
-| F-09 | Issue Consolidator | **LOW** | Title normalization missing many vuln types |
-| F-10 | Response Analyzer | **MEDIUM** | MD5 used for body hashing |
-| F-11 | Response Analyzer | **LOW** | Blind indicator requires min 2 attribute changes |
-| G-01 | BaseScanner | **LOW** | `log()` uses `print()` not `logger` |
-| G-02 | BaseScanner | **LOW** | No cross-scanner rate limiting |
-| G-03 | BaseScanner | **LOW** | Per-request timeout not configurable per scanner |
+| F-06 | Issue Consolidator | **MEDIUM** | ~~Cross-scanner duplicates not merged~~ ✅ Fixed — removed `module` from injection-class fingerprints |
+| F-07 | Issue Consolidator | **MEDIUM** | ~~Multiple payloads for same vuln create duplicate reports~~ ✅ Fixed — removed KEEP_BOTH for different-payload duplicates |
+| F-08 | Issue Consolidator | **LOW** | ~~Variant fingerprint prevents cascading dedup~~ ✅ Fixed — `_variant_groups` dict for cascading dedup |
+| F-09 | Issue Consolidator | **LOW** | ~~Title normalization missing many vuln types~~ ✅ Fixed — 29 patterns (was 18), reordered oauth |
+| F-10 | Response Analyzer | **MEDIUM** | ~~MD5 used for body hashing~~ ✅ Fixed — SHA-256 |
+| F-11 | Response Analyzer | **LOW** | ~~Blind indicator requires min 2 attribute changes~~ ✅ Fixed — default min_attrs=1 |
+| G-01 | BaseScanner | **LOW** | ~~`log()` uses `print()` not `logger`~~ ✅ Fixed — uses `logging.getLogger` |
+| G-02 | BaseScanner | **LOW** | ~~No cross-scanner rate limiting~~ ✅ Fixed — global semaphore (limit 20) |
+| G-03 | BaseScanner | **LOW** | ~~Per-request timeout not configurable per scanner~~ ✅ Fixed — `DEFAULT_TIMEOUT` class constant, config override |
 
 ---
 
@@ -448,7 +448,7 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 ### Tier 1 — Immediate (eliminates wasted scan time)
 1. ~~**A-01** — Add DNS liveness gate after URL discovery, before scanner dispatch~~ ✅ Done
 2. ~~**B-01** — Reset nuclei idle timer on stderr activity (or wait for first stdout line)~~ ✅ Done
-3. **D-01** — Cap SecLists payloads per category (e.g., `[:100]`) — *Partially addressed: payloads are now sorted by detection priority (D-03 ✅) so the timeout budget covers the best payloads first, but no hard cap applied*
+3. ~~**D-01** — Cap SecLists payloads per category (e.g., `[:100]`)~~ ✅ Done — 100/category hard cap (configurable via `seclists_cap`)
 4. ~~**C-01 + C-02** — Add circuit breaker to `BaseScanner.request()` (bail after 5 consecutive `ConnectError`/`TimeoutException` on same host)~~ ✅ Done — per-host circuit breaker with `CircuitBreakerOpen` exception
 
 ### Tier 2 — High value (reduces false positives and duplicates)
@@ -459,8 +459,8 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 9. ~~**E-06** — Cap file_upload tests at ~20~~ ✅ Done — capped at 25, priority-ordered
 
 ### Tier 3 — Optimization (improves scan speed)
-10. **D-02** — Add `asyncio.gather` batching for injection payloads
-11. **A-06** — Parallelize weaponization/delivery scanner dispatch
+10. ~~**D-02** — Add `asyncio.gather` batching for injection payloads~~ ✅ Done — batch size 5, time-based sequential
+11. ~~**A-06** — Parallelize weaponization/delivery scanner dispatch~~ ✅ Done — `asyncio.gather` parallel dispatch
 12. ~~**A-05** — Track failed hosts in `_run_scanner_on_urls`, skip remaining URLs on dead hosts~~ ✅ Done — per-host failure tracking (threshold=3)
 13. ~~**D-03** — Sort payloads by priority (error-based first, time-based last)~~ ✅ Done (6f9861b)
 

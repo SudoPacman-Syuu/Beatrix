@@ -174,7 +174,47 @@ class FileUploadScanner(BaseScanner):
         self.safe_mode = self.config.get("safe_mode", True)
         self.canary = "BTRX" + "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
         self.upload_field_name = self.config.get("field_name", "file")
-        self.target_tech = self.config.get("target_tech", "php")  # php, asp, jsp, node
+        self.target_tech = self.config.get("target_tech", "auto")  # auto, php, asp, jsp, node
+
+    # ── E-05 tech detection ─────────────────────────────────────────────
+    _TECH_HINTS: Dict[str, str] = {
+        "php": "php",
+        "asp.net": "asp",
+        "asp": "asp",
+        "jsp": "jsp",
+        "tomcat": "jsp",
+        "jboss": "jsp",
+        "express": "node",
+        "next.js": "node",
+        "kestrel": "asp",
+    }
+
+    async def _detect_tech(self, url: str) -> str:
+        """Infer server-side tech from response headers.
+
+        Checks X-Powered-By, Server, and Set-Cookie names to pick the
+        most likely tech stack.  Falls back to ``'php'`` when nothing
+        conclusive is found (PHP still has the largest web server share).
+        """
+        if not self.client:
+            return "php"
+
+        try:
+            resp = await self.client.request("GET", url)
+        except Exception:
+            return "php"
+
+        headers_to_check = " ".join([
+            resp.headers.get("x-powered-by", ""),
+            resp.headers.get("server", ""),
+            resp.headers.get("set-cookie", ""),
+        ]).lower()
+
+        for hint, tech in self._TECH_HINTS.items():
+            if hint in headers_to_check:
+                return tech
+
+        return "php"  # sensible global default
 
     # =========================================================================
     # PAYLOAD GENERATION
@@ -515,6 +555,10 @@ class FileUploadScanner(BaseScanner):
 
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
         """Full file upload vulnerability scan"""
+
+        # E-05: auto-detect server tech so payloads match the target
+        if self.target_tech == "auto":
+            self.target_tech = await self._detect_tech(context.url)
 
         # Generate all test cases, ordered by severity/impact.
         # Extension bypass + traversal are highest value, then polyglot/XSS,

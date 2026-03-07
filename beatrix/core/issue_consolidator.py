@@ -58,6 +58,7 @@ class IssueConsolidator:
         """
         self._findings: List[Finding] = []
         self._fingerprints: Dict[str, int] = {}  # hash -> index in _findings
+        self._variant_groups: Dict[str, List[int]] = {}  # base fp -> all indices
         self._strict = strict
 
     # Injection-class vuln types: same host + param + vuln = same bug
@@ -90,9 +91,10 @@ class IssueConsolidator:
         module = f.scanner_module.lower()
 
         # For injection-class vulns with a known parameter, drop the path
-        # Same host + same param + same vuln type = same underlying bug
+        # AND the module — same host + same param + same vuln type = same
+        # underlying bug regardless of which scanner found it (F-06).
         if vuln_type in self.INJECTION_VULN_TYPES and param:
-            components = [host, vuln_type, param, module]
+            components = [host, vuln_type, param]
         else:
             components = [host, path, vuln_type, param, module]
 
@@ -127,12 +129,23 @@ class IssueConsolidator:
             (r"xxe|xml\s*external", "xxe"),
             (r"ssti|template\s*inject", "ssti"),
             (r"jwt", "jwt"),
+            (r"oauth", "oauth"),
             (r"auth.*bypass|broken\s*auth", "auth_bypass"),
-            (r"info.*disclos|information\s*leak", "info_disclosure"),
+            (r"info.*disclos|information\s*leak|error.*disclos", "info_disclosure"),
             (r"header\s*inject", "header_injection"),
             (r"priv.*escal", "privilege_escalation"),
             (r"rate\s*limit", "rate_limit"),
             (r"brute\s*force", "brute_force"),
+            # F-09: Previously missing vuln types
+            (r"deseriali[sz]", "deserialization"),
+            (r"file\s*upload|unrestricted\s*upload", "file_upload"),
+            (r"cache\s*poison", "cache_poisoning"),
+            (r"mass\s*assign", "mass_assignment"),
+            (r"prototype\s*pollut", "prototype_pollution"),
+            (r"http\s*smuggl|request\s*smuggl", "http_smuggling"),
+            (r"websocket|web\s*socket", "websocket"),
+            (r"takeover|subdomain\s*takeover", "takeover"),
+            (r"graphql", "graphql"),
         ]
 
         import re
@@ -149,39 +162,50 @@ class IssueConsolidator:
         """
         fp = self._fingerprint(finding)
 
-        if fp in self._fingerprints:
-            idx = self._fingerprints[fp]
-            existing = self._findings[idx]
+        if fp in self._variant_groups:
+            # Compare against ALL variants with this base fingerprint
+            group = self._variant_groups[fp]
+            replace_idx = None
+            replace_existing = None
 
-            # Decide: keep existing, replace, or keep both
-            action = self._decide(existing, finding)
+            for idx in group:
+                existing = self._findings[idx]
+                action = self._decide(existing, finding)
 
-            if action == ConsolidationAction.KEEP_NEW:
-                self._findings[idx] = finding
+                if action == ConsolidationAction.KEEP_EXISTING:
+                    # Duplicate of this variant — drop it
+                    return ConsolidationResult(
+                        action=action, finding=existing,
+                        existing=existing,
+                        reason="Duplicate of existing finding",
+                    )
+                elif action == ConsolidationAction.KEEP_NEW:
+                    replace_idx = idx
+                    replace_existing = existing
+                    # Don't return yet — might be a dup of another variant
+
+            if replace_idx is not None:
+                self._findings[replace_idx] = finding
                 return ConsolidationResult(
-                    action=action, finding=finding,
-                    existing=existing,
+                    action=ConsolidationAction.KEEP_NEW, finding=finding,
+                    existing=replace_existing,
                     reason="Replaced: new has higher severity/confidence",
                 )
-            elif action == ConsolidationAction.KEEP_EXISTING:
-                return ConsolidationResult(
-                    action=action, finding=existing,
-                    existing=existing,
-                    reason="Duplicate of existing finding",
-                )
-            else:
-                # KEEP_BOTH — different enough to warrant both
-                self._findings.append(finding)
-                new_fp = fp + f"_{len(self._findings)}"
-                self._fingerprints[new_fp] = len(self._findings) - 1
-                return ConsolidationResult(
-                    action=action, finding=finding,
-                    existing=existing,
-                    reason="Distinct variant, keeping both",
-                )
-        else:
+
+            # KEEP_BOTH for all variants — truly distinct
+            new_idx = len(self._findings)
             self._findings.append(finding)
-            self._fingerprints[fp] = len(self._findings) - 1
+            group.append(new_idx)
+            return ConsolidationResult(
+                action=ConsolidationAction.KEEP_BOTH, finding=finding,
+                existing=self._findings[group[0]],
+                reason="Distinct variant, keeping both",
+            )
+        else:
+            idx = len(self._findings)
+            self._findings.append(finding)
+            self._fingerprints[fp] = idx
+            self._variant_groups[fp] = [idx]
             return ConsolidationResult(
                 action=ConsolidationAction.KEEP_BOTH,
                 finding=finding,
@@ -206,10 +230,10 @@ class IssueConsolidator:
 
         # Same severity: check if evidence differs significantly
         if new_score == existing_score:
-            # Different payloads = might be worth keeping both
-            if (new.payload and existing.payload and
-                    new.payload != existing.payload):
-                return ConsolidationAction.KEEP_BOTH
+            # F-07: Different payloads on the same vuln type + param are
+            # redundant — the first confirmed payload is sufficient.
+            # Only genuinely different evidence (e.g. different secrets,
+            # different endpoints) warrants keeping both.
 
             # Different evidence values = distinct findings (e.g. different secrets)
             if new.evidence and existing.evidence:
@@ -292,3 +316,4 @@ class IssueConsolidator:
         """Reset the consolidator."""
         self._findings.clear()
         self._fingerprints.clear()
+        self._variant_groups.clear()

@@ -733,8 +733,11 @@ class XXEScanner(BaseScanner):
                 content=test_xml,
                 headers={"Content-Type": "application/xml"},
             )
-            # Accepted if not 415 (Unsupported Media Type), not 406, and not 403 (WAF block)
-            return resp.status_code not in (415, 406, 403)
+            # E-04 fix: reject 500/404 too — a server error or missing endpoint
+            # does NOT mean the endpoint processes XML.  Only 2xx/3xx with a
+            # parseable body should be considered acceptance.
+            _REJECT_CODES = {415, 406, 403, 404, 500, 501, 502, 503}
+            return resp.status_code not in _REJECT_CODES
         except Exception:
             return False
 

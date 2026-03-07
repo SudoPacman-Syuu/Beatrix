@@ -12,6 +12,7 @@ Uses insertion points from InsertionPointDetector.
 Inspired by Sweet Scanner's active scanner approach.
 """
 
+import asyncio
 import re
 import time
 from dataclasses import dataclass
@@ -68,6 +69,10 @@ class InjectionScanner(BaseScanner):
     checks = ["sqli", "xss", "cmdi", "ssti", "path_traversal"]
 
     owasp_category = "A03:2021"  # Injection
+
+    # G-03: Time-based injection payloads use 5s sleep; 10s barely covers
+    # one round-trip.  20s gives comfortable margin for slow targets.
+    DEFAULT_TIMEOUT = 20
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -127,6 +132,11 @@ class InjectionScanner(BaseScanner):
 
     def _augment_with_seclists(self, payloads: Dict[str, List[Payload]]) -> None:
         """Fetch and merge external wordlists into the payload dict."""
+        # D-01: hard cap on SecLists payloads per category to keep total
+        # request volume manageable.  Builtins are already priority-sorted
+        # (D-03), so this caps only the dynamic tail.
+        _MAX_SECLISTS_PER_CAT: int = self.config.get("seclists_cap", 100)
+
         category_map = {
             "sqli": ("sqli", "error", Severity.HIGH),
             "xss": ("xss", "reflect", Severity.MEDIUM),
@@ -154,6 +164,8 @@ class InjectionScanner(BaseScanner):
                 added = 0
 
                 for raw_payload in extra_payloads:
+                    if added >= _MAX_SECLISTS_PER_CAT:
+                        break
                     if raw_payload not in existing_values:
                         patterns = detection_patterns.get(payload_cat, [])
                         # For XSS reflection checks, use escaped payload as pattern
@@ -454,6 +466,45 @@ class InjectionScanner(BaseScanner):
         insertion_points = self.insertion_detector.detect(request)
         self.log(f"Found {len(insertion_points)} insertion points")
 
+        # D-04: Capture baseline ONCE per URL, not per insertion point.
+        # The baseline is the same URL with the same method — it doesn't
+        # depend on which parameter we're testing.
+        self._baseline_body = ''
+        self._baseline_status = 200
+        self._baseline_headers: Dict[str, str] = {}
+        self._baseline_time = 0.0
+
+        if HAS_RESPONSE_ANALYZER:
+            try:
+                resp = await self.request(
+                    request.method,
+                    request.url,
+                    headers=dict(request.headers),
+                    content=request.body if request.body else None,
+                )
+                self._baseline_body = resp.text
+                self._baseline_status = resp.status_code
+                self._baseline_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
+                # Also capture timing baseline for time-based detection
+                bstart = time.time()
+                await self.request(
+                    request.method,
+                    request.url,
+                    headers=dict(request.headers),
+                    content=request.body if request.body else None,
+                )
+                self._baseline_time = time.time() - bstart
+            except Exception:
+                self._baseline_body = ''
+                self._baseline_status = 200
+                self._baseline_headers = {}
+                self._baseline_time = 0.5  # conservative default
+
+        # D-05: Track categories where we already found a vuln.
+        # Finding SQLi on param `id` means we don't need to test SQLi on
+        # params `page`, `sort`, etc. — it's the same backend handler.
+        self._found_categories: set = set()
+
         # Test each insertion point
         for ip in insertion_points:
             async for finding in self._test_insertion_point(request, ip):
@@ -468,56 +519,53 @@ class InjectionScanner(BaseScanner):
 
         # Determine which payload categories to test
         categories = self._select_categories(insertion_point)
-        baseline_time = 0.0
-
-        # Reset per-insertion-point baseline attributes so stale data
-        # from a previous insertion point cannot leak across URLs.
-        self._baseline_body = ''
-        self._baseline_status = 200
-        self._baseline_headers: Dict[str, str] = {}
-
-        # Capture baseline response for behavioral (response_analyzer) detection
-        if HAS_RESPONSE_ANALYZER:
-            try:
-                resp = await self.request(
-                    request.method,
-                    request.url,
-                    headers=dict(request.headers),
-                    content=request.body if request.body else None,
-                )
-                self._baseline_body = resp.text
-                self._baseline_status = resp.status_code
-                self._baseline_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
-            except Exception:
-                self._baseline_body = ''
-                self._baseline_status = 200
-                self._baseline_headers = {}
+        # D-04: Use the per-URL baseline captured in scan(), not per-insertion-point
+        baseline_time = getattr(self, '_baseline_time', 0.0)
 
         for category in categories:
+            # D-05: Skip categories already confirmed on another param
+            if category in getattr(self, '_found_categories', set()):
+                continue
+
             payloads = self.payloads.get(category, [])
             found_in_category = False
 
-            for payload in payloads:
-                # Calculate baseline if needed and not yet done
-                if payload.detection == "time" and baseline_time <= 0:
-                    try:
-                        bstart = time.time()
-                        await self.request(
-                            request.method,
-                            request.url,
-                            headers=dict(request.headers),
-                            content=request.body if request.body else None,
-                        )
-                        baseline_time = time.time() - bstart
-                    except Exception:
-                        baseline_time = 0.5  # conservative default
+            # D-02: parallel batching — split payloads into non-time (batchable)
+            # and time-based (must be sequential for timing accuracy).
+            _BATCH_SIZE = self.config.get("payload_batch_size", 5)
 
-                finding = await self._test_payload(request, insertion_point, payload, baseline_time)
-                if finding:
-                    yield finding
+            non_time = [p for p in payloads if p.detection != "time"]
+            time_based = [p for p in payloads if p.detection == "time"]
+
+            # ── Batch non-time-based payloads ──────────────────────────
+            for i in range(0, len(non_time), _BATCH_SIZE):
+                batch = non_time[i:i + _BATCH_SIZE]
+                results = await asyncio.gather(
+                    *(self._test_payload(request, insertion_point, p, baseline_time)
+                      for p in batch),
+                    return_exceptions=True,
+                )
+                for result in results:
+                    if isinstance(result, Exception) or result is None:
+                        continue
+                    yield result
                     found_in_category = True
-                    # Stop testing this category for this IP if we found something
-                    break
+                    if hasattr(self, '_found_categories'):
+                        self._found_categories.add(category)
+                    break  # first hit in batch → stop category
+                if found_in_category:
+                    break  # stop further batches
+
+            # ── Sequential time-based payloads (only if nothing found yet) ──
+            if not found_in_category:
+                for payload in time_based:
+                    finding = await self._test_payload(request, insertion_point, payload, baseline_time)
+                    if finding:
+                        yield finding
+                        found_in_category = True
+                        if hasattr(self, '_found_categories'):
+                            self._found_categories.add(category)
+                        break
 
             # WAF bypass fallback — if no findings in this category and WAF bypass
             # payloads are available, retry the first payload with evasion variants

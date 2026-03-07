@@ -16,6 +16,22 @@ import httpx
 
 logger = logging.getLogger("beatrix.scanners.base")
 
+# G-02: Global rate limit shared across all scanner instances.
+# When multiple scanners run in parallel, each has its own per-scanner
+# semaphore (default 10), so 5 parallel scanners = up to 50 requests.
+# This global semaphore caps the total concurrent requests to prevent
+# overwhelming the target.  Default 20 = comfortable for most targets.
+_GLOBAL_SEMAPHORE_LIMIT = 20
+_global_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_global_semaphore() -> asyncio.Semaphore:
+    """Lazily create the global semaphore (must be in a running event loop)."""
+    global _global_semaphore
+    if _global_semaphore is None:
+        _global_semaphore = asyncio.Semaphore(_GLOBAL_SEMAPHORE_LIMIT)
+    return _global_semaphore
+
 
 class CircuitBreakerOpen(Exception):
     """Raised when a host has exceeded consecutive transport-error threshold.
@@ -119,6 +135,10 @@ class BaseScanner(ABC):
     owasp_category: Optional[str] = None
     mitre_technique: Optional[str] = None
 
+    # Default per-request timeout — subclasses can override (e.g.,
+    # injection scanner needs more for time-based detection).
+    DEFAULT_TIMEOUT: int = 10
+
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         self.client: Optional[httpx.AsyncClient] = None
@@ -128,8 +148,8 @@ class BaseScanner(ABC):
         self.rate_limit = self.config.get("rate_limit", 10)
         self.semaphore = asyncio.Semaphore(self.rate_limit)
 
-        # Timeout
-        self.timeout = self.config.get("timeout", 10)
+        # G-03: Per-scanner timeout — config overrides class default
+        self.timeout = self.config.get("timeout", self.DEFAULT_TIMEOUT)
 
         # Auth state tracking — for session expiry detection
         self._auth_creds = None
@@ -293,8 +313,9 @@ class BaseScanner(ABC):
         retry_count = 0
         while True:
             try:
-                async with self.semaphore:
-                    response = await self.client.request(method, url, **kwargs)
+                async with _get_global_semaphore():
+                    async with self.semaphore:
+                        response = await self.client.request(method, url, **kwargs)
             except (httpx.ConnectError, httpx.ConnectTimeout,
                     httpx.ReadTimeout, httpx.WriteTimeout,
                     httpx.PoolTimeout, httpx.RemoteProtocolError) as exc:
@@ -544,5 +565,6 @@ class BaseScanner(ABC):
     # =========================================================================
 
     def log(self, message: str, level: str = "info") -> None:
-        """Log a message (will be hooked into proper logging later)"""
-        print(f"[{self.name}] {message}")
+        """Log a message through the standard logging framework."""
+        log_func = getattr(logger, level, logger.info)
+        log_func(f"[{self.name}] {message}")

@@ -196,7 +196,7 @@ class HTTPSmugglingScanner(BaseScanner):
         "Transfer-Encoding obfuscation",
     ]
 
-    # Timing thresholds (seconds)
+    # Timing thresholds (seconds) — class defaults, overridable via config
     TIMEOUT_THRESHOLD = 5.0       # If response takes >5s, possible desync
     BASELINE_TOLERANCE = 2.0      # Baseline + 2s = suspicious
     CONFIRM_DELAY = 0.5           # Delay between probe and follow-up
@@ -207,6 +207,11 @@ class HTTPSmugglingScanner(BaseScanner):
         self.max_te_variants = self.config.get("max_te_variants", 10)
         self.baseline_time: Optional[float] = None
         self.results: List[SmuggleResult] = []
+        # E-07: allow config overrides for slow-network environments
+        self.timeout_threshold: float = self.config.get(
+            "timeout_threshold", self.TIMEOUT_THRESHOLD)
+        self.baseline_tolerance: float = self.config.get(
+            "baseline_tolerance", self.BASELINE_TOLERANCE)
 
     # =========================================================================
     # PAYLOAD BUILDERS
@@ -671,8 +676,8 @@ class HTTPSmugglingScanner(BaseScanner):
             )
 
             # Analyze timing differential
-            threshold = max(self.TIMEOUT_THRESHOLD,
-                          (self.baseline_time or 1.0) + self.BASELINE_TOLERANCE)
+            threshold = max(self.timeout_threshold,
+                          (self.baseline_time or 1.0) + self.baseline_tolerance)
 
             if payload.timeout_expected and elapsed > threshold:
                 # Timeout detected — strong desync indicator

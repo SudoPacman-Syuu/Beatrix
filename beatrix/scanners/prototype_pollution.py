@@ -479,14 +479,16 @@ class PrototypePollutionScanner(BaseScanner):
         body = context.response.body if hasattr(context.response, 'body') else ""
 
         # Detect vulnerable merge/extend patterns in JavaScript
+        # E-08: removed Object.assign() (shallow copy, not PP-vulnerable) and
+        # tightened JSON.parse to require __proto__/constructor context nearby
+        # to avoid false positives on every modern web app.
         vuln_patterns = [
             (r'(?:lodash|_)\.merge\s*\(', "lodash.merge() detected (PP-vulnerable if < 4.17.12)"),
             (r'(?:lodash|_)\.defaultsDeep\s*\(', "lodash.defaultsDeep() detected (PP-vulnerable)"),
             (r'jQuery\.extend\s*\(\s*true', "jQuery.extend(true, ...) deep merge (PP-vulnerable)"),
             (r'\$\.extend\s*\(\s*true', "$.extend(true, ...) deep merge (PP-vulnerable)"),
-            (r'Object\.assign\s*\(', "Object.assign() detected (shallow — not PP-vulnerable itself)"),
             (r'\.reduce\s*\([^)]*\{[^}]*\[', "reduce-based merge pattern (potential PP)"),
-            (r'JSON\.parse\s*\([^)]*(?:query|params|body|input|data)', "JSON.parse on user input (PP surface)"),
+            (r'JSON\.parse\s*\([^)]*(?:query|params|body|input|data)[^)]*\)(?:.{0,200}(?:__proto__|constructor\s*\[\s*[\'"]prototype))', "JSON.parse on user input near __proto__/constructor (PP surface)"),
             (r'__proto__', "__proto__ reference in source (PP-related code)"),
             (r'constructor\s*\[\s*[\'"]prototype', "constructor.prototype reference"),
         ]

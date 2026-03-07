@@ -595,7 +595,25 @@ class IDORScanner(BaseScanner):
         # Lesson from a real-world engagement: read IDOR was blocked on /customers/{id}/addresses
         # but write IDOR (PUT) should also be tested since access control may
         # differ between read and write operations
+        #
+        # E-02 fix: send OPTIONS first so we only test methods the endpoint
+        # actually supports, avoiding 405 spam and accidental writes.
+        allowed_methods: set[str] = set()
+        try:
+            opts_resp = await self.client.request(
+                "OPTIONS", candidate.original_url,
+                headers={**auth_headers, "User-Agent": "BEATRIX-IDOR-Scanner/2.0"},
+            )
+            allow_header = opts_resp.headers.get("allow", "")
+            if allow_header:
+                allowed_methods = {m.strip().upper() for m in allow_header.split(",")}
+        except Exception:
+            pass  # OPTIONS failed — fall through to testing all methods
+
         for method in self.WRITE_METHODS:
+            # Skip methods the endpoint explicitly does not support
+            if allowed_methods and method not in allowed_methods:
+                continue
             write_findings = await self._test_candidate_with_method(
                 candidate, auth_headers, method, cross_account_headers=cross_account_headers
             )
@@ -673,7 +691,7 @@ class IDORScanner(BaseScanner):
                     if method != "GET":
                         method_note = f"\n**HTTP Method:** {method} (write-based IDOR — may allow data modification)"
 
-                    finding = Finding(
+                    finding = self.create_finding(
                         title=f"Cross-Account {'Write ' if method != 'GET' else ''}IDOR in {candidate.param_name} [{method}]",
                         description=f"""
 **Cross-Account Broken Access Control (IDOR)**
@@ -707,8 +725,8 @@ The application does not properly validate resource ownership.
                             "user2_size": len(cross_response.text),
                             "pii_found": list(pii_found.keys()) if pii_found else [],
                         },
-                        scanner=self.name,
-                        owasp_category=self.owasp_category,
+                        cwe_id=639,
+                        parameter=candidate.param_name,
                     )
                     findings.append(finding)
             except Exception:
@@ -748,7 +766,7 @@ The application does not properly validate resource ownership.
                     if method != "GET":
                         method_note = f"\n**HTTP Method:** {method} (write-based IDOR — may allow data modification)"
 
-                    finding = Finding(
+                    finding = self.create_finding(
                         title=f"{'Write ' if method != 'GET' else ''}IDOR in {candidate.param_name} [{method}]",
                         description=f"""
 **Insecure Direct Object Reference (IDOR)**
@@ -804,7 +822,7 @@ The application may not properly validate authorization when accessing resources
                             "https://portswigger.net/web-security/access-control/idor",
                         ],
                         cwe_id=639,
-                        owasp_category=self.owasp_category,
+                        parameter=candidate.param_name,
                     )
                     findings.append(finding)
 
@@ -983,7 +1001,7 @@ class BACScanner(IDORScanner):
                     is_login_page = any(w in content_lower for w in ['login', 'sign in', 'log in', 'password', 'forgot password'])
 
                     if (strong_matches >= 1 or weak_matches >= 3) and not is_login_page:
-                        findings.append(Finding(
+                        findings.append(self.create_finding(
                             title=f"Admin Endpoint Accessible: {endpoint}",
                             description=f"""
 **Vertical Privilege Escalation**
@@ -1010,7 +1028,6 @@ This could indicate missing role-based access control.
                                 "response_size": len(response.text),
                             },
                             cwe_id=284,
-                            owasp_category=self.owasp_category,
                         ))
 
             except Exception:

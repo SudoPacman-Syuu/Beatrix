@@ -178,6 +178,15 @@ class KillChainState:
             findings.extend(result.findings)
         return findings
 
+    @property
+    def all_errors(self) -> List[Dict[str, str]]:
+        """All errors from all phases (phase-level + scanner-level)."""
+        errors = []
+        for phase, result in self.phase_results.items():
+            for err in result.errors:
+                errors.append({"phase": phase.name_pretty, "error": err})
+        return errors
+
     def advance_phase(self) -> Optional[KillChainPhase]:
         """Move to the next phase, returns None if at end"""
         phases = list(KillChainPhase)
@@ -219,10 +228,18 @@ class KillChainExecutor:
         self.phase_handlers: Dict[KillChainPhase, Callable] = {}
         self._on_event = on_event  # Callback for real-time progress
         self._toolkit = None  # Lazy singleton — shared across all phases
+        # A-07: Accumulate scanner errors for the final report summary
+        self.scanner_errors: List[Dict[str, str]] = []
         self._register_default_handlers()
 
     def _emit(self, event: str, **kwargs) -> None:
         """Emit a progress event to the callback."""
+        # A-07: Capture scanner_error events so they survive the scroll buffer
+        if event == "scanner_error":
+            self.scanner_errors.append({
+                "scanner": kwargs.get("scanner", "unknown"),
+                "error": kwargs.get("error", ""),
+            })
         if self._on_event:
             self._on_event(event, kwargs)
 
@@ -262,6 +279,7 @@ class KillChainExecutor:
         "ssh_auditor": 900,   # 15 minutes — SSH fingerprint + cred checks
         "packet_crafter": 900,  # 15 minutes — firewall analysis
         "origin_ip_discovery": 300,  # 5 minutes — CDN bypass / origin IP lookup
+        "injection": 1200,    # D-06: 20 minutes — large payload space
     }
 
     async def _run_scanner(self, scanner_name: str, target: str, context: Dict[str, Any],
@@ -1660,10 +1678,6 @@ class KillChainExecutor:
         """Phase 2 — Weaponization: takeover, error disclosure, cache poisoning, prototype pollution."""
         url = context.get("resolved_url", target if "://" in target else f"https://{target}")
 
-        results = []
-        # Takeover works on the base domain
-        results.append(await self._run_scanner("takeover", url, context))
-
         # Error disclosure — run on discovered URLs that might have interesting error pages.
         # Deduplicate by base_url (scheme://netloc) since error_disclosure's
         # PROBE_PATHS only uses base_url — testing the same host ten times
@@ -1685,18 +1699,32 @@ class KillChainExecutor:
                 break
         if not sample_urls:
             sample_urls = [url]
-        results.append(await self._run_scanner_on_urls("error_disclosure", sample_urls, context))
-
-        # Cache poisoning — test for unkeyed header/param manipulation
-        results.append(await self._run_scanner("cache_poisoning", url, context))
 
         # Prototype pollution — test JSON bodies and query params for __proto__
         discovered_with_params = context.get("urls_with_params", [])
-        if discovered_with_params:
-            results.append(await self._run_scanner_on_urls(
-                "prototype_pollution", discovered_with_params[:15], context))
-        else:
-            results.append(await self._run_scanner("prototype_pollution", url, context))
+
+        # A-06: dispatch independent scanners in parallel
+        async def _takeover():
+            return await self._run_scanner("takeover", url, context)
+
+        async def _error_disclosure():
+            return await self._run_scanner_on_urls("error_disclosure", sample_urls, context)
+
+        async def _cache_poisoning():
+            return await self._run_scanner("cache_poisoning", url, context)
+
+        async def _proto_pollution():
+            if discovered_with_params:
+                return await self._run_scanner_on_urls(
+                    "prototype_pollution", discovered_with_params[:15], context)
+            return await self._run_scanner("prototype_pollution", url, context)
+
+        results = await asyncio.gather(
+            _takeover(), _error_disclosure(), _cache_poisoning(), _proto_pollution(),
+            return_exceptions=True,
+        )
+        # Filter out exceptions (already logged by _run_scanner)
+        results = [r for r in results if not isinstance(r, Exception)]
 
         return await self._merge_scanner_results(results)
 
@@ -1737,25 +1765,34 @@ class KillChainExecutor:
         if len(http_targets) > 1:
             self._emit("info", message=f"Delivery phase testing {len(http_targets)} HTTP ports: {', '.join(http_targets)}")
 
-        # CORS — test base URL and any API endpoints found
-        results.append(await self._run_scanner("cors", url, context))
-
-        # Redirect — test URLs that have redirect-like parameters
+        # A-06: dispatch independent delivery scanners in parallel
         urls_with_params = context.get("urls_with_params", [])
-        if urls_with_params:
-            results.append(await self._run_scanner_on_urls("redirect", urls_with_params, context))
-        else:
-            results.append(await self._run_scanner("redirect", url, context))
 
-        # OAuth redirect — test OAuth/SSO redirect_uri manipulation
-        results.append(await self._run_scanner("oauth_redirect", url, context))
+        async def _cors():
+            return await self._run_scanner("cors", url, context)
 
-        # HTTP smuggling — CL.TE, TE.CL, H2 desync — on ALL HTTP ports
-        for ht in http_targets:
-            results.append(await self._run_scanner("http_smuggling", ht, context))
+        async def _redirect():
+            if urls_with_params:
+                return await self._run_scanner_on_urls("redirect", urls_with_params[:30], context)
+            return await self._run_scanner("redirect", url, context)
 
-        # WebSocket — check for WS upgrade, CSWSH, auth issues
-        results.append(await self._run_scanner("websocket", url, context))
+        async def _oauth():
+            return await self._run_scanner("oauth_redirect", url, context)
+
+        async def _smuggling():
+            smug_results = []
+            for ht in http_targets:
+                smug_results.append(await self._run_scanner("http_smuggling", ht, context))
+            return await self._merge_scanner_results(smug_results)
+
+        async def _websocket():
+            return await self._run_scanner("websocket", url, context)
+
+        results = await asyncio.gather(
+            _cors(), _redirect(), _oauth(), _smuggling(), _websocket(),
+            return_exceptions=True,
+        )
+        results = [r for r in results if not isinstance(r, Exception)]
 
         return await self._merge_scanner_results(results)
 
@@ -1839,8 +1876,32 @@ class KillChainExecutor:
 
         # ── Injection variants — need URLs with parameters or API endpoints ───
         if injection_targets:
-            # Cap at 50 to stay within timeout budget (300s per scanner)
-            capped = injection_targets[:50]
+            # A-04: round-robin host grouping so the cap doesn't starve
+            # minority hosts when one host dominates the URL list.
+            _MAX_INJECTION = 50
+            if len(injection_targets) <= _MAX_INJECTION:
+                capped = injection_targets
+            else:
+                from urllib.parse import urlparse
+                from collections import defaultdict
+                host_buckets: dict[str, list[str]] = defaultdict(list)
+                for u in injection_targets:
+                    host_buckets[urlparse(u).netloc].append(u)
+                # Round-robin across hosts
+                capped: list[str] = []
+                bucket_iters = {h: iter(urls) for h, urls in host_buckets.items()}
+                while len(capped) < _MAX_INJECTION and bucket_iters:
+                    exhausted = []
+                    for host, it in bucket_iters.items():
+                        if len(capped) >= _MAX_INJECTION:
+                            break
+                        nxt = next(it, None)
+                        if nxt is None:
+                            exhausted.append(host)
+                        else:
+                            capped.append(nxt)
+                    for h in exhausted:
+                        del bucket_iters[h]
             self._emit("info", message=f"Testing {len(capped)} URLs for injection ({len(urls_with_params)} with params + {len(api_endpoints)} API endpoints)")
             results.append(await self._run_scanner_on_urls("injection", capped, context))
             results.append(await self._run_scanner_on_urls("ssti", capped, context))

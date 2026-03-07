@@ -1904,14 +1904,18 @@ def _display_hunt_results(state, engine, hunt_id=None):
     for pr in state.phase_results.values():
         modules_run.update(pr.modules_run)
 
+    # A-07: Collect scanner errors from the kill chain executor
+    scanner_errors = getattr(engine.kill_chain, 'scanner_errors', []) if hasattr(engine, 'kill_chain') else []
+
     # ── Summary panel ─────────────────────────────────────────────────
     db_line = f"\n[bold]Hunt ID:[/bold]   #{hunt_id}  [dim](beatrix findings -h {hunt_id})[/dim]" if hunt_id else ""
+    errors_line = f"\n[bold]Errors:[/bold]    [red]{len(scanner_errors)}[/red]" if scanner_errors else ""
     summary = f"""
 [bold]Target:[/bold]     {state.target}
 [bold]Duration:[/bold]   {duration:.1f}s
 [bold]Scanners:[/bold]   {len(modules_run)} modules executed
 [bold]Findings:[/bold]   {stats['total_findings']}
-[bold]Validated:[/bold]  {stats['validated']}{db_line}
+[bold]Validated:[/bold]  {stats['validated']}{errors_line}{db_line}
     """
 
     console.print(Panel(summary.strip(), title="[green]Hunt Complete[/green]", border_style="green"))
@@ -1951,6 +1955,20 @@ def _display_hunt_results(state, engine, hunt_id=None):
         for mod, count in sorted(stats["by_module"].items(), key=lambda x: -x[1]):
             mod_table.add_row(mod, str(count))
         console.print(mod_table)
+
+    # ── A-07: Scanner error summary ───────────────────────────────────
+    if scanner_errors:
+        console.print()
+        err_table = Table(title="Scanner Errors", show_header=True, border_style="red")
+        err_table.add_column("Scanner", style="cyan")
+        err_table.add_column("Error", style="red")
+        for entry in scanner_errors:
+            # Truncate long errors without losing the start
+            err_text = entry["error"]
+            if len(err_text) > 120:
+                err_text = err_text[:117] + "..."
+            err_table.add_row(entry["scanner"], err_text)
+        console.print(err_table)
 
     # ── Footer hints ──────────────────────────────────────────────────
     console.print()

@@ -208,8 +208,8 @@ def _extract_attributes(
     attrs[AttributeType.COOKIE_NAMES] = frozenset(cookie_names)
 
     # Body-level attributes
-    attrs[AttributeType.BODY_CONTENT] = hashlib.md5(body.encode(errors="replace")).hexdigest()
-    attrs[AttributeType.LIMITED_BODY_CONTENT] = hashlib.md5(body[:512].encode(errors="replace")).hexdigest()
+    attrs[AttributeType.BODY_CONTENT] = hashlib.sha256(body.encode(errors="replace")).hexdigest()
+    attrs[AttributeType.LIMITED_BODY_CONTENT] = hashlib.sha256(body[:512].encode(errors="replace")).hexdigest()
     attrs[AttributeType.LINE_COUNT] = body.count("\n") + 1
     words = body.split()
     attrs[AttributeType.WORD_COUNT] = len(words)
@@ -237,7 +237,7 @@ def _extract_attributes(
     attrs[AttributeType.NON_HIDDEN_FORM_INPUT_TYPES] = frozenset(parser.non_hidden_input_types)
     attrs[AttributeType.COMMENTS] = tuple(parser.comments[:20])
     visible = " ".join(parser.visible_text_parts)
-    attrs[AttributeType.VISIBLE_TEXT] = hashlib.md5(visible.encode(errors="replace")).hexdigest()
+    attrs[AttributeType.VISIBLE_TEXT] = hashlib.sha256(visible.encode(errors="replace")).hexdigest()
     attrs[AttributeType.VISIBLE_WORD_COUNT] = len(visible.split())
     attrs[AttributeType.OUTBOUND_EDGE_COUNT] = parser.outbound_edges
 
@@ -397,13 +397,14 @@ def responses_differ(
 def is_blind_indicator(
     diffs: Dict[AttributeType, tuple],
     *,
-    min_attrs: int = 2,
+    min_attrs: int = 1,
 ) -> bool:
     """
     Heuristic: do the response differences suggest a blind injection worked?
 
     Ignores noisy attributes (content-length, word count alone).
     Requires at least `min_attrs` meaningful attributes to differ.
+    A single strong signal (e.g., status code change) is sufficient.
     """
     NOISY = {
         AttributeType.CONTENT_LENGTH,

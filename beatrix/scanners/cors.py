@@ -49,12 +49,15 @@ class CORSScanner(BaseScanner):
     owasp_category = "A01:2021"  # Broken Access Control
     mitre_technique = "T1557"    # Adversary-in-the-Middle
 
-    # Evil domains for testing
+    # Evil domains for testing — configurable via config["evil_domain"]
     EVIL_DOMAIN = "evil.com"
 
     def __init__(self, config=None):
         super().__init__(config)
         self.test_origins: List[str] = []
+        # Allow override via scan config (e.g., use a domain you control)
+        if self.config.get("evil_domain"):
+            self.EVIL_DOMAIN = self.config["evil_domain"]
 
     def _generate_test_origins(self, target_url: str) -> List[dict]:
         """
