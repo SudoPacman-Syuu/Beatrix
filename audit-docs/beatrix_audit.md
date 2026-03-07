@@ -1,6 +1,6 @@
 # Beatrix Codebase Audit — Findings
 
-Audit date: March 6, 2026. Read-only review, no changes made.  \nLast updated: March 6, 2026 — Tier 1 scanner audit fixes applied (commits `6f9861b`, `ae433d5`).
+Audit date: March 6, 2026. Read-only review, no changes made.  \nLast updated: March 6, 2026 — Critical fixes applied (A-01 URL liveness gate, B-01 nuclei idle timer, nuclei dead code cleanup).
 
 ---
 
@@ -399,7 +399,8 @@ Keeping as-is for now. Not an issue in the near term.
 | Bug 9: Rate limit on 404 endpoints | 1 | ✅ Fixed — skips finding when all responses are 404 |
 | Franktech cross-reference | 4 findings validated | ✅ 3 false positives identified, 1 legitimate |
 | **Scanner audit (Tier 1)** | **6 fixes** | **✅ SSRF patterns, enricher fallback, payload sort, baseline reset, nuclei rate, cache dedup** |
-| Scanner audit (remaining) | 41 items | ⏸ See `SCANNER_AUDIT.md` — Tiers 2-4 |
+| **Scanner audit (Critical)** | **2 fixes** | **✅ A-01 URL liveness gate, B-01 nuclei idle timer + dead code cleanup** |
+| Scanner audit (remaining) | 39 items | ⏸ See `SCANNER_AUDIT.md` — Tiers 2-4 |
 | Stub tests | 15+ | ⏸ Deferred — will review later |
 | Missing from `__init__.py` | 1 (`polyglot_generator`) | ⏸ Deferred |
 | TODOs | 1 | ⏸ Deferred |

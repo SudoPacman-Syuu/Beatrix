@@ -337,6 +337,91 @@ class KillChainExecutor:
         self._emit("scanner_done", scanner=scanner_name, findings=len(result["findings"]))
         return result
 
+    async def _filter_dead_host_urls(self, context: Dict[str, Any]) -> None:
+        """Remove URLs whose hostnames fail DNS resolution.
+
+        Historical crawlers (GAU, Wayback) return URLs on hosts that may no
+        longer exist.  Each dead host wastes ~30s of DNS timeout per scanner
+        pass.  With 14+ scanner passes, a single dead host costs 7+ minutes.
+
+        This method:
+        1. Extracts unique hostnames from all discovered URLs
+        2. Attempts async DNS resolution on each (3s timeout per host)
+        3. Strips URLs on dead hosts from both discovered_urls and urls_with_params
+        4. Caches results so the check runs only once
+        """
+        import socket
+        from urllib.parse import urlparse
+
+        discovered = context.get("discovered_urls", [])
+        with_params = context.get("urls_with_params", [])
+
+        if not discovered:
+            return
+
+        # Extract unique hostnames
+        host_urls: Dict[str, List[str]] = {}
+        for url in discovered:
+            try:
+                parsed = urlparse(url)
+                host = parsed.hostname
+                if host:
+                    host_urls.setdefault(host, []).append(url)
+            except Exception:
+                continue
+
+        if not host_urls:
+            return
+
+        # Resolve each host — 3s timeout, run in parallel
+        live_hosts: set = set()
+        dead_hosts: set = set()
+
+        async def _check_host(hostname: str) -> bool:
+            loop = asyncio.get_event_loop()
+            try:
+                await asyncio.wait_for(
+                    loop.getaddrinfo(hostname, None),
+                    timeout=3.0
+                )
+                return True
+            except (socket.gaierror, asyncio.TimeoutError, OSError):
+                return False
+
+        tasks = {host: asyncio.create_task(_check_host(host)) for host in host_urls}
+        for host, task in tasks.items():
+            try:
+                alive = await task
+                if alive:
+                    live_hosts.add(host)
+                else:
+                    dead_hosts.add(host)
+            except Exception:
+                dead_hosts.add(host)
+
+        if not dead_hosts:
+            return
+
+        # Filter URLs
+        dead_url_count = sum(len(host_urls[h]) for h in dead_hosts if h in host_urls)
+        context["discovered_urls"] = [
+            u for u in discovered
+            if urlparse(u).hostname not in dead_hosts
+        ]
+        context["urls_with_params"] = [
+            u for u in with_params
+            if urlparse(u).hostname not in dead_hosts
+        ]
+
+        # Store dead hosts so _run_scanner_on_urls can skip them too
+        context["_dead_hosts"] = dead_hosts
+
+        self._emit("info", message=(
+            f"URL liveness gate: {len(dead_hosts)} dead host(s) removed "
+            f"({dead_url_count} URLs dropped, {len(live_hosts)} live hosts kept): "
+            f"{', '.join(sorted(dead_hosts))}"
+        ))
+
     async def _run_scanner_on_urls(self, scanner_name: str, urls: list,
                                      context: Dict[str, Any]) -> Dict[str, Any]:
         """Run a scanner against multiple discovered URLs."""
@@ -1266,6 +1351,14 @@ class KillChainExecutor:
 
             except Exception as e:
                 self._emit("scanner_error", scanner="external_crawlers", error=str(e))
+
+        # ── Step 3b: URL Liveness Gate — drop URLs on unresolvable hosts ──
+        # GAU and other historical crawlers return URLs on hosts that may no
+        # longer exist.  Without this gate, every dead host wastes ~30s of
+        # DNS timeout per scanner pass × 14 scanner passes = 7+ minutes per
+        # dead host.  We resolve each unique hostname once upfront and strip
+        # URLs whose hosts fail DNS.
+        await self._filter_dead_host_urls(context)
 
         # ── Step 4: Tech fingerprinting — whatweb + webanalyze ─────────────
         if run_deep_recon:

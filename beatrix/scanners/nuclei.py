@@ -10,7 +10,7 @@ Full-featured nuclei integration with:
 6. Interactsh integration — passes Beatrix OOB domain via -iserver
 7. Network port scanning — feeds non-HTTP services for protocol checks
 8. Split-phase execution — fast recon (Phase 1) + full exploit (Phase 4)
-9. Per-host rate limiting — -rl flag prevents WAF blocks
+9. Global rate limiting — WAF-adaptive request throttling
 10. External template repos — auto-fetches bug-bounty focused templates
 
 Template Sources (auto-updated):
@@ -226,7 +226,6 @@ class NucleiScanner(BaseScanner):
 
         # Rate limiting — defaults adjusted if WAF detected
         self._rate_limit = self.config.get("nuclei_rate_limit", 150)
-        self._rate_limit_per_host = self.config.get("nuclei_rate_limit_per_host", 50)
 
     def _find_nuclei(self) -> Optional[str]:
         """Find nuclei binary on PATH"""
@@ -500,8 +499,7 @@ class NucleiScanner(BaseScanner):
         if waf_name:
             # Reduce rates to stay under WAF bot-detection thresholds
             self._rate_limit = min(self._rate_limit, 30)
-            self._rate_limit_per_host = min(self._rate_limit_per_host, 15)
-            self.log(f"WAF detected ({waf_name}) — rate limits reduced to {self._rate_limit}/{self._rate_limit_per_host} rps")
+            self.log(f"WAF detected ({waf_name}) — rate limit reduced to {self._rate_limit} rps")
 
     def set_origin_ip(self, ip: str, domain: str) -> None:
         """Set origin IP for CDN bypass.
@@ -999,10 +997,12 @@ class NucleiScanner(BaseScanner):
             findings_count = 0
             wall_start = time.monotonic()
 
-            # Readline timeout: how long we wait for ANY stdout output
-            # before assuming nuclei is done or stuck.  120s is generous —
-            # nuclei may go quiet for 30-60s between template batches but
-            # should not be silent for 2+ minutes if it's still working.
+            # Shared activity tracker: both stdout and stderr reset this
+            # timestamp.  The idle timeout checks this instead of relying
+            # solely on stdout — nuclei writes template-compilation progress
+            # to stderr before producing any stdout, and we must not kill the
+            # process during that phase.
+            last_activity = time.monotonic()
             readline_timeout = 120
 
             # Background task to drain stderr and log progress
@@ -1010,11 +1010,13 @@ class NucleiScanner(BaseScanner):
 
             async def _drain_stderr():
                 """Read stderr in background so the pipe doesn't block."""
+                nonlocal last_activity
                 try:
                     while True:
                         raw = await process.stderr.readline()
                         if not raw:
                             break
+                        last_activity = time.monotonic()  # stderr counts as activity
                         text = raw.decode("utf-8", errors="replace").strip()
                         if text:
                             stderr_lines.append(text)
@@ -1044,32 +1046,46 @@ class NucleiScanner(BaseScanner):
                         break
 
                     remaining = self.timeout_seconds - elapsed
-                    per_line_timeout = min(readline_timeout, remaining)
+                    # Short poll interval — we check the shared last_activity
+                    # timestamp after each timeout rather than blocking for the
+                    # full readline_timeout, so stderr activity is noticed quickly.
+                    poll_interval = min(10, remaining)
 
                     try:
                         line = await asyncio.wait_for(
                             process.stdout.readline(),
-                            timeout=per_line_timeout
+                            timeout=poll_interval
                         )
                     except asyncio.TimeoutError:
+                        # No stdout line within poll_interval — check if there
+                        # has been ANY activity (stdout or stderr) recently.
+                        idle_seconds = time.monotonic() - last_activity
                         actual_elapsed = time.monotonic() - wall_start
+
                         if actual_elapsed >= self.timeout_seconds - 1:
                             self.log(
                                 f"Nuclei timed out after {int(actual_elapsed)}s "
                                 f"(wall-clock limit {self.timeout_seconds}s)"
                             )
-                        else:
+                            process.kill()
+                            break
+                        elif idle_seconds >= readline_timeout:
+                            # No stdout AND no stderr for readline_timeout seconds
                             self.log(
-                                f"Nuclei no stdout for {readline_timeout}s — "
+                                f"Nuclei no output (stdout+stderr) for {readline_timeout}s — "
                                 f"assuming complete ({int(actual_elapsed)}s elapsed)"
                             )
-                        process.kill()
-                        break
+                            process.kill()
+                            break
+                        else:
+                            # stderr is still active (template compilation, stats, etc.) — keep waiting
+                            continue
 
                     if not line:
                         # EOF — nuclei exited normally
                         break
 
+                    last_activity = time.monotonic()  # stdout line received
                     decoded = line.decode('utf-8', errors='replace').strip()
                     if not decoded:
                         continue

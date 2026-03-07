@@ -1,8 +1,8 @@
 # Beatrix Scanner Audit — Post-Fix Deep Dive
 
-**Date:** 2025-07-17 (initial), 2026-03-06 (Tier 1 fixes applied)  
+**Date:** 2025-07-17 (initial), 2026-03-06 (Tier 1 fixes), 2026-03-06 (critical fixes)  
 **Scope:** Systematic codebase audit inspired by the franktech.net scan results  
-**Status:** 6 items fixed (commits `6f9861b`, `ae433d5`); 41 remaining  
+**Status:** 8 items fixed (commits `6f9861b`, `ae433d5`, pending); 39 remaining  
 **Complements:** `BEATRIX_AUDIT.md` (bugs 1–9), `nuclei-audit.md` (N-01 through N-16)
 
 ---
@@ -25,7 +25,7 @@ After fixing the original 25 issues (Bugs 1–9 + N-01 through N-16), a new fran
 
 | Priority | Count | Resolved | Description |
 |----------|------:|:--------:|-------------|
-| **CRITICAL** | 3 | 0 (1 mitigated) | Nuclei timeout race, injection payload explosion, stale URL pipeline |
+| **CRITICAL** | 3 | 2 (1 mitigated) | ~~Nuclei timeout race~~, injection payload explosion (mitigated), ~~stale URL pipeline~~ |
 | **HIGH** | 8 | 3 | ~~SSRF false-positive patterns~~, ~~finding misclassification~~, circuit breaker absence, ~~cache dedup~~, dedup failures |
 | **MEDIUM** | 21 | 1 | Sequential execution, timeout config, transport error propagation, ~~payload prioritization~~, broad pattern matching |
 | **LOW** | 15 | 1 | Logging noise, minor dedup gaps, ~~duplicate probe headers~~, cosmetic issues |
@@ -34,9 +34,10 @@ After fixing the original 25 issues (Bugs 1–9 + N-01 through N-16), a new fran
 
 ## A. Kill Chain & URL Pipeline
 
-### A-01: No URL Liveness Gate (CRITICAL)
+### A-01: No URL Liveness Gate (CRITICAL) — ✅ FIXED
 
 **Files:** `kill_chain.py` L1180–1265, `external_tools.py` L352–381  
+**Fix:** Added `_filter_dead_host_urls()` method to kill chain. After URL discovery merge (external crawlers + GAU), extracts unique hostnames and runs async DNS resolution (3s timeout per host, all hosts in parallel). URLs on unresolvable hosts are stripped from both `discovered_urls` and `urls_with_params`. Dead hosts stored in `context["_dead_hosts"]` for downstream scanners.  
 **Observed:** franktech.net scan — GAU returned ~30 URLs on `www.franktech.net` which doesn't resolve via DNS. These dead URLs were passed to 14 scanner phases.
 
 **Pipeline gap:**
@@ -99,22 +100,23 @@ Individual scanner errors are emitted as real-time events and displayed inline i
 
 ## B. Nuclei Timeout Race Condition
 
-### B-01: Readline Idle Timeout Kills Nuclei During Template Loading (CRITICAL)
+### B-01: Readline Idle Timeout Kills Nuclei During Template Loading (CRITICAL) — ✅ FIXED
 
-**File:** `nuclei.py` L1006
+**File:** `nuclei.py` L1006  
+**Fix:** Replaced stdout-only idle timer with a shared `last_activity` timestamp. Both `_drain_stderr()` (via `nonlocal last_activity`) and the stdout loop reset the timestamp on each line received. Stdout loop changed from blocking `readline_timeout`-length waits to 10s poll intervals, checking `idle_seconds = time.monotonic() - last_activity` after each timeout. Nuclei is only killed when BOTH stdout AND stderr have been silent for 120s. This prevents template-compilation-phase kills since nuclei writes progress to stderr during compilation.
 
-The `readline_timeout = 120` monitors only stdout. Nuclei runs with `-jsonl -silent`, producing zero stdout during template compilation. Template loading progress is written to stderr, which is drained by `_drain_stderr()` — but stderr activity does **not** reset the stdout idle timer.
+Additionally cleaned up dead `_rate_limit_per_host` attribute (set but never used after `-rl` flag removal in N-05) and updated docstring.
 
-**Sequence:**
-1. Nuclei starts with 12,600+ templates
-2. Template compilation begins — writes progress to stderr
-3. stdout is silent during compilation (no `-jsonl` output yet)
-4. After 120 seconds of stdout silence → `process.kill()` fires
-5. Nuclei dies with exit -15, templates=0, targets=0
+~~The `readline_timeout = 120` monitors only stdout. Nuclei runs with `-jsonl -silent`, producing zero stdout during template compilation. Template loading progress is written to stderr, which is drained by `_drain_stderr()` — but stderr activity does **not** reset the stdout idle timer.~~
 
-This is the root cause of the `templates=0 / targets=0 / exit -15` observed in every nuclei phase of the franktech scan.
+~~**Sequence:**~~
+~~1. Nuclei starts with 12,600+ templates~~
+~~2. Template compilation begins — writes progress to stderr~~
+~~3. stdout is silent during compilation (no `-jsonl` output yet)~~
+~~4. After 120 seconds of stdout silence → `process.kill()` fires~~
+~~5. Nuclei dies with exit -15, templates=0, targets=0~~
 
-**Fix approach:** Reset the idle timer on stderr activity, or use a compilation-aware timeout that waits for the first stdout line before starting the idle clock.
+~~This is the root cause of the `templates=0 / targets=0 / exit -15` observed in every nuclei phase of the franktech scan.~~
 
 ---
 
@@ -370,14 +372,14 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 
 | ID | Area | Severity | One-Line Description |
 |----|------|----------|---------------------|
-| A-01 | Kill Chain | **CRITICAL** | No URL liveness gate — dead hosts waste 18–30 min of DNS timeouts |
+| A-01 | Kill Chain | **CRITICAL** | ~~No URL liveness gate — dead hosts waste 18–30 min of DNS timeouts~~ ✅ Fixed — async DNS gate filters dead hosts |
 | A-02 | Kill Chain | **HIGH** | error_disclosure scans same origin 20× due to query-string-only URL differentiation |
 | A-03 | Kill Chain | **MEDIUM** | redirect scanner receives URLs with no cap |
 | A-04 | Kill Chain | **MEDIUM** | injection_targets not grouped by host |
 | A-05 | Kill Chain | **HIGH** | No host-level failure tracking in `_run_scanner_on_urls` |
 | A-06 | Kill Chain | **MEDIUM** | Weaponization/Delivery phases fully sequential (could be parallel) |
 | A-07 | Kill Chain | **LOW** | Scanner errors not aggregated in final report |
-| B-01 | Nuclei | **CRITICAL** | readline_timeout kills nuclei during template loading (stdout-only idle timer) |
+| B-01 | Nuclei | **CRITICAL** | ~~readline_timeout kills nuclei during template loading (stdout-only idle timer)~~ ✅ Fixed — shared last_activity timer |
 | C-01 | BaseScanner | **HIGH** | No circuit breaker for transport errors |
 | C-02 | All Scanners | **HIGH** | Zero scanners implement connection-failure tracking |
 | D-01 | Injection | **CRITICAL** | SecLists payloads loaded without cap (56K+) — *mitigated by priority sort (D-03)* |
@@ -416,8 +418,8 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 ## Recommended Fix Order
 
 ### Tier 1 — Immediate (eliminates wasted scan time)
-1. **A-01** — Add DNS liveness gate after URL discovery, before scanner dispatch
-2. **B-01** — Reset nuclei idle timer on stderr activity (or wait for first stdout line)
+1. ~~**A-01** — Add DNS liveness gate after URL discovery, before scanner dispatch~~ ✅ Done
+2. ~~**B-01** — Reset nuclei idle timer on stderr activity (or wait for first stdout line)~~ ✅ Done
 3. **D-01** — Cap SecLists payloads per category (e.g., `[:100]`) — *Partially addressed: payloads are now sorted by detection priority (D-03 ✅) so the timeout budget covers the best payloads first, but no hard cap applied*
 4. **C-01 + C-02** — Add circuit breaker to `BaseScanner.request()` (bail after 5 consecutive `ConnectError`/`TimeoutException` on same host)
 
@@ -441,3 +443,5 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 15. ✅ **Injection baseline reset** — `_baseline_body`/`_baseline_status`/`_baseline_headers` reset at top of `_test_insertion_point()` to prevent stale data leaking across insertion points (6f9861b)
 16. ✅ **Nuclei rate sanity check** — `effective_rate` in sanity check was referencing removed `_rate_limit_per_host`; corrected to `self._rate_limit or 150` (6f9861b)
 17. ~~✅ **E-09** — Cache poisoning duplicate headers~~ (6f9861b)
+18. ✅ **A-01** — DNS liveness gate for dead host filtering
+19. ✅ **B-01** — Nuclei idle timer shared across stdout+stderr + dead code cleanup (`_rate_limit_per_host` removed, docstring updated)
