@@ -62,6 +62,11 @@ class SubfinderRunner:
             domain = domain.split("://", 1)[1]
         domain = domain.split("/")[0].split(":")[0]
 
+        # IP addresses have no subdomains — skip
+        from beatrix.utils.helpers import is_ip_address
+        if is_ip_address(domain):
+            return []
+
         try:
             cmd = [
                 self.path,

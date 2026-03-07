@@ -69,11 +69,17 @@ class CORSScanner(BaseScanner):
         target_domain = parsed.netloc
 
         # Extract base domain (e.g., example.com from sub.example.com)
-        parts = target_domain.split(".")
-        if len(parts) >= 2:
-            base_domain = ".".join(parts[-2:])
-        else:
+        # For IP targets, use the full IP as base_domain
+        from beatrix.utils.helpers import is_ip_address
+        target_is_ip = is_ip_address(target_domain)
+        if target_is_ip:
             base_domain = target_domain
+        else:
+            parts = target_domain.split(".")
+            if len(parts) >= 2:
+                base_domain = ".".join(parts[-2:])
+            else:
+                base_domain = target_domain
 
         tests = [
             # Direct reflection - CRITICAL if allowed

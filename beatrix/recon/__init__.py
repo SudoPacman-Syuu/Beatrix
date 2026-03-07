@@ -70,6 +70,10 @@ class ReconRunner:
         self.verbose = verbose
         self.result = ReconResult(domain=self.domain)
 
+        # Detect IP targets — skip domain-only operations (subdomain enum, crt.sh)
+        from beatrix.utils.helpers import is_ip_address
+        self.is_ip = is_ip_address(self.domain)
+
     def log(self, msg: str, level: str = "INFO") -> None:
         if level == "INFO" and not self.verbose:
             return
@@ -114,6 +118,12 @@ class ReconRunner:
         return subdomains
 
     async def enumerate_subdomains(self) -> Set[str]:
+        # IP targets have no subdomains — skip all enumeration
+        if self.is_ip:
+            self.log("Target is an IP address — skipping subdomain enumeration", "INFO")
+            self.result.subdomains.add(self.domain)
+            return self.result.subdomains
+
         results = await asyncio.gather(
             self._enum_crtsh(),
             self._enum_hackertarget(),

@@ -1,6 +1,7 @@
 """Utility functions for the framework"""
 
 import asyncio
+import ipaddress
 from typing import List, Optional
 
 # Handle optional imports gracefully
@@ -81,3 +82,20 @@ def extract_domain(target: str) -> str:
     # Remove port
     target = target.split(':')[0]
     return target
+
+
+def is_ip_address(target: str) -> bool:
+    """
+    Check if a target string is an IP address (v4 or v6).
+
+    Handles raw IPs, URLs (http://1.2.3.4/path), and [IPv6] bracket notation.
+    """
+    host = extract_domain(target)
+    # Strip IPv6 brackets if present
+    if host.startswith('[') and host.endswith(']'):
+        host = host[1:-1]
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False

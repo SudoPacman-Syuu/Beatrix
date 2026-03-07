@@ -178,8 +178,14 @@ class RapidHunter:
         self.log(f"Scanning {domain}...")
         domain_findings: List[Finding] = []
 
-        subs = await self.get_subdomains(domain)
-        self.log(f"  Found {len(subs)} subdomains")
+        # Skip subdomain enumeration and takeover checks for IP targets
+        from beatrix.utils.helpers import is_ip_address
+        if not is_ip_address(domain):
+            subs = await self.get_subdomains(domain)
+            self.log(f"  Found {len(subs)} subdomains")
+        else:
+            subs = []
+            self.log(f"  Target is IP — skipping subdomain enumeration")
 
         debug_findings = await self.check_debug_endpoints(domain)
         domain_findings.extend(debug_findings)

@@ -289,7 +289,12 @@ class GitHubRecon(BaseScanner):
         # derive it from the target domain (e.g., "pinterest.com" -> "pinterest")
         if not self.org_name and (context.url or context.base_url):
             from urllib.parse import urlparse
+            from beatrix.utils.helpers import is_ip_address
             raw_target = context.url or context.base_url
+            # Skip GitHub recon for IP targets — can't derive an org name from an IP
+            if is_ip_address(raw_target):
+                self.log("Target is an IP address — skipping GitHub recon")
+                return
             parsed = urlparse(raw_target if '://' in raw_target else f'https://{raw_target}')
             domain = parsed.hostname or raw_target
             # Use the domain's second-level label as the org guess

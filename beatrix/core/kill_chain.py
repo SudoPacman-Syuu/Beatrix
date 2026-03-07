@@ -557,17 +557,27 @@ class KillChainExecutor:
         External tools (subfinder, nmap) are optional and gracefully skipped.
         """
         from beatrix.scanners import ScanContext
+        from beatrix.utils.helpers import is_ip_address
 
         results = []
         url = target if "://" in target else f"https://{target}"
         domain = url.split("://", 1)[1].split("/")[0].split(":")[0]
+        target_is_ip = is_ip_address(domain)
+        context["is_ip"] = target_is_ip
 
         # ── Step 0: Subdomain enumeration — subfinder + amass (optional) ──────
         # Only run for deep scans (not quick preset — too slow)
+        # Skip entirely for IP targets — subdomains don't apply
         requested_modules = context.get("modules", [])
         run_deep_recon = not requested_modules  # empty = full scan
 
-        if run_deep_recon:
+        if run_deep_recon and target_is_ip:
+            self._emit("info", message=f"Target is an IP address ({domain}) — skipping subdomain enumeration")
+            run_deep_recon_subs = False
+        else:
+            run_deep_recon_subs = run_deep_recon
+
+        if run_deep_recon_subs:
             toolkit = self.toolkit
 
             # Subfinder
@@ -667,7 +677,13 @@ class KillChainExecutor:
             # the real origin IP via 6+ techniques (DNS history, crt.sh SSL,
             # MX records, subdomain correlation, misconfig checks, WHOIS).
             # If an origin IP is found, nmap scans THAT instead of the CDN edge.
-            try:
+            # Skip entirely for IP targets — the target IS the IP.
+            if target_is_ip:
+                self._emit("info", message=f"Target is IP ({domain}) — skipping CDN/origin IP discovery")
+                context["network"]["scan_target"] = domain
+
+            if not target_is_ip:
+              try:
                 from beatrix.scanners.origin_ip_discovery import OriginIPDiscovery
                 from beatrix.core.types import Finding, Severity, Confidence
 
@@ -785,9 +801,9 @@ class KillChainExecutor:
                         "assets": [], "context": {}, "modules": ["origin_ip_discovery"], "requests": 0,
                     })
 
-            except ImportError as e:
+              except ImportError as e:
                 self._emit("info", message=f"origin_ip_discovery import failed ({e}) — scanning domain directly")
-            except Exception as e:
+              except Exception as e:
                 self._emit("scanner_error", scanner="origin_ip_discovery", error=str(e))
 
             # The target for all nmap/network scans — either origin IP or domain
