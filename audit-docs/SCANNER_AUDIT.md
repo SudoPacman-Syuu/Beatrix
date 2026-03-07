@@ -1,8 +1,8 @@
 # Beatrix Scanner Audit — Post-Fix Deep Dive
 
-**Date:** 2025-07-17 (initial), 2026-03-06 (Tier 1 fixes), 2026-03-06 (critical fixes)  
+**Date:** 2025-07-17 (initial), 2026-03-06 (Tier 1 fixes + critical fixes + nuclei sweep)  
 **Scope:** Systematic codebase audit inspired by the franktech.net scan results  
-**Status:** 8 items fixed (commits `6f9861b`, `ae433d5`, pending); 39 remaining  
+**Status:** 9 items fixed (commits `6f9861b`, `ae433d5`, `9fccdff`, `b6a2dd1`); 38 remaining  
 **Complements:** `BEATRIX_AUDIT.md` (bugs 1–9), `nuclei-audit.md` (N-01 through N-16)
 
 ---
@@ -26,7 +26,7 @@ After fixing the original 25 issues (Bugs 1–9 + N-01 through N-16), a new fran
 | Priority | Count | Resolved | Description |
 |----------|------:|:--------:|-------------|
 | **CRITICAL** | 3 | 2 (1 mitigated) | ~~Nuclei timeout race~~, injection payload explosion (mitigated), ~~stale URL pipeline~~ |
-| **HIGH** | 8 | 3 | ~~SSRF false-positive patterns~~, ~~finding misclassification~~, circuit breaker absence, ~~cache dedup~~, dedup failures |
+| **HIGH** | 9 | 4 | ~~SSRF false-positive patterns~~, ~~finding misclassification~~, circuit breaker absence, ~~cache dedup~~, dedup failures, ~~nuclei tag fallback~~ |
 | **MEDIUM** | 21 | 1 | Sequential execution, timeout config, transport error propagation, ~~payload prioritization~~, broad pattern matching |
 | **LOW** | 15 | 1 | Logging noise, minor dedup gaps, ~~duplicate probe headers~~, cosmetic issues |
 
@@ -117,6 +117,18 @@ Additionally cleaned up dead `_rate_limit_per_host` attribute (set but never use
 ~~5. Nuclei dies with exit -15, templates=0, targets=0~~
 
 ~~This is the root cause of the `templates=0 / targets=0 / exit -15` observed in every nuclei phase of the franktech scan.~~
+
+### B-02: Tag Fallback Silently Filters Network/Workflow Templates (HIGH) — ✅ FIXED (b6a2dd1)
+
+**File:** `nuclei.py` L894–895 (now removed)  
+**Fix:** Removed the `if not tags: tags = self._build_exploit_tags()` fallback in `_run_nuclei()`. Callers that want tag filtering pass tags explicitly; callers that want no filter pass `tags=""` and limit scope via `cmd_extra` (`-t dir`, `-w workflow`, `-headless`).
+
+**Root cause:** `_run_nuclei()` converted empty `tags` to the full 40+ exploit tag set. Three callers pass `tags=""`:
+- `scan_network()` — passes `-t network/` to run ALL network templates. The injected `-tags` silently skipped templates lacking exploit tags (e.g. templates tagged only `redis-check` or `ftp-anon`).
+- `scan_exploit()` workflows — passes `-w workflow.yaml`. Tags don't affect nuclei workflows, but injected dead flags.
+- `scan_headless()` — passes `-headless -tags headless`. The injected exploit tags widened scope but headless-specific `-tags headless` in `cmd_extra` was appended after, and nuclei uses last-wins for `-tags`, so this was functionally harmless.
+
+**Impact:** Network scan phase missed templates that don't carry common exploit tags — potentially significant for protocol-level checks (Redis, MongoDB, FTP, SMTP).
 
 ---
 
@@ -380,6 +392,7 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 | A-06 | Kill Chain | **MEDIUM** | Weaponization/Delivery phases fully sequential (could be parallel) |
 | A-07 | Kill Chain | **LOW** | Scanner errors not aggregated in final report |
 | B-01 | Nuclei | **CRITICAL** | ~~readline_timeout kills nuclei during template loading (stdout-only idle timer)~~ ✅ Fixed — shared last_activity timer |
+| B-02 | Nuclei | **HIGH** | ~~Tag fallback silently filtered network/workflow templates~~ ✅ Fixed — removed fallback (`b6a2dd1`) |
 | C-01 | BaseScanner | **HIGH** | No circuit breaker for transport errors |
 | C-02 | All Scanners | **HIGH** | Zero scanners implement connection-failure tracking |
 | D-01 | Injection | **CRITICAL** | SecLists payloads loaded without cap (56K+) — *mitigated by priority sort (D-03)* |
@@ -445,3 +458,4 @@ The `asyncio.Semaphore(rate_limit)` is per-scanner-instance. When the kill chain
 17. ~~✅ **E-09** — Cache poisoning duplicate headers~~ (6f9861b)
 18. ✅ **A-01** — DNS liveness gate for dead host filtering
 19. ✅ **B-01** — Nuclei idle timer shared across stdout+stderr + dead code cleanup (`_rate_limit_per_host` removed, docstring updated)
+20. ✅ **B-02** — Removed tag fallback in `_run_nuclei()` that silently filtered network/workflow templates (`b6a2dd1`)
