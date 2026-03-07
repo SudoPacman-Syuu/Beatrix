@@ -891,8 +891,12 @@ class NucleiScanner(BaseScanner):
         if not targets:
             return
 
-        if not tags:
-            tags = self._build_exploit_tags()
+        # NOTE: Do NOT apply a fallback tag set when tags is empty.
+        # Callers that pass tags="" explicitly want NO tag filtering —
+        # they limit scope via cmd_extra instead (-t dir, -w workflow,
+        # -headless).  Adding tags here would silently skip templates
+        # that lack matching tags (e.g. network templates tagged only
+        # as "redis-check" or "ftp-anon").
 
         # Origin IP bypass: add origin-targeted URLs as ADDITIONAL targets
         # alongside the normal CDN-routed URLs. This scans both paths:
