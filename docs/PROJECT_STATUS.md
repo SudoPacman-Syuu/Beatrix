@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0
 **Last Updated:** March 6, 2026
-**Current Phase:** Stable — Nuclei integration fully fixed (16 issues), injection/JS bundle/auth scanner false positives fixed, origin IP pipeline hardened with ASN validation
+**Current Phase:** Stable — All 47/47 audit items fixed, IP address target support added, nuclei integration fully fixed (16 issues), injection/JS bundle/auth scanner false positives fixed, origin IP pipeline hardened with ASN validation
 **Framework LOC:** ~73,800 (112 Python files total, ~66,300 in inner package)
 
 ---
@@ -20,7 +20,7 @@
 | Integrations | 683 | 2 | ✅ Working | HackerOne API client |
 | Validators | 1,277 | 3 | ✅ Working | ImpactValidator, ReadinessGate |
 | Reporters | 1,294 | 2 | ✅ Working | Chain reporting, HTML output, VRT enrichment (Bugcrowd VRT + CVSS 3.1) |
-| Utils | 3,716 | 6 | ✅ Working | WAF bypass, VRT classifier, helpers, response validator |
+| Utils | 3,716 | 6 | ✅ Working | WAF bypass, VRT classifier, helpers (`is_ip_address()` used by 6 modules), response validator |
 
 ---
 
@@ -185,7 +185,7 @@ beatrix/                       # Inner framework package
 ├── reporters/                 # Output generation (1.2K LOC, 2 files)
 │   └── chain_reporting.py     # Attack chain HTML reports
 └── utils/                     # Shared utilities (3.7K LOC, 6 files)
-    ├── helpers.py             # HTTP helpers, encoding, parsing
+    ├── helpers.py             # HTTP helpers, encoding, parsing, is_ip_address() (used by kill_chain, recon, rapid, cors, github_recon, subfinder)
     ├── advanced_waf_bypass.py # WAF evasion techniques
     ├── vrt_classifier.py      # Bugcrowd VRT classification
     └── response_validator.py  # Response validation utilities
@@ -223,6 +223,8 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - [x] Fix auth scanner rate-limit on non-existent endpoints
 - [x] Fix install.sh (httpx shim, root config, nuclei templates, chromium deps)
 - [x] Fix subfinder `-nW` flag
+- [x] Complete full audit sweep — 47/47 items fixed (see `SCANNER_AUDIT.md`)
+- [x] Add IP address target support — domains, URLs, and raw IPs all accepted
 - [ ] Move `bounty_hunter.py` into `beatrix/hunters/bounty.py` (proper framework module)
 - [ ] Add unit tests for GHOST agent
 - [ ] Add unit tests for scanner modules

@@ -4,7 +4,7 @@
 
 **License:** Source Available — Free for non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE).
 
-A command-line bug bounty hunting framework. 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, 7-phase Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal.
+A command-line bug bounty hunting framework. 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, 7-phase Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal. Targets can be domains, URLs, or raw IP addresses.
 
 Globally installable on any Linux system. Call it from anywhere.
 
@@ -74,7 +74,8 @@ Customize the venv location: `BEATRIX_VENV=~/my-venv ./install.sh`
 
 ```bash
 beatrix                              # show all commands
-beatrix hunt example.com             # scan a target
+beatrix hunt example.com             # scan a domain
+beatrix hunt 192.168.1.1             # scan an IP address
 beatrix hunt -f targets.txt          # hunt all URLs from a file
 beatrix strike api.com -m cors       # single module attack
 beatrix help hunt                    # detailed command help
@@ -87,7 +88,7 @@ beatrix arsenal                      # full module reference
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `hunt TARGET` | Full vulnerability scan | `beatrix hunt example.com` |
+| `hunt TARGET` | Full vulnerability scan | `beatrix hunt example.com` or `beatrix hunt 10.0.0.1` |
 | `hunt -f FILE` | Hunt targets from file | `beatrix hunt -f targets.txt` |
 | `strike TARGET -m MOD` | Single module attack | `beatrix strike api.com -m cors` |
 | `probe TARGET` | Quick alive check | `beatrix probe example.com` |
@@ -169,6 +170,30 @@ Every `hunt` follows the Cyber Kill Chain methodology:
 ```bash
 beatrix hunt example.com --preset full
 beatrix hunt example.com --preset injection
+```
+
+### IP Address Targets
+
+Beatrix fully supports scanning raw IP addresses (IPv4 and IPv6). When an IP target is detected, domain-only operations are automatically skipped:
+
+- **Skipped:** Subdomain enumeration (subfinder, amass, crt.sh), origin IP discovery, GitHub recon, subdomain takeover checks
+- **Active:** All HTTP-based scanners (injection, CORS, SSRF, IDOR, XXE, etc.), port scanning, service detection, firewall testing
+
+```bash
+# Scan a single IP
+beatrix hunt 192.168.1.1
+
+# Scan with full preset (includes nmap, SSH audit, firewall testing)
+beatrix hunt 10.0.0.1 --preset full
+
+# Strike a specific service on an IP
+beatrix strike http://192.168.1.1:8080/api -m injection
+
+# IP addresses also work in target files
+echo "192.168.1.1
+10.0.0.2
+https://172.16.0.1:443" > targets.txt
+beatrix hunt -f targets.txt
 ```
 
 ### Scanner Modules (Arsenal)
@@ -360,6 +385,12 @@ Without API keys, Beatrix uses 6 free techniques that work for most targets.
 ```bash
 # Quick surface scan
 beatrix hunt example.com --preset quick
+
+# Scan an IP address (skips domain-only operations like subdomain enum)
+beatrix hunt 192.168.1.1
+
+# Hunt an IP with a specific preset
+beatrix hunt 10.0.0.1 --preset full
 
 # Full assault
 beatrix hunt example.com --preset full

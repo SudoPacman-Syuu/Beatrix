@@ -601,7 +601,7 @@
 
             <section id="intro">
                 <h2>1. Introduction</h2>
-                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration directly to your terminal.</p>
+                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration directly to your terminal. Targets can be domains, URLs, or raw IP addresses.</p>
                 <p>Beatrix is built for operators who prefer a terminal over a GUI. It bridges the gap between high-level automation (for rapid, wide-scale sweeps) and low-level manual control (for surgical, targeted strikes).</p>
                 
                 <div class="warning">
@@ -807,7 +807,7 @@ beatrix strike https://api.example.com/v1/users -m idor</code></pre>
 
             <section id="architecture">
                 <h2>3. Architecture & The Kill Chain</h2>
-                <p>Beatrix doesn't just scan blindly; it hunts with purpose. Every <code>hunt</code> follows a structured 7-phase approach based on the Cyber Kill Chain.</p>
+                <p>Beatrix doesn't just scan blindly; it hunts with purpose. Every <code>hunt</code> follows a structured 7-phase approach based on the Cyber Kill Chain. When the target is an IP address, domain-only operations (subdomain enumeration, origin IP discovery, GitHub recon, subdomain takeover checks) are automatically skipped.</p>
 
                 <ol start="0">
                     <li><strong>🛡️ CDN Bypass:</strong> Detects Cloudflare/Akamai/Fastly/CloudFront via IP range + header fingerprinting. Discovers origin IPs through 6+ techniques (DNS history, crt.sh SSL certs, MX records, subdomain correlation, misconfiguration checks, WHOIS). If origin found, all network scans target the real server instead of CDN edge. Optional API keys (SecurityTrails, Censys, Shodan) via environment variables.</li>
@@ -1000,7 +1000,7 @@ beatrix strike https://shop.example.com/search?q=test -m injection</code></pre>
                     <div class="detail-body">
                         <pre><code>beatrix hunt TARGET [OPTIONS]
 beatrix hunt -f TARGETS_FILE [OPTIONS]</code></pre>
-                        <p>The main event. Runs the full kill chain methodology against a single target or every URL in a file.</p>
+                        <p>The main event. Runs the full kill chain methodology against a single target or every URL in a file. Accepts domains, URLs, or raw IP addresses. When an IP target is detected, domain-only operations (subdomain enumeration, origin IP discovery, GitHub recon) are automatically skipped.</p>
                         <table class="flag-table">
                             <tr><td>-f, --file PATH</td><td>Text file with URLs/domains to hunt (one per line, # for comments)</td></tr>
                             <tr><td>-p, --preset PRESET</td><td>Scan intensity (default: standard)</td></tr>
@@ -1033,6 +1033,12 @@ beatrix hunt -f TARGETS_FILE [OPTIONS]</code></pre>
                         </table>
                         <pre><code># Standard hunt
 beatrix hunt example.com
+
+# Hunt an IP address
+beatrix hunt 192.168.1.1
+
+# IP with full preset (nmap, SSH audit, firewall testing still active)
+beatrix hunt 10.0.0.1 --preset full
 
 # Full kill chain with AI
 beatrix hunt example.com --preset full --ai

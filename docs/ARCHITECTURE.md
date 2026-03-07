@@ -258,7 +258,7 @@ beatrix/
 │   └── chain_reporting.py         # HTML chain report, MITRE heatmap
 ├── validators/                    # ImpactValidator + ReadinessGate
 └── utils/
-    ├── helpers.py                 # Shared utilities
+    ├── helpers.py                 # Shared utilities, is_ip_address() (used by 6 modules for IP target detection)
     ├── advanced_waf_bypass.py     # WAF evasion techniques
     ├── vrt_classifier.py          # Bugcrowd VRT classification
     └── response_validator.py      # HTTP response validation
@@ -283,6 +283,9 @@ beatrix/
                 │
                 ▼
 4. KILL CHAIN (core/kill_chain.py)
+   IP Detection: is_ip_address(target) → sets context["is_ip"]
+     → If IP: skips subfinder, amass, crt.sh, origin-IP discovery, GitHub recon
+     → All HTTP-based scanners run normally on IP targets
    Phase 1: _handle_recon
      → crawl target (crawler.py) → context["discovered_urls"], context["forms"]
      → external tools: subfinder, amass, nmap, katana, gospider

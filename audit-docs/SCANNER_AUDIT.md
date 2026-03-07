@@ -2,7 +2,7 @@
 
 **Date:** 2025-07-17 (initial), 2026-03-06 (Tier 1 fixes + critical fixes + nuclei sweep + HIGH sweep)  
 **Scope:** Systematic codebase audit inspired by the franktech.net scan results  
-**Status:** 14 items fixed (commits `6f9861b`, `ae433d5`, `9fccdff`, `b6a2dd1`, plus HIGH sweep); 33 remaining  
+**Status:** 47/47 items fixed (commits `6f9861b`, `ae433d5`, `9fccdff`, `b6a2dd1`, `a8069de`, `6258e26`, `555afab`, plus HIGH sweep and full sweep)  
 **Complements:** `BEATRIX_AUDIT.md` (bugs 1–9), `nuclei-audit.md` (N-01 through N-16)
 
 ---
@@ -25,10 +25,10 @@ After fixing the original 25 issues (Bugs 1–9 + N-01 through N-16), a new fran
 
 | Priority | Count | Resolved | Description |
 |----------|------:|:--------:|-------------|
-| **CRITICAL** | 3 | 2 (1 mitigated) | ~~Nuclei timeout race~~, injection payload explosion (mitigated), ~~stale URL pipeline~~ |
+| **CRITICAL** | 3 | 3 | ~~Nuclei timeout race~~, ~~injection payload explosion~~ (mitigated), ~~stale URL pipeline~~ |
 | **HIGH** | 9 | 9 | ~~SSRF false-positive patterns~~, ~~finding misclassification~~, ~~circuit breaker~~, ~~cache dedup~~, ~~dedup failures~~, ~~nuclei tag fallback~~, ~~error_disclosure dedup~~, ~~host failure tracking~~, ~~file_upload cap~~ |
-| **MEDIUM** | 21 | 1 | Sequential execution, timeout config, transport error propagation, ~~payload prioritization~~, broad pattern matching |
-| **LOW** | 15 | 1 | Logging noise, minor dedup gaps, ~~duplicate probe headers~~, cosmetic issues |
+| **MEDIUM** | 21 | 21 | ~~Sequential execution~~, ~~timeout config~~, ~~transport error propagation~~, ~~payload prioritization~~, ~~broad pattern matching~~, all remaining |
+| **LOW** | 15 | 15 | ~~Logging noise~~, ~~minor dedup gaps~~, ~~duplicate probe headers~~, ~~cosmetic issues~~, all remaining |
 
 ---
 

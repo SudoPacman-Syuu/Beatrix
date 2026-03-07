@@ -1,6 +1,6 @@
 # Beatrix Codebase Audit — Findings
 
-Audit date: March 6, 2026. Read-only review, no changes made.  \nLast updated: March 6, 2026 — FULL SWEEP complete. 42/47 audit items fixed (all CRITICAL, HIGH, MEDIUM, and most LOW items closed). Remaining 5 items were fixed in prior commits.
+Audit date: March 6, 2026. Read-only review, no changes made.  \nLast updated: March 6, 2026 — FULL SWEEP complete. 47/47 audit items fixed (all CRITICAL, HIGH, MEDIUM, and LOW items closed).
 
 ---
 
@@ -33,7 +33,7 @@ These modules exist but are never imported or called by any other module in the 
 | `core/privilege_graph.py` | `WebAppPrivilegeGraph` — privilege escalation graph modeling | Self-contained, zero external consumers |
 | `ai/tasks.py` | `TaskRouter`, `Task`, `TaskPriority` — AI task routing | Exported in `ai/__init__.py` but never actually used by any code path |
 | `utils/response_validator.py` | `ResponseValidator` — CDN soft-404 detection | In `utils/__init__.py` but zero external consumers |
-| `utils/helpers.py` | `extract_domain()`, `resolve_dns()`, `check_http()`, etc. | All functions registered in `utils/__init__.py` but never imported by any other module |
+| `utils/helpers.py` | `extract_domain()`, `resolve_dns()`, `check_http()`, `is_ip_address()`, etc. | `is_ip_address()` is imported by 6 modules (kill_chain, recon, rapid, cors, github_recon, subfinder). Other functions registered in `utils/__init__.py` but not externally consumed |
 
 **Decision needed:** Are these planned features waiting to be wired in, or abandoned prototypes to remove?
 
