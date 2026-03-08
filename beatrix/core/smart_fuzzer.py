@@ -229,6 +229,38 @@ RCE_SUCCESS_PATTERNS = [
 # SMART FUZZER
 # =============================================================================
 
+# URL path patterns belonging to WAF / CDN / bot-protection infrastructure.
+# Fuzzing these yields false positives — timing delays are WAF throttling,
+# body differences are challenge pages, not real injection evidence.
+_WAF_CDN_PATH_PATTERNS = [
+    # PerimeterX / HUMAN Security
+    r'/captcha/',
+    r'/captcha\.js',
+    r'/px/',
+    # Cloudflare
+    r'/cdn-cgi/',
+    # Akamai
+    r'/akamai/',
+    r'/akam/',
+    # Imperva / Incapsula
+    r'/_Incapsula_',
+    # DataDome
+    r'/datadome\.',
+    r'/captcha-delivery\.',
+    # Generic bot challenge endpoints
+    r'/challenge-platform/',
+    r'/bot-challenge/',
+    r'/bm/px/',
+]
+_WAF_CDN_RE = re.compile('|'.join(_WAF_CDN_PATH_PATTERNS), re.IGNORECASE)
+
+
+def _is_waf_infra_url(url: str) -> bool:
+    """Return True if the URL belongs to a WAF/CDN infrastructure endpoint."""
+    path = urllib.parse.urlparse(url).path
+    return bool(_WAF_CDN_RE.search(path))
+
+
 class SmartFuzzer:
     """
     Intelligent fuzzing engine with verification and deduplication.
@@ -292,6 +324,14 @@ class SmartFuzzer:
         """
         if "FUZZ" not in url:
             raise ValueError("URL must contain FUZZ marker")
+
+        # Skip WAF/CDN infrastructure endpoints entirely — they produce
+        # only false positives (timing from throttling, body changes from
+        # challenge pages).
+        if _is_waf_infra_url(url):
+            if self.verbose:
+                print(f"    [!] Skipping WAF/CDN infrastructure URL: {url}")
+            return []
 
         if vuln_types is None:
             vuln_types = [VulnType.XSS, VulnType.SQLI, VulnType.LFI, VulnType.RCE]
@@ -420,20 +460,36 @@ class SmartFuzzer:
         return verified
 
     async def _get_baseline(self, session: aiohttp.ClientSession, url: str) -> Dict:
-        """Get baseline response for comparison"""
+        """Get baseline response for comparison.
+
+        Takes 3 samples and returns the median timing to reduce
+        the impact of network jitter and WAF rate-limiting spikes.
+        """
         baseline_url = url.replace('FUZZ', 'BASELINE_CANARY_12345')
-        try:
-            start = time.time()
-            async with session.get(baseline_url) as resp:
-                body = await resp.text()
-                return {
-                    'status': resp.status,
-                    'length': len(body),
-                    'time': (time.time() - start) * 1000,
-                    'body': body,
-                }
-        except Exception:
+        samples: list = []
+        last_body = ''
+        last_status = 0
+        for _ in range(3):
+            try:
+                start = time.time()
+                async with session.get(baseline_url) as resp:
+                    body = await resp.text()
+                    elapsed = (time.time() - start) * 1000
+                    samples.append(elapsed)
+                    last_body = body
+                    last_status = resp.status
+            except Exception:
+                samples.append(0)
+        if not samples or all(s == 0 for s in samples):
             return {'status': 0, 'length': 0, 'time': 0, 'body': ''}
+        samples.sort()
+        median_time = samples[len(samples) // 2]
+        return {
+            'status': last_status,
+            'length': len(last_body),
+            'time': median_time,
+            'body': last_body,
+        }
 
     async def _verify_single(
         self,
@@ -460,7 +516,7 @@ class SmartFuzzer:
                 if vuln_type == VulnType.XSS:
                     return self._verify_xss(payload, body, resp.status, len(body), elapsed, url)
                 elif vuln_type == VulnType.SQLI:
-                    return self._verify_sqli(payload, body, resp.status, len(body), elapsed, url, baseline)
+                    return await self._verify_sqli(payload, body, resp.status, len(body), elapsed, url, baseline, session)
                 elif vuln_type == VulnType.LFI:
                     return self._verify_lfi(payload, body, resp.status, len(body), elapsed, url)
                 elif vuln_type == VulnType.RCE:
@@ -547,7 +603,7 @@ class SmartFuzzer:
             cwe="CWE-79",
         )
 
-    def _verify_sqli(
+    async def _verify_sqli(
         self,
         payload: str,
         body: str,
@@ -556,6 +612,7 @@ class SmartFuzzer:
         elapsed: float,
         url: str,
         baseline: Dict,
+        session: aiohttp.ClientSession = None,
     ) -> Optional[VerifiedFinding]:
         """
         Verify SQLi - check for error messages or behavior changes.
@@ -580,24 +637,40 @@ class SmartFuzzer:
                         cwe="CWE-89",
                     )
 
-        # Check for time-based (significant delay)
+        # Check for time-based (significant delay) — requires confirmation
         if elapsed > baseline.get('time', 0) + 2500:  # 2.5s+ delay
             if any(kw in payload.lower() for kw in ['sleep', 'waitfor', 'pg_sleep', 'benchmark']):
-                return VerifiedFinding(
-                    id=hashlib.md5(f"sqli:time:{url}".encode()).hexdigest()[:12],
-                    category=VulnCategory.SQLI_BLIND_TIME,
-                    url=url.replace('FUZZ', urllib.parse.quote(payload, safe='')),
-                    parameter=self._extract_param_from_url(url),
-                    method="GET",
-                    payload=payload,
-                    evidence=f"Time-based delay detected: {elapsed:.0f}ms vs baseline {baseline.get('time', 0):.0f}ms",
-                    confidence=Confidence.HIGH,
-                    severity="critical",
-                    response_code=status,
-                    response_length=length,
-                    response_time_ms=elapsed,
-                    cwe="CWE-89",
-                )
+                # Confirmation: re-request the same URL to rule out
+                # transient WAF throttling / network jitter.
+                confirm_url = url.replace('FUZZ', urllib.parse.quote(payload, safe=''))
+                confirmed = False
+                if session:
+                    try:
+                        c_start = time.time()
+                        async with session.get(confirm_url) as c_resp:
+                            await c_resp.text()
+                            c_elapsed = (time.time() - c_start) * 1000
+                            if c_elapsed > baseline.get('time', 0) + 2500:
+                                confirmed = True
+                    except Exception:
+                        pass
+
+                if confirmed:
+                    return VerifiedFinding(
+                        id=hashlib.md5(f"sqli:time:{url}".encode()).hexdigest()[:12],
+                        category=VulnCategory.SQLI_BLIND_TIME,
+                        url=url.replace('FUZZ', urllib.parse.quote(payload, safe='')),
+                        parameter=self._extract_param_from_url(url),
+                        method="GET",
+                        payload=payload,
+                        evidence=f"Time-based delay confirmed (2/2): {elapsed:.0f}ms, {c_elapsed:.0f}ms vs baseline {baseline.get('time', 0):.0f}ms",
+                        confidence=Confidence.HIGH,
+                        severity="critical",
+                        response_code=status,
+                        response_length=length,
+                        response_time_ms=elapsed,
+                        cwe="CWE-89",
+                    )
 
         # Check for boolean-based (significant response size change)
         size_diff = abs(length - baseline.get('length', 0))
@@ -695,7 +768,9 @@ class SmartFuzzer:
         groups = defaultdict(list)
 
         for finding in findings:
-            sig = f"{finding.category.value}:{finding.parameter}"
+            parsed = urllib.parse.urlparse(finding.url)
+            url_base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            sig = f"{finding.category.value}:{url_base}:{finding.parameter}"
             groups[sig].append(finding)
 
         # Keep best from each group

@@ -19,6 +19,7 @@ Usage:
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -46,6 +47,29 @@ from beatrix import __version__
 from beatrix.core import BeatrixEngine, Confidence, Severity
 
 console = Console()
+
+
+def _fix_sudo_ownership(*paths: Path) -> None:
+    """When running under sudo, chown output files/dirs back to the real user.
+
+    sudo sets SUDO_UID and SUDO_GID to the invoking user's ids.  Without this,
+    all output files end up owned by root and the user can't overwrite them on
+    the next non-sudo run.
+    """
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+    if not sudo_uid:
+        return
+    uid, gid = int(sudo_uid), int(sudo_gid or sudo_uid)
+    for p in paths:
+        try:
+            p = Path(p)
+            if p.is_dir():
+                for child in p.rglob("*"):
+                    os.chown(child, uid, gid)
+            os.chown(p, uid, gid)
+        except OSError:
+            pass
 
 
 # =============================================================================
@@ -1305,6 +1329,7 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
                 json_path = output_path / "findings.json"
                 reporter.export_json(all_findings, json_path, target=targets_file)
                 console.print(f"[green]📦 JSON export saved: {json_path}[/green]")
+                _fix_sudo_ownership(output_path)
 
         return
 
@@ -1612,9 +1637,36 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
                 json_path = output_path / "findings.json"
                 reporter.export_json(engine.findings, json_path, target=target)
                 console.print(f"[green]📦 JSON export saved: {json_path}[/green]")
+                _fix_sudo_ownership(output_path)
     except KeyboardInterrupt:
         _stop_printer.set()
-        console.print("\n[yellow]Hunt interrupted. Partial results may be available.[/yellow]")
+        console.print("\n[yellow]Hunt interrupted. Saving partial results...[/yellow]")
+
+        # Save whatever findings we have so far
+        if output and engine.findings:
+            try:
+                output_path = Path(output)
+                if output_path.suffix == ".json" or str(output) == "-":
+                    _export_json(engine.findings, output_path if str(output) != "-" else None, target=target)
+                else:
+                    from beatrix.reporters import ReportGenerator
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    reporter = ReportGenerator(output_dir=output_path)
+                    batch_path = reporter.generate_batch_report(
+                        engine.findings, target, program="Beatrix Hunt (partial)"
+                    )
+                    console.print(f"[yellow]📄 Partial report saved: {batch_path}[/yellow]")
+                    json_path = output_path / "findings.json"
+                    reporter.export_json(engine.findings, json_path, target=target)
+                    console.print(f"[yellow]📦 Partial JSON saved: {json_path}[/yellow]")
+                    _fix_sudo_ownership(output_path)
+                _fix_sudo_ownership(Path(output))
+                console.print(f"[yellow]  ↳ {len(engine.findings)} findings saved from interrupted scan[/yellow]")
+            except Exception as save_err:
+                console.print(f"[red]  ⚠  Failed to save partial results: {save_err}[/red]")
+        elif output:
+            console.print("[yellow]  No findings captured before interrupt.[/yellow]")
+
         sys.exit(1)
     except Exception as e:
         _stop_printer.set()
@@ -2195,6 +2247,7 @@ def _export_json(findings, filepath=None, target=None):
     if filepath:
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         Path(filepath).write_text(json_str)
+        _fix_sudo_ownership(Path(filepath))
         console.print(f"[green]📦 JSON saved: {filepath}[/green]")
     else:
         # stdout mode
@@ -2903,6 +2956,7 @@ def batch(ctx, targets_file, module, output, threads):
         json_path = Path(output) / "findings.json"
         reporter.export_json(all_findings, json_path, target=targets_file)
         console.print(f"  JSON export:     {json_path}")
+        _fix_sudo_ownership(Path(output))
 
 
 # =============================================================================

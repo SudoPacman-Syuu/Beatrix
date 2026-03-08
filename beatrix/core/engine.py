@@ -183,6 +183,13 @@ class BeatrixEngine:
             "file_upload": FileUploadScanner(scanner_config),
         }
 
+        # Optional: DOM XSS scanner (requires playwright)
+        try:
+            from beatrix.scanners.dom_xss import DOMXSSScanner
+            self.modules["dom_xss"] = DOMXSSScanner(scanner_config)
+        except (ImportError, Exception):
+            pass  # playwright not installed
+
     def register_module(self, name: str, module: Any) -> None:
         """Register a scanner module"""
         self.modules[name] = module
@@ -208,7 +215,8 @@ class BeatrixEngine:
                         "cors", "redirect", "oauth_redirect",
                         "http_smuggling", "websocket",
                         "injection", "ssti", "ssrf", "idor", "bac", "auth",
-                        "graphql", "deserialization", "business_logic", "nuclei"],
+                        "graphql", "deserialization", "business_logic", "nuclei",
+                        "dom_xss"],
         },
         "full": {
             "name": "Full Assault",
@@ -229,7 +237,8 @@ class BeatrixEngine:
             "phases": [1, 3, 4],  # Phase 1 required for crawling
             "modules": ["crawl", "injection", "ssti", "xxe", "deserialization",
                         "ssrf", "http_smuggling", "mass_assignment",
-                        "prototype_pollution", "redos", "graphql", "nuclei"],
+                        "prototype_pollution", "redos", "graphql", "nuclei",
+                        "dom_xss"],
         },
         "api": {
             "name": "API Security",
@@ -253,7 +262,7 @@ class BeatrixEngine:
                         "injection", "ssti", "xxe", "ssrf", "idor", "bac",
                         "auth", "graphql", "mass_assignment", "deserialization",
                         "business_logic", "redos", "payment", "nuclei",
-                        "file_upload"],
+                        "file_upload", "dom_xss"],
         },
         "recon": {
             "name": "Recon Only",

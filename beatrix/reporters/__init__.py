@@ -7,10 +7,22 @@ Enriches findings with Bugcrowd VRT classification and CVSS 3.1 scores.
 """
 
 import json  # noqa: F401
+import os
 from dataclasses import asdict  # noqa: F401
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional  # noqa: F401
+
+
+def _fix_sudo_file(filepath: Path) -> None:
+    """Chown a file back to the real user when running under sudo."""
+    sudo_uid = os.environ.get("SUDO_UID")
+    if not sudo_uid:
+        return
+    try:
+        os.chown(filepath, int(sudo_uid), int(os.environ.get("SUDO_GID", sudo_uid)))
+    except OSError:
+        pass
 
 from beatrix.core.types import Finding, Severity
 
@@ -72,6 +84,7 @@ class ReportGenerator:
 
         report = self._format_report(finding, program, researcher)
         filepath.write_text(report)
+        _fix_sudo_file(filepath)
 
         return filepath
 
@@ -90,6 +103,7 @@ class ReportGenerator:
 
         report = self._format_batch_report(findings, target, program)
         filepath.write_text(report)
+        _fix_sudo_file(filepath)
 
         return filepath
 
@@ -349,3 +363,4 @@ xhr.send();
         }
 
         filepath.write_text(json.dumps(report, indent=2, default=str))
+        _fix_sudo_file(filepath)

@@ -25,10 +25,28 @@ from .insertion import InsertionPointDetector, ParsedRequest
 
 # Response fingerprint comparison for blind detection
 try:
-    from beatrix.core.response_analyzer import responses_differ, is_blind_indicator
+    from beatrix.core.response_analyzer import (
+        responses_differ,
+        is_blind_indicator,
+        ResponseVariationsAnalyzer,
+    )
     HAS_RESPONSE_ANALYZER = True
 except ImportError:
     HAS_RESPONSE_ANALYZER = False
+
+# Reflection context analysis for context-aware XSS
+try:
+    from beatrix.core.reflection_analyzer import (
+        CANARY as REFLECTION_CANARY,
+        ReflectionContext,
+        find_reflection_contexts,
+        payloads_for_context,
+        evasion_payloads_for_context,
+        detect_char_escaping,
+    )
+    HAS_REFLECTION_ANALYZER = True
+except ImportError:
+    HAS_REFLECTION_ANALYZER = False
 
 # WAF bypass payload generation
 try:
@@ -473,32 +491,47 @@ class InjectionScanner(BaseScanner):
         self._baseline_status = 200
         self._baseline_headers: Dict[str, str] = {}
         self._baseline_time = 0.0
+        # Track which response attributes naturally vary between
+        # identical requests (timestamps, CSRF tokens, CDN cache
+        # node headers, PerimeterX tokens, etc.).  These must be
+        # excluded from behavioral injection comparisons.
+        self._variant_attrs: set = set()
 
         if HAS_RESPONSE_ANALYZER:
             try:
-                resp = await self.request(
-                    request.method,
-                    request.url,
-                    headers=dict(request.headers),
-                    content=request.body if request.body else None,
-                )
+                # Take 3 identical baseline samples to measure content
+                # stability.  Attributes that differ across these neutral
+                # requests are naturally noisy and must be ignored when
+                # comparing against injected responses.
+                variance_analyzer = ResponseVariationsAnalyzer()
+                baseline_times: list = []
+                for _i in range(3):
+                    bstart = time.time()
+                    resp = await self.request(
+                        request.method,
+                        request.url,
+                        headers=dict(request.headers),
+                        content=request.body if request.body else None,
+                    )
+                    baseline_times.append(time.time() - bstart)
+                    variance_analyzer.update(
+                        resp.status_code,
+                        dict(resp.headers) if hasattr(resp, 'headers') else {},
+                        resp.text,
+                    )
+
+                # Use last sample as the representative baseline
                 self._baseline_body = resp.text
                 self._baseline_status = resp.status_code
                 self._baseline_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
-                # Also capture timing baseline for time-based detection
-                bstart = time.time()
-                await self.request(
-                    request.method,
-                    request.url,
-                    headers=dict(request.headers),
-                    content=request.body if request.body else None,
-                )
-                self._baseline_time = time.time() - bstart
+                self._baseline_time = sum(baseline_times) / len(baseline_times)
+                self._variant_attrs = variance_analyzer.variant_attributes()
             except Exception:
                 self._baseline_body = ''
                 self._baseline_status = 200
                 self._baseline_headers = {}
                 self._baseline_time = 0.5  # conservative default
+                self._variant_attrs = set()
 
         # D-05: Track categories where we already found a vuln.
         # Finding SQLi on param `id` means we don't need to test SQLi on
@@ -526,6 +559,18 @@ class InjectionScanner(BaseScanner):
             # D-05: Skip categories already confirmed on another param
             if category in getattr(self, '_found_categories', set()):
                 continue
+
+            # ── Context-aware XSS: use reflection analyzer ───────────
+            if category == "xss" and HAS_REFLECTION_ANALYZER:
+                found_xss = False
+                async for finding in self._test_xss_context_aware(request, insertion_point, baseline_time):
+                    yield finding
+                    found_xss = True
+                    if hasattr(self, '_found_categories'):
+                        self._found_categories.add(category)
+                    break  # one XSS per insertion point is enough
+                if found_xss:
+                    continue  # skip generic XSS payloads
 
             payloads = self.payloads.get(category, [])
             found_in_category = False
@@ -616,6 +661,132 @@ class InjectionScanner(BaseScanner):
             return ["path", "sqli"]
 
         return ["sqli", "xss"]
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # Context-Aware XSS Testing
+    # ═════════════════════════════════════════════════════════════════════════
+
+    async def _test_xss_context_aware(
+        self,
+        request: ParsedRequest,
+        ip: InsertionPoint,
+        baseline_time: float,
+    ) -> AsyncIterator[Finding]:
+        """
+        Context-aware XSS testing flow:
+
+        1. Send canary string as parameter value
+        2. Analyze WHERE the canary is reflected in the response
+        3. Send a char-escaping probe to detect which chars get encoded
+        4. Generate context-appropriate breakout payloads
+        5. If standard payloads fail, try evasion payloads
+        """
+        # Step 1: Send canary to discover reflection points
+        try:
+            canary_url, canary_headers, canary_body = \
+                self.insertion_detector.build_request_with_payload(
+                    request, ip, REFLECTION_CANARY
+                )
+            canary_resp = await self.request(
+                request.method,
+                canary_url,
+                headers=canary_headers,
+                content=canary_body if canary_body else None,
+            )
+        except Exception as e:
+            self.log(f"Context-aware XSS canary request failed for {ip.name}: {e}")
+            return
+
+        # Step 2: Find reflection contexts
+        reflections = find_reflection_contexts(canary_resp.text, REFLECTION_CANARY)
+        if not reflections:
+            self.log(f"No reflection found for param {ip.name} — skipping context-aware XSS")
+            return
+
+        self.log(
+            f"Param {ip.name}: reflected in {len(reflections)} context(s): "
+            + ", ".join(r.context.name for r in reflections)
+        )
+
+        # Step 3: Send char-escaping probe to detect encoding
+        _PROBE_CHARS = REFLECTION_CANARY + '<>"\'`()/;'
+        escaped_chars: List[str] = []
+        try:
+            probe_url, probe_headers, probe_body = \
+                self.insertion_detector.build_request_with_payload(
+                    request, ip, _PROBE_CHARS
+                )
+            probe_resp = await self.request(
+                request.method,
+                probe_url,
+                headers=probe_headers,
+                content=probe_body if probe_body else None,
+            )
+            escaped_chars = detect_char_escaping(
+                canary_resp.text, REFLECTION_CANARY,
+                probe_resp.text, _PROBE_CHARS,
+            )
+            if escaped_chars:
+                self.log(f"Param {ip.name}: chars escaped by server: {escaped_chars}")
+        except Exception:
+            pass  # Proceed without escaping knowledge
+
+        # Step 4: Generate context-specific payloads and test them
+        # Deduplicate contexts — no need to test the same context type twice
+        seen_contexts = set()
+        for reflection in reflections:
+            if reflection.context in seen_contexts:
+                continue
+            seen_contexts.add(reflection.context)
+
+            ctx_payloads = payloads_for_context(reflection.context, escaped_chars)
+            if not ctx_payloads:
+                continue
+
+            # Test context-specific payloads
+            found = False
+            for ctx_payload in ctx_payloads:
+                payload_obj = Payload(
+                    value=ctx_payload.value,
+                    name=f"ctx_{ctx_payload.name}",
+                    category="xss",
+                    detection="reflect",
+                    patterns=ctx_payload.confirm_patterns,
+                    severity=Severity.MEDIUM,
+                )
+                finding = await self._test_payload(request, ip, payload_obj, baseline_time)
+                if finding:
+                    # Enrich the finding with context info
+                    finding.description = (
+                        f"{finding.description}\n\n"
+                        f"Reflection context: {reflection.context.name}\n"
+                        f"Context evidence: ...{reflection.surrounding}..."
+                    )
+                    yield finding
+                    found = True
+                    break
+
+            # Step 5: If standard context payloads failed, try evasion payloads
+            if not found:
+                evasion = evasion_payloads_for_context(reflection.context)
+                for ev_payload in evasion[:6]:  # Cap evasion attempts
+                    payload_obj = Payload(
+                        value=ev_payload.value,
+                        name=f"evasion_{ev_payload.name}",
+                        category="xss",
+                        detection="reflect",
+                        patterns=ev_payload.confirm_patterns,
+                        severity=Severity.MEDIUM,
+                    )
+                    finding = await self._test_payload(request, ip, payload_obj, baseline_time)
+                    if finding:
+                        finding.description = (
+                            f"{finding.description}\n\n"
+                            f"Reflection context: {reflection.context.name} (evasion payload)\n"
+                            f"Context evidence: ...{reflection.surrounding}..."
+                        )
+                        yield finding
+                        break
 
     async def _test_payload(
         self,
@@ -752,15 +923,17 @@ class InjectionScanner(BaseScanner):
             baseline_body = getattr(self, '_baseline_body', '')
             baseline_status = getattr(self, '_baseline_status', 200)
             baseline_headers = getattr(self, '_baseline_headers', {})
+            variant_attrs = getattr(self, '_variant_attrs', set())
             if baseline_body:
                 diffs = responses_differ(
                     baseline_status, baseline_headers, baseline_body,
                     response_status, response_headers or {}, response_text,
+                    ignore_attrs=variant_attrs,
                 )
                 if diffs and is_blind_indicator(diffs, min_attrs=2):
                     diff_attrs = ', '.join(a.name for a in list(diffs.keys())[:5])
                     return True, (
-                        f"Behavioral difference detected across {len(diffs)} response attributes "
+                        f"Behavioral difference detected across {len(diffs)} stable response attributes "
                         f"({diff_attrs}). Indicates blind injection via response fingerprint divergence."
                     )
 
@@ -816,7 +989,11 @@ class InjectionScanner(BaseScanner):
         return self.create_finding(
             title=f"{category_names[payload.category]} in {ip.type.value}: {ip.name}",
             severity=payload.severity,
-            confidence=Confidence.FIRM if payload.detection == "time" else Confidence.CERTAIN,
+            confidence=(
+                Confidence.FIRM if payload.detection == "time"
+                else Confidence.TENTATIVE if payload.detection == "behavior"
+                else Confidence.CERTAIN
+            ),
             url=url,
             description=f"{category_desc[payload.category]}\n\nVulnerable parameter: {ip.name}\nPayload: {payload.value}\nDetection method: {payload.detection}",
             evidence=evidence,

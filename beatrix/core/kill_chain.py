@@ -1785,11 +1785,74 @@ class KillChainExecutor:
         urls_with_params = context.get("urls_with_params", [])
 
         async def _cors():
+            # Run CORS scanner on the base URL AND on crawled URLs that
+            # may have different CORS policies (API endpoints, specific paths).
+            cors_targets = [url]
+            all_discovered = context.get("discovered_urls", []) + list(urls_with_params)
+            # Include URLs with CORS-relevant path segments and unique path prefixes
+            seen_prefixes = {"/"}
+            for u in all_discovered:
+                try:
+                    from urllib.parse import urlparse as _up
+                    p = _up(u).path.lower()
+                    # Extract the first two path segments as a prefix for dedup
+                    segments = [s for s in p.split("/") if s]
+                    prefix = "/" + "/".join(segments[:2]) if segments else "/"
+                    if prefix not in seen_prefixes:
+                        seen_prefixes.add(prefix)
+                        cors_targets.append(u)
+                except Exception:
+                    pass
+            # Cap to prevent excessive requests — sample unique path prefixes
+            cors_targets = list(dict.fromkeys(cors_targets))[:20]
+            if len(cors_targets) > 1:
+                return await self._run_scanner_on_urls("cors", cors_targets, context)
             return await self._run_scanner("cors", url, context)
 
         async def _redirect():
-            if urls_with_params:
-                return await self._run_scanner_on_urls("redirect", urls_with_params[:30], context)
+            # Build a comprehensive redirect target list:
+            # 1. URLs with redirect-relevant params (highest priority)
+            # 2. Discovered URLs whose path suggests redirect endpoints
+            # 3. Remaining URLs with any params
+            redirect_param_names = {
+                "redirect", "redirect_uri", "redirect_url", "redirecturl",
+                "return", "return_to", "returnto", "return_url", "returnurl",
+                "next", "next_url", "nexturl", "url", "uri", "target",
+                "dest", "destination", "redir", "goto", "go", "link",
+                "continue", "forward", "callback", "fallback", "out", "ref",
+            }
+            redirect_path_keywords = (
+                "/redirect", "/redir", "/return", "/callback",
+                "/login", "/logout", "/sso", "/oauth", "/auth",
+            )
+            param_urls_redir = []
+            param_urls_other = []
+            for u in urls_with_params:
+                try:
+                    from urllib.parse import urlparse as _up, parse_qs as _pq
+                    _params = _pq(_up(u).query)
+                    if any(p.lower() in redirect_param_names for p in _params):
+                        param_urls_redir.append(u)
+                    else:
+                        param_urls_other.append(u)
+                except Exception:
+                    param_urls_other.append(u)
+
+            # Also pull in discovered URLs with redirect-related paths
+            # even if they have no params — the redirect scanner probes
+            # common param names on any URL it receives.
+            discovered = context.get("discovered_urls", [])
+            path_redir_urls = [
+                u for u in discovered
+                if any(kw in u.lower() for kw in redirect_path_keywords)
+                and u not in urls_with_params
+            ]
+            # Prioritized order: redirect-params first, redirect-paths, others
+            all_redirect_targets = list(dict.fromkeys(
+                param_urls_redir + path_redir_urls + param_urls_other
+            ))
+            if all_redirect_targets:
+                return await self._run_scanner_on_urls("redirect", all_redirect_targets, context)
             return await self._run_scanner("redirect", url, context)
 
         async def _oauth():
@@ -1892,38 +1955,24 @@ class KillChainExecutor:
 
         # ── Injection variants — need URLs with parameters or API endpoints ───
         if injection_targets:
-            # A-04: round-robin host grouping so the cap doesn't starve
-            # minority hosts when one host dominates the URL list.
-            _MAX_INJECTION = 50
-            if len(injection_targets) <= _MAX_INJECTION:
-                capped = injection_targets
-            else:
-                from urllib.parse import urlparse
-                from collections import defaultdict
-                host_buckets: dict[str, list[str]] = defaultdict(list)
-                for u in injection_targets:
-                    host_buckets[urlparse(u).netloc].append(u)
-                # Round-robin across hosts
-                capped: list[str] = []
-                bucket_iters = {h: iter(urls) for h, urls in host_buckets.items()}
-                while len(capped) < _MAX_INJECTION and bucket_iters:
-                    exhausted = []
-                    for host, it in bucket_iters.items():
-                        if len(capped) >= _MAX_INJECTION:
-                            break
-                        nxt = next(it, None)
-                        if nxt is None:
-                            exhausted.append(host)
-                        else:
-                            capped.append(nxt)
-                    for h in exhausted:
-                        del bucket_iters[h]
-            self._emit("info", message=f"Testing {len(capped)} URLs for injection ({len(urls_with_params)} with params + {len(api_endpoints)} API endpoints)")
-            results.append(await self._run_scanner_on_urls("injection", capped, context))
-            results.append(await self._run_scanner_on_urls("ssti", capped, context))
-            results.append(await self._run_scanner_on_urls("ssrf", capped, context))
-            results.append(await self._run_scanner_on_urls("mass_assignment", capped[:30], context))
-            results.append(await self._run_scanner_on_urls("redos", capped[:10], context))
+            # Deduplicate by (host, path) so the same endpoint under http vs
+            # https or :80 vs implicit-80 isn't tested twice, but every
+            # *distinct* path with params IS tested — no arbitrary cap.
+            from urllib.parse import urlparse as _up_inj
+            _seen_paths: set[str] = set()
+            deduped: list[str] = []
+            for u in injection_targets:
+                _p = _up_inj(u)
+                _key = (_p.hostname or '', _p.path)
+                if _key not in _seen_paths:
+                    _seen_paths.add(_key)
+                    deduped.append(u)
+            self._emit("info", message=f"Testing {len(deduped)} unique injection targets ({len(urls_with_params)} with params + {len(api_endpoints)} API endpoints)")
+            results.append(await self._run_scanner_on_urls("injection", deduped, context))
+            results.append(await self._run_scanner_on_urls("ssti", deduped, context))
+            results.append(await self._run_scanner_on_urls("ssrf", deduped, context))
+            results.append(await self._run_scanner_on_urls("mass_assignment", deduped[:30], context))
+            results.append(await self._run_scanner_on_urls("redos", deduped[:20], context))
         else:
             results.append(await self._run_scanner("injection", url, context))
             results.append(await self._run_scanner("ssti", url, context))
@@ -1987,6 +2036,41 @@ class KillChainExecutor:
         # ── Payment — checkout flow manipulation ──────────────────────────────
         results.append(await self._run_scanner("payment", url, context))
 
+        # ── DOM XSS — browser-based XSS detection (Playwright) ───────────────
+        # DOM XSS uses a real browser so it can detect client-side sinks
+        # (innerHTML, eval, document.write) that server-side scanners miss.
+        # Feed it ALL discovered URLs, not just those with query params —
+        # DOM sources include hash fragments, postMessage, cookies, etc.
+        dom_xss = self.engine.modules.get("dom_xss")
+        if dom_xss:
+            from urllib.parse import urlparse as _up_dom
+            discovered = context.get("discovered_urls", [])
+            # Prioritize: URLs with params first, then /dom/ or /urldom/ paths,
+            # then any other discovered URL
+            dom_priority = []
+            dom_rest = []
+            for u in discovered:
+                p = _up_dom(u).path.lower()
+                if '/dom/' in p or '/urldom/' in p or '?' in u:
+                    dom_priority.append(u)
+                else:
+                    dom_rest.append(u)
+            # Include urls_with_params that may not be in discovered
+            dom_targets = list(dict.fromkeys(
+                urls_with_params + dom_priority + dom_rest
+            ))
+            # Deduplicate by (host, path) — browser tests are expensive
+            _seen_dom: set[str] = set()
+            dom_deduped: list[str] = []
+            for u in dom_targets:
+                _p = _up_dom(u)
+                _key = (_p.hostname or '', _p.path)
+                if _key not in _seen_dom:
+                    _seen_dom.add(_key)
+                    dom_deduped.append(u)
+            self._emit("info", message=f"DOM XSS: testing {len(dom_deduped)} URLs with Playwright")
+            results.append(await self._run_scanner_on_urls("dom_xss", dom_deduped, context))
+        
         # ── Nuclei Exploit — full CVE/exploit scan with workflows ─────────
         # Multi-mode nuclei: exploit pass + headless DOM checks + authenticated
         # Replaces the old single scan() call with intelligent split-phase execution.

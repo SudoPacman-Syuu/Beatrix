@@ -57,6 +57,12 @@ from .backslash_scanner import BackslashPoweredScanner
 from .param_miner import ParamMiner
 from .sequencer import SequencerScanner
 
+# === DOM XSS (Playwright-based, optional) ===
+try:
+    from .dom_xss import DOMXSSScanner
+except ImportError:
+    DOMXSSScanner = None  # playwright not installed — kill_chain.py handles gracefully
+
 # === Extended modules (not BaseScanner subclasses — imported on demand) ===
 # from .credential_validator import CredentialValidator  # Leaked cred validation
 # from .mobile_interceptor import MobileInterceptor     # Android traffic capture
@@ -123,4 +129,6 @@ __all__ = [
     "BackslashPoweredScanner",
     "ParamMiner",
     "SequencerScanner",
+    # DOM XSS (browser-based)
+    "DOMXSSScanner",
 ]

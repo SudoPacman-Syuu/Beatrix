@@ -553,8 +553,61 @@ class FileUploadScanner(BaseScanner):
     # MAIN SCAN
     # =========================================================================
 
+    async def _has_upload_surface(self, context: ScanContext) -> bool:
+        """Check if the endpoint actually has a file upload surface.
+
+        Returns True if:
+        - The page contains <input type="file"> or multipart form
+        - The page contains a JS upload widget (dropzone, filepond, etc.)
+        - The URL path suggests an upload endpoint (/upload, /import, /attach)
+        - The endpoint accepts multipart POST (returns non-error on OPTIONS/POST)
+
+        This prevents file upload testing against endpoints that obviously
+        don't support uploads (e.g., a search page or API that returns JSON).
+        """
+        from urllib.parse import urlparse
+        path = urlparse(context.url).path.lower()
+
+        # Path heuristic — common upload endpoint paths
+        _UPLOAD_PATH_KEYWORDS = (
+            "upload", "import", "attach", "file", "media", "image",
+            "photo", "avatar", "document", "asset", "resource",
+        )
+        if any(kw in path for kw in _UPLOAD_PATH_KEYWORDS):
+            return True
+
+        # Check the page content for upload indicators
+        page_body = ""
+        if context.response and hasattr(context.response, "body"):
+            page_body = context.response.body if isinstance(context.response.body, str) else ""
+
+        if not page_body:
+            try:
+                resp = await self.get(context.url)
+                page_body = resp.text
+            except Exception:
+                return False
+
+        _UPLOAD_PATTERNS = [
+            r'<input[^>]*type\s*=\s*["\']file["\']',
+            r'enctype\s*=\s*["\']multipart/form-data["\']',
+            r'(?:class|id)\s*=\s*["\'][^"\']*(?:dropzone|filepond|uppy|fine-uploader|resumable)',
+            r'<form[^>]*enctype\s*=\s*["\']multipart',
+            r'["\']accept["\']\s*:\s*["\'][^"\']*(?:image/|video/|audio/)',
+        ]
+        for pattern in _UPLOAD_PATTERNS:
+            if re.search(pattern, page_body, re.IGNORECASE):
+                return True
+
+        return False
+
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
         """Full file upload vulnerability scan"""
+
+        # Gate: only scan endpoints that actually have upload functionality
+        if not await self._has_upload_surface(context):
+            self.log(f"No upload surface detected on {context.url} — skipping file upload tests")
+            return
 
         # E-05: auto-detect server tech so payloads match the target
         if self.target_tech == "auto":

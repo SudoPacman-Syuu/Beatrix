@@ -660,8 +660,23 @@ class SqlmapRunner(ExternalTool):
             if not output:
                 return result
 
-            # Parse sqlmap output
-            if "is vulnerable" in output or "injectable" in output.lower():
+            # Parse sqlmap output — check for genuine confirmation,
+            # not negative messages like "do not appear to be injectable"
+            out_lower = output.lower()
+            has_positive = (
+                "is vulnerable" in output
+                or re.search(r"parameter ['\"]?[^'\"]+['\"]? is injectable", out_lower)
+                or "injection point" in out_lower
+                or "confirmed" in out_lower and "type:" in out_lower
+            )
+            has_negative = (
+                "do not appear to be injectable" in out_lower
+                or "might not be injectable" in out_lower
+                or "not injectable" in out_lower
+            )
+            # Only mark vulnerable when sqlmap positively confirmed it
+            # and didn't ultimately conclude non-injectable
+            if has_positive and not has_negative:
                 result["vulnerable"] = True
 
             # Extract DBMS

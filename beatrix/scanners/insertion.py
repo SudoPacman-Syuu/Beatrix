@@ -213,8 +213,11 @@ class InsertionPointDetector:
         points = []
 
         for name, value in request.url_params.items():
+            # Strip leading '*' — sqlmap uses it as a custom injection
+            # point marker, not as part of the real parameter name.
+            clean_name = name.lstrip('*') or name
             points.append(InsertionPoint(
-                name=name,
+                name=clean_name,
                 value=value,
                 type=InsertionPointType.URL_PARAM,
                 original_request=None,  # Will be set by caller

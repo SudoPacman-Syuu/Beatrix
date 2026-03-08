@@ -413,5 +413,16 @@ def is_blind_indicator(
         AttributeType.ETAG_HEADER,
         AttributeType.LAST_MODIFIED_HEADER,
     }
+    # BODY_CONTENT and LIMITED_BODY_CONTENT are correlated — the limited
+    # variant is just the first 512 bytes of the full body.  Any change
+    # in that prefix flips both hashes, so they must count as ONE signal
+    # rather than two independent attributes.
+    CORRELATED = {
+        AttributeType.BODY_CONTENT,
+        AttributeType.LIMITED_BODY_CONTENT,
+    }
     meaningful = {k for k in diffs if k not in NOISY}
+    # If both correlated attrs are present, count them as one
+    if CORRELATED.issubset(meaningful):
+        meaningful -= {AttributeType.LIMITED_BODY_CONTENT}
     return len(meaningful) >= min_attrs
