@@ -404,6 +404,87 @@ class BaseScanner(ABC):
         return await self.request("HEAD", url, **kwargs)
 
     # =========================================================================
+    # WAF BYPASS — HTTP-LEVEL TECHNIQUES
+    # =========================================================================
+
+    def set_waf_profile(self, waf_name: str) -> None:
+        """Set WAF profile for HTTP-level bypass techniques.
+
+        Override in subclasses for scanner-specific behavior.
+        """
+        self._waf_profile = getattr(self, '_waf_profile', None)
+        self._waf_profile = waf_name
+
+    async def request_with_waf_bypass(
+        self,
+        method: str,
+        url: str,
+        **kwargs,
+    ) -> httpx.Response:
+        """Make a request with automatic WAF bypass retry.
+
+        First tries the normal request. If the response is 403/406, retries
+        with HTTP-level bypass techniques (method override, content-type
+        swap, header padding).
+        """
+        response = await self.request(method, url, **kwargs)
+
+        # Only retry if we got a WAF block AND have a WAF profile
+        waf_profile = getattr(self, '_waf_profile', None)
+        if response.status_code not in (403, 406) or not waf_profile:
+            return response
+
+        # Try method override: send POST with X-HTTP-Method-Override
+        if method == "GET":
+            override_headers = dict(kwargs.get("headers", {}))
+            override_headers["X-HTTP-Method-Override"] = "GET"
+            override_kwargs = dict(kwargs)
+            override_kwargs["headers"] = override_headers
+            try:
+                resp2 = await self.request("POST", url, **override_kwargs)
+                if resp2.status_code not in (403, 406):
+                    return resp2
+            except Exception:
+                pass
+
+        # Try content-type swap for POST requests
+        if method == "POST" and "data" in kwargs:
+            import json as _json
+            swap_headers = dict(kwargs.get("headers", {}))
+            swap_headers["Content-Type"] = "application/json"
+            swap_kwargs = dict(kwargs)
+            swap_kwargs.pop("data", None)
+            try:
+                data = kwargs["data"]
+                if isinstance(data, dict):
+                    swap_kwargs["content"] = _json.dumps(data).encode()
+                    swap_kwargs["headers"] = swap_headers
+                    resp2 = await self.request("POST", url, **swap_kwargs)
+                    if resp2.status_code not in (403, 406):
+                        return resp2
+            except Exception:
+                pass
+
+        # Try with WAF-bypass headers (source IP spoofing)
+        bypass_headers = dict(kwargs.get("headers", {}))
+        bypass_headers.update({
+            "X-Originating-IP": "127.0.0.1",
+            "X-Forwarded-For": "127.0.0.1",
+            "X-Remote-IP": "127.0.0.1",
+            "X-Remote-Addr": "127.0.0.1",
+        })
+        bypass_kwargs = dict(kwargs)
+        bypass_kwargs["headers"] = bypass_headers
+        try:
+            resp2 = await self.request(method, url, **bypass_kwargs)
+            if resp2.status_code not in (403, 406):
+                return resp2
+        except Exception:
+            pass
+
+        return response  # All bypasses failed, return original
+
+    # =========================================================================
     # CDN / WAF CHALLENGE DETECTION
     # =========================================================================
 

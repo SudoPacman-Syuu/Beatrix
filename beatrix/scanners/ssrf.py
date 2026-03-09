@@ -96,7 +96,88 @@ class SSRFScanner(BaseScanner):
         self.config = config or {}
         self.timeout = self.config.get('timeout', 10)
         self.callback_server = self.config.get('callback_server', None)
+        self._waf_profile: Optional[str] = None
+        self._seclists = None
+        self._seclists_enriched = False
         self.payloads = self._build_payloads()
+
+    def set_waf_profile(self, waf_name: str) -> None:
+        """Set WAF profile for SSRF payload encoding."""
+        self._waf_profile = waf_name
+        self.log(f"WAF profile set: {waf_name}")
+        # Regenerate payloads with WAF bypass variants
+        self._enrich_with_waf_bypasses()
+
+    def _init_seclists(self):
+        """Initialize SecLists manager for dynamic SSRF wordlists."""
+        try:
+            from beatrix.core.seclists_manager import get_manager
+            self._seclists = get_manager(verbose=False)
+        except Exception:
+            self._seclists = None
+
+    def _enrich_with_seclists(self):
+        """Add SSRF payloads from SecLists/PayloadsAllTheThings."""
+        if not self._seclists:
+            self._init_seclists()
+        if not self._seclists:
+            return
+        try:
+            raw_payloads = self._seclists.get_by_category("ssrf")
+            seen = {p.value for p in self.payloads}
+            count = 0
+            for raw in raw_payloads[:80]:  # Cap to avoid scan timeout
+                raw = raw.strip()
+                if not raw or raw.startswith('#') or raw in seen:
+                    continue
+                seen.add(raw)
+                # Infer target type from payload content
+                if '169.254.169.254' in raw or 'metadata' in raw.lower():
+                    target_type, severity = "cloud", Severity.CRITICAL
+                elif any(x in raw for x in ['127.0.0.1', 'localhost', '0.0.0.0', '[::1]']):
+                    target_type, severity = "localhost", Severity.HIGH
+                elif raw.startswith(('file:', 'gopher:', 'dict:')):
+                    target_type, severity = "protocol", Severity.CRITICAL
+                else:
+                    target_type, severity = "localhost", Severity.HIGH
+                self.payloads.append(SSRFPayload(
+                    name=f"seclists_{hash(raw) & 0xFFFF:04x}",
+                    value=raw,
+                    target_type=target_type,
+                    severity=severity,
+                    description=f"SecLists SSRF payload",
+                ))
+                count += 1
+            if count:
+                self.log(f"SecLists: added {count} SSRF payloads")
+        except Exception as e:
+            self.log(f"SecLists SSRF fetch failed: {e}")
+
+    def _enrich_with_waf_bypasses(self):
+        """Add WAF-bypassed IP variants using AdvancedWAFBypass."""
+        if not self._waf_profile:
+            return
+        try:
+            from beatrix.utils.advanced_waf_bypass import AdvancedWAFBypass
+            engine = AdvancedWAFBypass()
+            ssrf_bypasses = engine.generate_ssrf_bypasses()
+            seen = {p.value for p in self.payloads}
+            count = 0
+            for bp in ssrf_bypasses:
+                if bp not in seen:
+                    seen.add(bp)
+                    self.payloads.append(SSRFPayload(
+                        name=f"waf_bypass_{count}",
+                        value=bp,
+                        target_type="localhost",
+                        severity=Severity.HIGH,
+                        description=f"WAF bypass variant",
+                    ))
+                    count += 1
+            if count:
+                self.log(f"WAF bypass: added {count} SSRF bypass payloads")
+        except Exception:
+            pass
 
     def _build_payloads(self) -> List[SSRFPayload]:
         """Build SSRF test payloads"""
@@ -669,6 +750,13 @@ class SSRFScanner(BaseScanner):
         """Main scan method"""
         self.log(f"Starting SSRF scan on {ctx.url}")
         findings = []
+
+        # Lazy-enrich payloads from SecLists on first scan (avoids network
+        # calls during __init__ which can hang in test environments).
+        if not self._seclists_enriched:
+            self._seclists_enriched = True
+            self._init_seclists()
+            self._enrich_with_seclists()
 
         # Inject OOB callback payloads if the PoC server is running
         poc_server = ctx.extra.get("poc_server") if ctx.extra else None

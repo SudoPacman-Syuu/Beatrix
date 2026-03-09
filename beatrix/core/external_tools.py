@@ -36,9 +36,13 @@ class ExternalTool:
     BINARY_NAME: str = ""
     COMMON_PATHS: List[str] = []
 
+    # Default kill chain phase for output organization (override in subclasses)
+    DEFAULT_PHASE: int = 1
+
     def __init__(self, timeout: int = 120):
         self.path = self._find_binary()
         self.timeout = timeout
+        self.output_manager = None  # Set by ExternalToolkit when available
 
     def _find_binary(self) -> Optional[str]:
         """Find the tool binary on PATH or common locations."""
@@ -59,10 +63,19 @@ class ExternalTool:
     def available(self) -> bool:
         return self.path is not None
 
-    async def _run(self, cmd: List[str], stdin: Optional[str] = None) -> Optional[str]:
-        """Run a command and return stdout, or None on failure/timeout."""
+    async def _run(self, cmd: List[str], stdin: Optional[str] = None,
+                   output_manager=None, tool_name: str = "",
+                   phase: int = 0) -> Optional[str]:
+        """Run a command and return stdout, or None on failure/timeout.
+
+        Raw output is automatically saved when an output_manager is available
+        (either passed directly or set on ``self``).
+        """
         if not self.available:
             return None
+        # Resolve output manager and phase
+        _om = output_manager or self.output_manager
+        _phase = phase if phase else self.DEFAULT_PHASE
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -94,7 +107,17 @@ class ExternalTool:
                         "%s exited %s: %s", cmd[0], process.returncode, stderr_text[:500]
                     )
 
-            return stdout.decode("utf-8", errors="replace").strip()
+            result = stdout.decode("utf-8", errors="replace").strip()
+
+            # Save raw output if an output manager is available
+            if _om and result:
+                name = tool_name or self.BINARY_NAME
+                try:
+                    _om.write_tool_output(name, result, phase=_phase)
+                except Exception:
+                    pass  # Output saving is best-effort
+
+            return result
         except Exception:
             return None
 
@@ -585,6 +608,7 @@ class SqlmapRunner(ExternalTool):
     """
 
     BINARY_NAME = "sqlmap"
+    DEFAULT_PHASE = 4
 
     async def exploit(
         self,
@@ -731,6 +755,7 @@ class DalfoxRunner(ExternalTool):
     """
 
     BINARY_NAME = "dalfox"
+    DEFAULT_PHASE = 4
 
     async def scan(self, url: str, param: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -807,6 +832,7 @@ class CommixRunner(ExternalTool):
     """
 
     BINARY_NAME = "commix"
+    DEFAULT_PHASE = 4
 
     async def exploit(
         self,
@@ -885,6 +911,7 @@ class JwtToolRunner(ExternalTool):
     """
 
     BINARY_NAME = "jwt_tool"
+    DEFAULT_PHASE = 4
     COMMON_PATHS = [
         str(Path.home() / ".local/bin/jwt_tool"),
         str(Path.home() / ".local/share/jwt_tool/jwt_tool.py"),
@@ -992,6 +1019,7 @@ class MetasploitRunner(ExternalTool):
     """
 
     BINARY_NAME = "msfconsole"
+    DEFAULT_PHASE = 5
 
     def generate_resource_file(
         self,
@@ -1192,3 +1220,10 @@ class ExternalToolkit:
     def available_tools(self) -> List[str]:
         """Return names of available tools."""
         return [name for name, avail in self.status().items() if avail]
+
+    def set_output_manager(self, output_manager) -> None:
+        """Propagate a ScanOutputManager to all tool runners."""
+        for attr in vars(self):
+            tool = getattr(self, attr)
+            if isinstance(tool, ExternalTool):
+                tool.output_manager = output_manager

@@ -69,6 +69,10 @@ class CrawlResult:
     # Interesting paths (from link extraction)
     paths: Set[str] = field(default_factory=set)
 
+    # Error responses — 4xx/5xx bodies captured for tech fingerprinting
+    # and error_disclosure scanner targeting. List of {url, status, headers, body}.
+    error_responses: List[Dict] = field(default_factory=list)
+
     # Soft-404 signature for dedup
     soft_404_hash: str = ""
 
@@ -99,6 +103,7 @@ class TargetCrawler:
         timeout: int = 15,
         rate_limit: int = 10,
         follow_redirects: bool = True,
+        scope: Optional[List[str]] = None,
     ):
         self.max_depth = max_depth
         self.max_pages = max_pages
@@ -108,6 +113,10 @@ class TargetCrawler:
         self.semaphore = asyncio.Semaphore(rate_limit)
         self._visited: Set[str] = set()
         self._log_callback = None
+        # Scope patterns — when set, the crawler follows links whose
+        # hostname matches any pattern (supports leading wildcards like
+        # *.example.com). When empty, only same-origin links are followed.
+        self._scope: List[str] = scope or []
 
         # Passive scan pipeline — when set, every fetched response is
         # passed through registered PassiveScanChecks in real time.
@@ -331,20 +340,38 @@ class TargetCrawler:
 
         return result
 
+    def _hostname_in_scope(self, hostname: str) -> bool:
+        """Check if a hostname matches any scope pattern."""
+        if not self._scope:
+            return False
+        for pattern in self._scope:
+            if pattern.startswith("*."):
+                # Wildcard: *.example.com matches sub.example.com
+                suffix = pattern[1:]  # .example.com
+                if hostname.endswith(suffix) or hostname == pattern[2:]:
+                    return True
+            elif hostname == pattern:
+                return True
+        return False
+
     async def _crawl_links(self, client: httpx.AsyncClient, result: CrawlResult, depth: int):
-        """Crawl same-origin links up to max_depth"""
+        """Crawl same-origin and in-scope links up to max_depth"""
         if depth > self.max_depth:
             return
 
         base_parsed = urlparse(result.base_url)
 
-        # Get URLs to crawl (same origin, not yet visited)
+        # Get URLs to crawl (same origin OR in-scope, not yet visited)
         to_crawl = []
         for url in list(result.urls):
             if url in self._visited:
                 continue
             parsed = urlparse(url)
-            if parsed.netloc != base_parsed.netloc:
+            # Allow same-origin links unconditionally
+            is_same_origin = parsed.netloc == base_parsed.netloc
+            # Allow in-scope subdomains if scope patterns are set
+            is_in_scope = self._hostname_in_scope(parsed.hostname or "")
+            if not is_same_origin and not is_in_scope:
                 continue
             # Skip non-HTML resources
             if any(url.endswith(ext) for ext in ['.js', '.css', '.png', '.jpg', '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.map']):
@@ -369,6 +396,15 @@ class TargetCrawler:
             try:
                 async with self.semaphore:
                     resp = await client.get(url)
+
+                # Capture 4xx/5xx error responses for tech fingerprinting
+                if resp.status_code >= 400 and len(result.error_responses) < 50:
+                    result.error_responses.append({
+                        "url": str(resp.url),
+                        "status": resp.status_code,
+                        "headers": dict(resp.headers),
+                        "body": (resp.text or "")[:5000],
+                    })
 
                 if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", ""):
                     # Check for soft-404
@@ -405,8 +441,10 @@ class TargetCrawler:
             full_url = urljoin(page_url, href)
             parsed = urlparse(full_url)
 
-            # Track same-origin URLs
-            if parsed.netloc == base_parsed.netloc:
+            # Track same-origin URLs unconditionally + in-scope subdomain URLs
+            is_same_origin = parsed.netloc == base_parsed.netloc
+            is_in_scope = self._hostname_in_scope(parsed.hostname or "")
+            if is_same_origin or is_in_scope:
                 result.urls.add(full_url)
                 result.paths.add(parsed.path)
 
@@ -499,17 +537,15 @@ class TargetCrawler:
         headers = response.headers
         body = response.text[:10000] if response.text else ""
 
-        # Header-based
+        # Header-based — preserve full version strings
         if "x-powered-by" in headers:
-            result.technologies.append(headers["x-powered-by"])
+            result.technologies.append(headers["x-powered-by"].strip())
 
-        server = headers.get("server", "").lower()
-        if "nginx" in server:
-            result.technologies.append("nginx")
-        elif "apache" in server:
-            result.technologies.append("Apache")
-        elif "cloudflare" in server:
-            result.technologies.append("Cloudflare")
+        server_raw = headers.get("server", "").strip()
+        if server_raw:
+            # Append the raw Server value (e.g. "nginx/1.20.1", "Apache/2.4.52 (Ubuntu)")
+            # so that version info is preserved through the pipeline.
+            result.technologies.append(server_raw)
 
         if "x-aspnet-version" in headers:
             result.technologies.append(f"ASP.NET {headers['x-aspnet-version']}")

@@ -502,7 +502,7 @@ class SmartFuzzer:
         headers: Dict[str, str],
         cookies: str,
     ) -> Optional[VerifiedFinding]:
-        """Verify a single candidate"""
+        """Verify a single candidate, with WAF bypass retry on block."""
         payload = candidate['payload']
         test_url = url.replace('FUZZ', urllib.parse.quote(payload, safe=''))
 
@@ -511,6 +511,13 @@ class SmartFuzzer:
             async with session.get(test_url) as resp:
                 body = await resp.text()
                 elapsed = (time.time() - start) * 1000
+
+                # WAF block detection — retry with encoded payload
+                if resp.status in (403, 406, 429):
+                    result = await self._verify_with_waf_bypass(
+                        session, url, payload, vuln_type, baseline)
+                    if result:
+                        return result
 
                 # Verify based on vulnerability type
                 if vuln_type == VulnType.XSS:
@@ -525,6 +532,47 @@ class SmartFuzzer:
         except Exception:
             pass
 
+        return None
+
+    async def _verify_with_waf_bypass(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        payload: str,
+        vuln_type: VulnType,
+        baseline: Dict,
+    ) -> Optional[VerifiedFinding]:
+        """Retry verification with WAF-bypassed payload encoding."""
+        try:
+            from beatrix.utils.advanced_waf_bypass import AdvancedWAFBypass
+            engine = AdvancedWAFBypass()
+            attack_map = {VulnType.XSS: "xss", VulnType.SQLI: "sqli",
+                          VulnType.LFI: "lfi", VulnType.RCE: "cmdi"}
+            attack_type = attack_map.get(vuln_type, "sqli")
+            bypasses = engine.mutate_payload(payload)[:3]
+
+            for bp in bypasses:
+                if bp == payload:
+                    continue
+                test_url = url.replace('FUZZ', urllib.parse.quote(bp, safe=''))
+                try:
+                    start = time.time()
+                    async with session.get(test_url) as resp:
+                        body = await resp.text()
+                        elapsed = (time.time() - start) * 1000
+                        if resp.status not in (403, 406, 429):
+                            if vuln_type == VulnType.XSS:
+                                return self._verify_xss(bp, body, resp.status, len(body), elapsed, url)
+                            elif vuln_type == VulnType.SQLI:
+                                return await self._verify_sqli(bp, body, resp.status, len(body), elapsed, url, baseline, session)
+                            elif vuln_type == VulnType.LFI:
+                                return self._verify_lfi(bp, body, resp.status, len(body), elapsed, url)
+                            elif vuln_type == VulnType.RCE:
+                                return self._verify_rce(bp, body, resp.status, len(body), elapsed, url)
+                except Exception:
+                    pass
+        except ImportError:
+            pass
         return None
 
     def _verify_xss(

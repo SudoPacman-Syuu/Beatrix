@@ -585,7 +585,7 @@ install_external_tools() {
         # Nuclei's headless mode (go-rod) downloads its own Chrome
         # binary but requires system shared libraries. Without these,
         # headless scans crash with "libatk-1.0.so.0: cannot open".
-        if [[ "$PKG_MANAGER" == "apt" ]]; then
+        if [[ "$PKG_MGR" == "apt" ]]; then
             info "Installing chromium system dependencies for headless mode..."
             sudo apt-get install -y -qq \
                 libatk1.0-0 libatk-bridge2.0-0 libcups2 libgbm1 \

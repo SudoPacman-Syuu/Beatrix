@@ -1,6 +1,6 @@
 # BEATRIX — Scanner Component Map
 
-**Last Updated:** March 5, 2026
+**Last Updated:** March 10, 2026
 
 Quick reference for Beatrix's scanning architecture: kill chain phases, registered modules, external tools, core types, and data flow.
 
@@ -12,7 +12,7 @@ Scans execute phases in order. Each phase dispatches its registered scanner modu
 
 | Phase | Name | Scanner Keys | Module Count |
 |-------|------|-------------|:------------:|
-| **1** | Reconnaissance | `crawl`, `endpoint_prober`, `js_analysis`, `headers`, `github_recon` | 5 |
+| **1** | Reconnaissance | `crawl` (scope-aware, error capture), `endpoint_prober`, `js_analysis`, `headers` (per-endpoint), `github_recon` + `recon_helpers` (14 functions) | 5 + helpers |
 | **2** | Weaponization | `takeover`, `error_disclosure`, `cache_poisoning`, `prototype_pollution` | 4 |
 | **3** | Delivery | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` | 5 |
 | **4** | Exploitation | `injection`, `ssrf`, `idor`, `bac`, `auth`, `ssti`, `xxe`, `deserialization`, `graphql`, `mass_assignment`, `business_logic`, `redos`, `payment`, `nuclei` | 14 |
@@ -57,7 +57,7 @@ String key → class instance, all wired in `core/engine.py`:
 | `business_logic` | `BusinessLogicScanner` | `scanners/business_logic.py` |
 | `redos` | `ReDoSScanner` | `scanners/redos.py` |
 | `payment` | `PaymentScanner` | `scanners/payment_scanner.py` |
-| `nuclei` | `NucleiScanner` | `scanners/nuclei.py` (WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI) |
+| `nuclei` | `NucleiScanner` | `scanners/nuclei.py` (versioned tech Dict, WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI) |
 | `file_upload` | `FileUploadScanner` | `scanners/file_upload.py` |
 | `backslash` | `BackslashPoweredScanner` | `scanners/backslash_scanner.py` |
 | `param_miner` | `ParamMiner` | `scanners/param_miner.py` |
@@ -134,6 +134,27 @@ All scanners extend `BaseScanner` (`scanners/base.py`):
 
 ---
 
+## Technology Fingerprint Pipeline
+
+`context["technologies"]` is a `Dict[str, str]` (name → version) built from 5 sources during Phase 1:
+
+| Source | Where | What it contributes |
+|--------|-------|---------------------|
+| Crawler `_fingerprint_tech()` | `crawler.py` | Server/X-Powered-By headers (raw values, e.g., `"nginx/1.20.1"`) |
+| Nmap service scan | `kill_chain.py` (after enriched_ports) | Service product + version from port fingerprinting |
+| WhatWeb | `kill_chain.py` (Step 4) | Technology name + version dict |
+| Webanalyze | `kill_chain.py` (Step 4) | Technology name + version dict |
+| Header scanner findings | `kill_chain.py` (after concurrent_results) | Server/X-Powered-By extracted from findings |
+
+All sources merge via `_merge_technologies()` which:
+- Parses versions from compound strings (`"nginx/1.20.1"` → name `"nginx"`, version `"1.20.1"`)
+- Normalizes names via `_TECH_ALIASES` (`"httpd"` → `"apache"`, `"node.js"` → `"node"`, etc.)
+- Never overwrites a known version with a blank
+
+The final dict is passed to `NucleiScanner.set_technologies()` which stores it as `Dict[str, str]` for tag-based template selection.
+
+---
+
 ## Core Type System (`core/types.py`)
 
 ### Enums
@@ -183,8 +204,8 @@ All scanners extend `BaseScanner` (`scanners/base.py`):
 | `GospiderRunner` | `gospider` | `spider()` |
 | `HakrawlerRunner` | `hakrawler` | `crawl()` |
 | `GauRunner` | `gau` | `fetch_urls()` |
-| `WhatwebRunner` | `whatweb` | `fingerprint()` |
-| `WebanalyzeRunner` | `webanalyze` | `fingerprint()` |
+| `WhatwebRunner` | `whatweb` | `fingerprint()` → version-preserving merge via `_merge_technologies()` |
+| `WebanalyzeRunner` | `webanalyze` | `fingerprint()` → version-preserving merge via `_merge_technologies()` |
 | `DirsearchRunner` | `dirsearch` | `scan()` |
 
 **Exploitation (3):**
@@ -214,6 +235,43 @@ All scanners extend `BaseScanner` (`scanners/base.py`):
 | `SubfinderRunner` | `core/subfinder.py` | `subfinder` |
 | `NmapScanner` | `core/nmap_scanner.py` | `nmap` |
 | `FfufEngine` | `core/ffuf_engine.py` | `ffuf` |
+
+### In `core/recon_helpers.py` (14 functions, ~700 LOC)
+
+MITRE ATT&CK TA0043 reconnaissance helpers called from kill chain Phase 1:
+
+| Function | Purpose | MITRE |
+|----------|---------|-------|
+| `parse_robots_txt` | robots.txt paths + sitemaps | T1594 |
+| `parse_sitemap` | sitemap.xml URL extraction | T1594 |
+| `extract_html_intel` | Hidden inputs, IP/secret comments | T1594 |
+| `deduplicate_parameterized_urls` | GAU URL dedup | T1593 |
+| `extract_ssl_sans` | TLS certificate SANs | T1596.003 |
+| `dns_recon` | A/MX/NS/TXT/CNAME + SPF/DMARC | T1590.002 |
+| `discover_source_maps` | .map file exposure + secrets | T1592.004 |
+| `probe_internal_hosts` | JS-discovered host liveness | T1590.004 |
+| `check_known_cves` | Offline CVE lookup (16 products) | T1596.005 |
+| `check_favicon_hash` | mmh3 favicon fingerprint | T1592.002 |
+| `whois_asn_lookup` | ASN/org via Team Cymru DNS | T1596.002 |
+| `probe_subdomain_liveness` | HTTP probe + tech merge | T1595.001 |
+| `get_tech_probe_paths` | 60 paths for 15 technologies | T1592.002 |
+| `github_domain_search` | GitHub Code Search API | T1593.003 |
+
+---
+
+## CDN Gate — Network Scan Skip Logic
+
+When `origin_ip_discovery.py` detects a CDN but cannot find the origin IP, network Phases 1-3 are **skipped**:
+
+| Phase | What | Skipped When CDN + No Origin |
+|-------|------|:----------------------------:|
+| Phase 1 | nmap full TCP, service fingerprint, NSE, UDP | ✅ Skipped |
+| Phase 2 | scapy firewall fingerprint, bypass testing | ✅ Skipped |
+| Phase 3 | SSH audit, service NSE, TLS audit | ✅ Skipped |
+| Nuclei network | Protocol-specific non-HTTP checks | ✅ Naturally empty |
+| HTTP scanners | All web application scanners | ❌ Run normally through CDN |
+
+Gate variable: `cdn_no_origin` in `kill_chain.py` — computed after Phase 0 CDN detection.
 
 ---
 
@@ -254,3 +312,21 @@ Engine
   ├─ Between-phase session health check → re-auth if expired
   └─ IDORScanner: cross-account testing with user1 + user2 sessions
 ```
+
+---
+
+## Scan Output Directory (`core/scan_output.py`)
+
+Every hunt creates a `{target}-scan-{DD}-{Mon}-{YYYY}_{HH}-{MM}-{SS}` directory
+in the current working directory containing all tool outputs:
+
+```
+CLI → ScanOutputManager(target) → BeatrixEngine → KillChainExecutor
+  ├─ ExternalToolkit.set_output_manager() → all 13 tool runners auto-capture stdout
+  ├─ _run_scanner() → writes scanner results JSON after each module
+  ├─ _execute_phase() → writes context snapshots after each phase
+  └─ hunt() → writes final findings JSON + summary text
+```
+
+Phase subdirectories: `recon/`, `weaponization/`, `delivery/`, `exploitation/`,
+`installation/`, `c2/`, `actions/`, `findings/`. All files named `{tool}_{target}.{ext}`.

@@ -1,9 +1,9 @@
 # BEATRIX Project Status
 
-**Version:** 1.0.0
-**Last Updated:** March 6, 2026
-**Current Phase:** Stable — All 47/47 audit items fixed, IP address target support added, nuclei integration fully fixed (16 issues), injection/JS bundle/auth scanner false positives fixed, origin IP pipeline hardened with ASN validation
-**Framework LOC:** ~73,800 (112 Python files total, ~66,300 in inner package)
+**Version:** 1.0.4
+**Last Updated:** March 10, 2026
+**Current Phase:** Stable — All 47/47 audit items fixed, IP address target support added, nuclei integration fully fixed (16 issues), injection/JS bundle/auth scanner false positives fixed, origin IP pipeline hardened with ASN validation, **version-aware tech fingerprint pipeline implemented**, **per-scan organized output directories implemented**, **CDN gate — skips network Phases 1-3 when behind CDN with no origin IP**, **MITRE ATT&CK TA0043 recon advancement — 13-step pipeline with recon_helpers.py**
+**Framework LOC:** ~75,300 (113 Python files total, ~67,800 in inner package)
 
 ---
 
@@ -11,11 +11,11 @@
 
 | Component | Lines | Files | Status | Notes |
 |-----------|-------|-------|--------|-------|
-| Core Engine | 22,349 | 27 | ✅ Working | Engine, kill chain, types, methodology, external tools, fuzzer, OOB, correlation, **seclists_manager (dynamic wordlists)**, **poc_server (PoC validation HTTP server)**, **auth_config**, **auto_login**, **finding_enricher** |
+| Core Engine | 23,349 | 29 | ✅ Working | Engine, kill chain, types, methodology, external tools, fuzzer, OOB, correlation, **seclists_manager (dynamic wordlists)**, **poc_server (PoC validation HTTP server)**, **auth_config**, **auto_login**, **finding_enricher**, **scan_output (per-scan output dirs)**, **recon_helpers (MITRE TA0043)** |
 | Scanner Modules | 29,496 | 40 | ✅ Working | 32 registered BaseScanner modules + 8 standalone modules + support |
 | CLI Framework | 4,644 | 3 | ✅ Working | 26 commands via Click + Rich |
 | AI Integration | 1,893 | 4 | ✅ Working | GHOST agent, HaikuGrunt, Bedrock/Anthropic |
-| Recon Module | 472 | 1 | ✅ Working | Subdomain enum, tech detect, JS analysis |
+| Recon Module | 492 | 1 | ⚠️ Deprecated | Superseded by kill chain _handle_recon; retained for CLI `beatrix recon` |
 | Hunters | 474 | 3 | ✅ Working | RapidHunter, HaikuHunter |
 | Integrations | 683 | 2 | ✅ Working | HackerOne API client |
 | Validators | 1,277 | 3 | ✅ Working | ImpactValidator, ReadinessGate |
@@ -81,7 +81,7 @@ All runners live in `beatrix/core/external_tools.py` (1,144 LOC). `ExternalToolk
 
 | Phase | Name | Scanner Keys | External Tools |
 |-------|------|-------------|----------------|
-| 1 | Reconnaissance | `crawl`, `endpoint_prober`, `js_analysis`, `headers`, `github_recon` | subfinder, amass, nmap, katana, gospider, hakrawler, gau, whatweb, webanalyze, dirsearch |
+| 1 | Reconnaissance | `crawl` (scope-aware), `endpoint_prober`, `js_analysis`, `headers` (per-endpoint), `github_recon` + `recon_helpers` (14 functions) | subfinder, amass, nmap, katana, gospider, hakrawler, gau, whatweb, webanalyze, dirsearch |
 | 2 | Weaponization | `takeover`, `error_disclosure`, `cache_poisoning`, `prototype_pollution` | — |
 | 3 | Delivery | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` | — |
 | 4 | Exploitation | `injection`, `ssrf`, `idor`, `bac`, `auth`, `ssti`, `xxe`, `deserialization`, `graphql`, `mass_assignment`, `business_logic`, `redos`, `payment`, `nuclei` + SmartFuzzer (ffuf) | sqlmap, dalfox, commix, jwt_tool |
@@ -99,7 +99,7 @@ beatrix/                       # Inner framework package
 ├── core/                      # Engine + orchestration (22.3K LOC, 27 files)
 │   ├── engine.py              # BeatrixEngine orchestrator
 │   ├── types.py               # Finding, Severity, Confidence, Target, ScanContext
-│   ├── kill_chain.py          # 7-phase kill chain executor (2,642 LOC)
+│   ├── kill_chain.py          # 7-phase kill chain executor, version-aware tech pipeline (2,700+ LOC)
 │   ├── external_tools.py      # 13 async subprocess tool runners (1,179 LOC)
 │   ├── methodology.py         # MITRE ATT&CK / OWASP alignment
 │   ├── correlation_engine.py  # Cross-finding correlation
@@ -122,7 +122,8 @@ beatrix/                       # Inner framework package
 │   ├── auth_config.py         # Auth credential management (YAML, CLI, env vars) (848 LOC)
 │   ├── auto_login.py          # Automated login engine (endpoint discovery, session capture) (2,231 LOC)
 │   ├── auto_register.py       # Account auto-registration for authenticated testing
-│   └── finding_enricher.py    # Deterministic finding enrichment (poc_curl, impact, CWE) (542 LOC)
+│   ├── finding_enricher.py    # Deterministic finding enrichment (poc_curl, impact, CWE) (542 LOC)
+│   └── scan_output.py         # ScanOutputManager — per-scan organized output directory (~300 LOC)
 ├── scanners/                  # Scanner modules (29.5K LOC, 40 files)
 │   ├── base.py                # BaseScanner ABC, ScanContext
 │   ├── injection.py           # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads, response_analyzer behavioral detection, WAF bypass fallback)
@@ -145,14 +146,14 @@ beatrix/                       # Inner framework package
 │   ├── websocket.py           # WebSocket security
 │   ├── redos.py               # Regular expression DoS
 │   ├── takeover.py            # Subdomain takeover
-│   ├── nuclei.py              # Nuclei CVE template scanner
+│   ├── nuclei.py              # Nuclei CVE template scanner (versioned tech Dict)
 │   ├── endpoint_prober.py     # Endpoint discovery
 │   ├── js_bundle.py           # JavaScript bundle analysis
 │   ├── payment_scanner.py     # Payment flow testing
 │   ├── business_logic.py      # Business logic flaws
 │   ├── idor_auth.py           # Authenticated IDOR testing
 │   ├── browser_scanner.py     # Browser-based scanning (Playwright)
-│   ├── crawler.py             # Target crawling
+│   ├── crawler.py             # Target crawling (version-preserving tech fingerprint)
 │   ├── credential_validator.py # Credential validation
 │   ├── css_exfiltrator.py     # CSS injection exfiltration
 │   ├── jwt_analyzer.py        # JWT analysis module
@@ -173,7 +174,7 @@ beatrix/                       # Inner framework package
 │   ├── main.py                # 26 commands
 │   └── __main__.py            # python -m beatrix.cli entry point
 ├── recon/                     # Recon module (472 LOC)
-│   └── __init__.py            # ReconRunner, ReconResult
+│   └── __init__.py            # ReconRunner (deprecated), ReconResult
 ├── hunters/                   # Hunting workflows (474 LOC, 3 files)
 │   ├── rapid.py               # RapidHunter (multi-domain sweep)
 │   └── haiku.py               # HaikuHunter (AI-assisted)
@@ -225,6 +226,9 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - [x] Fix subfinder `-nW` flag
 - [x] Complete full audit sweep — 47/47 items fixed (see `SCANNER_AUDIT.md`)
 - [x] Add IP address target support — domains, URLs, and raw IPs all accepted
+- [x] Version-aware tech fingerprint pipeline — versions preserved from all sources (crawler, nmap, WhatWeb, Webanalyze, headers) through to nuclei
+- [x] Per-scan organized output directories — `ScanOutputManager` auto-creates `{target}-scan-{date}_{time}` folder with phase-organized raw tool output, scanner results, context snapshots, and findings
+- [x] MITRE ATT&CK TA0043 recon advancement — 13-step reconnaissance pipeline mapped to 7 MITRE technique families (T1594, T1595, T1590, T1592, T1593, T1596, T1589), `recon_helpers.py` (700 LOC, 14 functions), scope-aware crawling, error response capture, per-endpoint header analysis, unified parameter registry, finding enrichment, ReconRunner deprecated
 - [ ] Move `bounty_hunter.py` into `beatrix/hunters/bounty.py` (proper framework module)
 - [ ] Add unit tests for GHOST agent
 - [ ] Add unit tests for scanner modules

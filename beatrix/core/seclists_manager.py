@@ -298,6 +298,26 @@ DIRECT_URL_CATALOG: Dict[str, str] = {
     # ── PATT: CRLF Injection ─────────────────────────────────────────────
     "patt_crlf":
         "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/CRLF%20Injection/Files/crlfinjection.txt",
+
+    # ── PATT: SSTI (Server-Side Template Injection) ──────────────────────
+    "patt_ssti_jinja2":
+        "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Server%20Side%20Template%20Injection/Intruder/ssti_jinja2.txt",
+    "patt_ssti_twig":
+        "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Server%20Side%20Template%20Injection/Intruder/ssti_twig.txt",
+    "patt_ssti_freemarker":
+        "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Server%20Side%20Template%20Injection/Intruder/ssti_freemarker.txt",
+    "patt_ssti_erb":
+        "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Server%20Side%20Template%20Injection/Intruder/ssti_erb.txt",
+    "patt_ssti_jade":
+        "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Server%20Side%20Template%20Injection/Intruder/ssti_jade.txt",
+
+    # ── PATT: SSRF (Server-Side Request Forgery) ─────────────────────────
+    "patt_ssrf_payloads":
+        "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Server%20Side%20Request%20Forgery/Intruder/SSRF.txt",
+    "patt_ssrf_aws_metadata":
+        "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Server%20Side%20Request%20Forgery/Intruder/aws-metadata.txt",
+    "patt_ssrf_param_names":
+        "https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Server%20Side%20Request%20Forgery/Intruder/ssrf_parameter_names.txt",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -716,6 +736,12 @@ class SecListsManager:
             ],
             "ssti": [
                 "ssti_payloads",
+                # PayloadsAllTheThings — engine-specific SSTI payloads
+                "patt_ssti_jinja2",
+                "patt_ssti_twig",
+                "patt_ssti_freemarker",
+                "patt_ssti_erb",
+                "patt_ssti_jade",
             ],
             "lfi": [
                 # SecLists
@@ -745,7 +771,9 @@ class SecListsManager:
                 "patt_lfi_simple",
             ],
             "ssrf": [
-                # No dedicated Intruder files in PATT; fallback payloads only
+                # PayloadsAllTheThings — SSRF Intruder wordlists
+                "patt_ssrf_payloads",
+                "patt_ssrf_aws_metadata",
             ],
             "nosqli": [
                 "nosqli_seclists",

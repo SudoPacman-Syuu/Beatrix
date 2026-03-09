@@ -197,8 +197,8 @@ class NucleiScanner(BaseScanner):
             "nuclei_severity", "critical,high,medium,low,info"
         )
 
-        # Detected technologies
-        self._detected_technologies: List[str] = []
+        # Detected technologies (name -> version, empty string if unknown)
+        self._detected_technologies: Dict[str, str] = {}
 
         # Template directories
         self._template_dir = Path.home() / "nuclei-templates"
@@ -469,11 +469,15 @@ class NucleiScanner(BaseScanner):
         self._network_targets.extend(targets)
 
     def set_technologies(self, technologies) -> None:
-        """Set detected technologies for dynamic template selection."""
+        """Set detected technologies for dynamic template selection.
+
+        Accepts dict (name -> version) or list.  Preserves version info
+        so future template selection can match on specific versions.
+        """
         if isinstance(technologies, dict):
-            self._detected_technologies = [t.lower() for t in technologies.keys()]
+            self._detected_technologies = {t.lower(): v for t, v in technologies.items()}
         else:
-            self._detected_technologies = [t.lower() for t in technologies]
+            self._detected_technologies = {t.lower(): "" for t in technologies}
 
     def set_auth(self, auth_headers: List[str]) -> None:
         """Set authentication headers for authenticated scanning.

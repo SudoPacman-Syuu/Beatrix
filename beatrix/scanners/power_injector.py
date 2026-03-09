@@ -288,6 +288,48 @@ class PowerInjector:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.findings: List[Finding] = []
         self.ai_client = None
+        self._seclists = None
+        self._seclists_enriched = False
+
+    def _enrich_payloads_from_seclists(self):
+        """Augment inline payload dicts with SecLists/PayloadsAllTheThings."""
+        if self._seclists_enriched:
+            return
+        self._seclists_enriched = True
+        try:
+            from beatrix.core.seclists_manager import get_manager
+            self._seclists = get_manager(verbose=False)
+        except Exception:
+            return
+
+        # Map SecLists categories to our payload dicts
+        category_map = {
+            "sqli": self.SQLI_PAYLOADS.get("waf_bypass", []),
+            "xss": self.XSS_PAYLOADS.get("waf_bypass", []),
+            "cmdi": self.CMDI_PAYLOADS.get("bypass", []),
+            "ssti": self.SSTI_PAYLOADS.get("detection", []),
+            "ssrf": self.SSRF_PAYLOADS.get("bypass", []),
+        }
+
+        for category, target_list in category_map.items():
+            try:
+                raw = self._seclists.get_by_category(category)
+                existing = set()
+                for payloads in (self.SQLI_PAYLOADS if category == "sqli"
+                                 else self.XSS_PAYLOADS if category == "xss"
+                                 else self.CMDI_PAYLOADS if category == "cmdi"
+                                 else self.SSTI_PAYLOADS if category == "ssti"
+                                 else self.SSRF_PAYLOADS).values():
+                    existing.update(payloads)
+                added = 0
+                for payload in raw[:50]:  # Cap per category
+                    payload = payload.strip()
+                    if payload and not payload.startswith('#') and payload not in existing:
+                        target_list.append(payload)
+                        existing.add(payload)
+                        added += 1
+            except Exception:
+                pass
 
     async def scan(self, url: str,
                    vuln_types: Optional[List[VulnType]] = None,
@@ -303,6 +345,9 @@ class PowerInjector:
             waf_bypass: Include WAF bypass payloads
         """
         self.findings = []
+
+        # Enrich payloads from SecLists on first use
+        self._enrich_payloads_from_seclists()
 
         # Parse URL
         parsed = urllib.parse.urlparse(url)

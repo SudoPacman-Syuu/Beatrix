@@ -1433,7 +1433,16 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
                 del progress_state["log"][:excess]
                 _printed_count[0] = max(_printed_count[0] - excess, 0)
 
-    engine = BeatrixEngine(on_event=_on_event)
+    # Create scan output manager for organized output files
+    output_mgr = None
+    try:
+        from beatrix.core.scan_output import ScanOutputManager
+        output_mgr = ScanOutputManager(target)
+        console.print(f"[dim]📁 Scan output → {output_mgr.scan_dir}[/dim]")
+    except Exception as _som_err:
+        console.print(f"[yellow]  ⚠  Scan output directory unavailable: {_som_err}[/yellow]")
+
+    engine = BeatrixEngine(on_event=_on_event, output_manager=output_mgr)
 
     # ── Load authentication credentials ───────────────────────────────────
     auth_creds = None
@@ -1613,6 +1622,9 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
 
         _display_hunt_results(state, engine, hunt_id=hunt_id)
 
+        if output_mgr:
+            console.print(f"\n[green]📁 Full scan output saved to: {output_mgr.scan_dir}[/green]")
+
         # Handle output format
         if output:
             output_path = Path(output)
@@ -1746,7 +1758,16 @@ def _hunt_single_target(target, preset="standard", ai=False, modules=None,
             del progress_state["log"][:excess]
             _printed_count[0] = max(_printed_count[0] - excess, 0)
 
-    engine = BeatrixEngine(on_event=_on_event)
+    # Create scan output manager for organized output files
+    output_mgr = None
+    try:
+        from beatrix.core.scan_output import ScanOutputManager
+        output_mgr = ScanOutputManager(target)
+        console.print(f"[dim]📁 Scan output → {output_mgr.scan_dir}[/dim]")
+    except Exception as _som_err:
+        console.print(f"[yellow]  ⚠  Scan output directory unavailable: {_som_err}[/yellow]")
+
+    engine = BeatrixEngine(on_event=_on_event, output_manager=output_mgr)
 
     # Load auth credentials for this target
     auth_creds = None
@@ -1898,6 +1919,9 @@ def _hunt_single_target(target, preset="standard", ai=False, modules=None,
         pass
 
     _display_hunt_results(state, engine, hunt_id=hunt_id)
+
+    if output_mgr:
+        console.print(f"\n[green]📁 Full scan output saved to: {output_mgr.scan_dir}[/green]")
 
     return hunt_id, list(engine.findings)
 

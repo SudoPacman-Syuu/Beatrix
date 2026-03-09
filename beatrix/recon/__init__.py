@@ -7,11 +7,16 @@ endpoint discovery, and parameter mining.
 
 Can be used via CLI: beatrix recon target.com
 Or programmatically: recon = ReconRunner(domain); await recon.run()
+
+NOTE: The kill chain's _handle_recon now supersedes ReconRunner for
+full scans.  ReconRunner is preserved for standalone CLI recon and
+as a fallback for environments without the full engine.
 """
 
 import asyncio
 import json  # noqa: F401
 import re
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set  # noqa: F401
@@ -337,7 +342,21 @@ class ReconRunner:
     # =========================================================================
 
     async def run(self, deep: bool = False) -> ReconResult:
-        """Run full reconnaissance pipeline"""
+        """Run full reconnaissance pipeline.
+
+        .. deprecated::
+            The kill chain's ``_handle_recon`` now provides a superset of
+            this pipeline with MITRE ATT&CK TA0043 coverage.  Use
+            ``KillChainExecutor.execute()`` for full scans.  This method
+            is retained for standalone ``beatrix recon`` CLI usage and
+            lightweight quick-recon scenarios.
+        """
+        warnings.warn(
+            "ReconRunner.run() is deprecated for full scans. "
+            "Use KillChainExecutor.execute() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         base_url = f"https://{self.domain}"
 
         await self.enumerate_subdomains()

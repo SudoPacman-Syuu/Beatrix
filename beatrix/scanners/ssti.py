@@ -605,12 +605,87 @@ class SSTIScanner(BaseScanner):
         self._detection_payloads: List[SSTIPayload] = []
         self._identification_payloads: List[SSTIPayload] = []
         self._exploit_payloads: Dict[TemplateEngine, List[SSTIPayload]] = {}
+        self._waf_profile: Optional[str] = None
+        self._seclists = None
+
+    def set_waf_profile(self, waf_name: str) -> None:
+        """Set the WAF profile for targeted payload encoding."""
+        self._waf_profile = waf_name
+        self.log(f"WAF profile set: {waf_name}")
+
+    def _init_seclists(self):
+        """Initialize SecLists manager for dynamic SSTI wordlists."""
+        try:
+            from beatrix.core.seclists_manager import get_manager
+            self._seclists = get_manager(verbose=False)
+        except Exception:
+            self._seclists = None
+
+    def _get_seclists_ssti_payloads(self) -> List[SSTIPayload]:
+        """Fetch SSTI payloads from SecLists and wrap them as SSTIPayload objects."""
+        if not self._seclists:
+            return []
+        try:
+            raw_payloads = self._seclists.get_by_category("ssti")
+            seclists_payloads = []
+            for raw in raw_payloads[:100]:  # Cap at 100 to avoid scan timeout
+                raw = raw.strip()
+                if not raw or raw.startswith('#'):
+                    continue
+                seclists_payloads.append(SSTIPayload(
+                    name=f"seclists_{hash(raw) & 0xFFFF:04x}",
+                    template=raw,
+                    expected_output=None,  # Can't predict output for generic payloads
+                    engine=TemplateEngine.UNKNOWN,
+                    stage="detection",
+                    is_blind=False,
+                ))
+            self.log(f"SecLists: loaded {len(seclists_payloads)} SSTI payloads")
+            return seclists_payloads
+        except Exception as e:
+            self.log(f"SecLists SSTI fetch failed: {e}")
+            return []
+
+    def _apply_waf_bypass_to_payloads(self, payloads: List[SSTIPayload]) -> List[SSTIPayload]:
+        """Generate WAF-bypassed variants of SSTI detection payloads."""
+        if not self._waf_profile:
+            return payloads
+        try:
+            from beatrix.utils.advanced_waf_bypass import AdvancedWAFBypass
+            engine = AdvancedWAFBypass()
+            enriched = list(payloads)  # Keep originals
+            for p in payloads[:10]:  # Only enrich the first 10 to limit explosion
+                bypasses = engine.mutate_payload(p.template, self._waf_profile)[:3]
+                for bp in bypasses:
+                    if bp != p.template:
+                        enriched.append(SSTIPayload(
+                            name=f"{p.name}_waf",
+                            template=bp,
+                            expected_output=p.expected_output,
+                            engine=p.engine,
+                            stage=p.stage,
+                            is_blind=p.is_blind,
+                        ))
+            return enriched
+        except Exception:
+            return payloads
 
     def _init_payloads(self):
         """Initialize payload databases with fresh random values"""
         self._detection_payloads = _generate_detection_payloads()
         self._identification_payloads = _generate_identification_payloads()
         self._exploit_payloads = _generate_exploit_payloads()
+
+        # Enrich with SecLists payloads
+        self._init_seclists()
+        seclists_payloads = self._get_seclists_ssti_payloads()
+        if seclists_payloads:
+            self._detection_payloads.extend(seclists_payloads)
+
+        # Apply WAF bypass encoding if WAF is detected
+        if self._waf_profile:
+            self._detection_payloads = self._apply_waf_bypass_to_payloads(self._detection_payloads)
+            self._identification_payloads = self._apply_waf_bypass_to_payloads(self._identification_payloads)
 
     # =========================================================================
     # MAIN SCAN

@@ -28,10 +28,12 @@ tests/
 
 # Scan output directory
 test/
+testscan/
 
 # Notes
 BURP_INSPIRATION_NOTES.md
 BURP_DEFERRED_TODO.md
+notes for improvement/
 
 # OS
 .DS_Store

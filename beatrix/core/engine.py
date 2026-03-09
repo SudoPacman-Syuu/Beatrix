@@ -76,11 +76,14 @@ class BeatrixEngine:
         await engine.hunt("example.com", preset="full")
     """
 
-    def __init__(self, config: Optional[EngineConfig] = None, on_event: Optional[Any] = None):
+    def __init__(self, config: Optional[EngineConfig] = None, on_event: Optional[Any] = None,
+                 output_manager=None):
         self.config = config or EngineConfig()
         self.modules: Dict[str, Any] = {}
         self._on_event = on_event
-        self.kill_chain = KillChainExecutor(self, on_event=on_event)
+        self.output_manager = output_manager
+        self.kill_chain = KillChainExecutor(self, on_event=on_event,
+                                            output_manager=output_manager)
 
         # Validators — lazy imported to avoid circular deps
         self._impact_validator = None
@@ -338,6 +341,28 @@ class BeatrixEngine:
         # AI enrichment — classify, add OWASP/CWE, remediation suggestions
         if self.config.ai_enabled and self.findings:
             await self._ai_enrich_findings()
+
+        # Write findings and summary to output directory
+        if self.output_manager:
+            try:
+                self.output_manager.write_findings(self.findings)
+                duration = None
+                if state.phase_results:
+                    from datetime import datetime
+                    started = min(
+                        (r.started_at for r in state.phase_results.values() if r.started_at),
+                        default=None,
+                    )
+                    completed = max(
+                        (r.completed_at for r in state.phase_results.values() if r.completed_at),
+                        default=None,
+                    )
+                    if started and completed:
+                        duration = (completed - started).total_seconds()
+                self.output_manager.write_findings_summary(self.findings, duration)
+                self.output_manager.finalize()
+            except Exception:
+                pass  # Output saving is best-effort
 
         self.running = False
         return state

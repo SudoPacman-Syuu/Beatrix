@@ -16,10 +16,102 @@ Kill Chain Phases:
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+# ── Technology name aliases for normalization ─────────────────────────
+# Maps common variant names to a single canonical form so that
+# "httpd", "Apache httpd", and "Apache" all collapse to "apache".
+_TECH_ALIASES: Dict[str, str] = {
+    "httpd": "apache",
+    "apache httpd": "apache",
+    "apache/2": "apache",
+    "microsoft-iis": "iis",
+    "openresty": "openresty",
+    "nodejs": "node",
+    "node.js": "node",
+    "next.js": "nextjs",
+    "nuxt.js": "nuxt",
+    "vue.js": "vue",
+    "express.js": "express",
+    "asp.net": "asp.net",
+    "mariadb": "mysql",
+}
+
+_VERSION_RE = re.compile(r'^(.+?)[/\s]([\d][\d.]*\S*)')
+
+
+def _parse_tech_version(tech_string: str) -> Tuple[str, str]:
+    """Parse 'nginx/1.20.1' or 'PHP 7.4.3' into ('nginx', '1.20.1').
+
+    Handles formats:
+      - "nginx/1.20.1"             → ("nginx", "1.20.1")
+      - "Apache/2.4.52 (Ubuntu)"   → ("apache", "2.4.52")
+      - "PHP 7.4.3"                → ("php", "7.4.3")
+      - "ASP.NET 4.0.30319"        → ("asp.net", "4.0.30319")
+      - "React"                    → ("react", "")
+      - "Express"                  → ("express", "")
+
+    Returns canonical lowercase name and version string.
+    """
+    s = tech_string.strip()
+    if not s:
+        return "", ""
+
+    m = _VERSION_RE.match(s)
+    if m:
+        name = m.group(1).strip().lower()
+        # Strip trailing parenthetical from version: "2.4.52 (Ubuntu)" → "2.4.52"
+        version = m.group(2).split("(")[0].strip().rstrip(".")
+    else:
+        name = s.lower()
+        version = ""
+
+    # Apply alias normalization
+    name = _TECH_ALIASES.get(name, name)
+
+    return name, version
+
+
+def _merge_technologies(existing: Dict[str, str], source, *, overwrite_blank: bool = True) -> Dict[str, str]:
+    """Merge technology data into an existing dict, preserving best version info.
+
+    Args:
+        existing: Current technologies dict {name: version}.
+        source: Either a Dict[str, str] (from WhatWeb/Webanalyze) or
+                a List[str] (from crawler).
+        overwrite_blank: If True, a non-empty version overwrites an empty one.
+
+    Returns:
+        The mutated ``existing`` dict.
+    """
+    items: List[Tuple[str, str]] = []
+
+    if isinstance(source, dict):
+        for raw_name, raw_ver in source.items():
+            name, parsed_ver = _parse_tech_version(raw_name)
+            # Prefer an explicit version from the dict value over one parsed from the key
+            version = raw_ver.strip() if raw_ver and raw_ver.strip() else parsed_ver
+            if name:
+                items.append((name, version))
+    elif isinstance(source, (list, set)):
+        for entry in source:
+            name, version = _parse_tech_version(str(entry))
+            if name:
+                items.append((name, version))
+
+    for name, version in items:
+        cur = existing.get(name, None)
+        if cur is None:
+            existing[name] = version
+        elif overwrite_blank and version and not cur:
+            existing[name] = version
+
+    return existing
 
 
 class KillChainPhase(Enum):
@@ -223,11 +315,13 @@ class KillChainExecutor:
         state = await executor.execute("example.com", phases=[1, 2, 3, 4])
     """
 
-    def __init__(self, engine: Any, on_event: Optional[Callable] = None):
+    def __init__(self, engine: Any, on_event: Optional[Callable] = None,
+                 output_manager=None):
         self.engine = engine
         self.phase_handlers: Dict[KillChainPhase, Callable] = {}
         self._on_event = on_event  # Callback for real-time progress
         self._toolkit = None  # Lazy singleton — shared across all phases
+        self.output_manager = output_manager  # ScanOutputManager for file output
         # A-07: Accumulate scanner errors for the final report summary
         self.scanner_errors: List[Dict[str, str]] = []
         self._register_default_handlers()
@@ -249,6 +343,8 @@ class KillChainExecutor:
         if self._toolkit is None:
             from beatrix.core.external_tools import ExternalToolkit
             self._toolkit = ExternalToolkit()
+            if self.output_manager:
+                self._toolkit.set_output_manager(self.output_manager)
         return self._toolkit
 
     def _register_default_handlers(self) -> None:
@@ -332,11 +428,19 @@ class KillChainExecutor:
             if context.get("auth"):
                 ctx.extra["auth"] = context["auth"]
 
+            # Propagate WAF/CDN profile so scanners can encode payloads for evasion
+            cdn_name = (context.get("network") or {}).get("cdn_detected")
+            if cdn_name:
+                ctx.extra["waf_profile"] = cdn_name.lower()
+
             async def _collect():
                 async with scanner:
                     # Inject auth headers into the scanner's HTTP client
                     if context.get("auth") and hasattr(scanner, 'apply_auth'):
                         scanner.apply_auth(context["auth"])
+                    # Inject WAF profile into scanner for payload encoding
+                    if cdn_name and hasattr(scanner, 'set_waf_profile'):
+                        scanner.set_waf_profile(cdn_name.lower())
                     async for finding in scanner.scan(ctx):
                         # Stamp module attribution if scanner didn't set it
                         if not finding.scanner_module:
@@ -353,6 +457,14 @@ class KillChainExecutor:
             self._emit("scanner_error", scanner=scanner_name, error=str(e))
 
         self._emit("scanner_done", scanner=scanner_name, findings=len(result["findings"]))
+
+        # Save scanner results to output directory (always, even with 0 findings)
+        if self.output_manager:
+            try:
+                self.output_manager.write_scanner_result(scanner_name, result)
+            except Exception:
+                pass  # Output saving is best-effort
+
         return result
 
     async def _filter_dead_host_urls(self, context: Dict[str, Any]) -> None:
@@ -471,6 +583,11 @@ class KillChainExecutor:
                     if context.get("auth") and hasattr(scanner, 'apply_auth'):
                         scanner.apply_auth(context["auth"])
 
+                    # Inject WAF profile into scanner for payload encoding
+                    cdn_name = (context.get("network") or {}).get("cdn_detected")
+                    if cdn_name and hasattr(scanner, 'set_waf_profile'):
+                        scanner.set_waf_profile(cdn_name.lower())
+
                     # A-05: Track consecutive failures per host so we skip
                     # remaining URLs on a dead host instead of timing out
                     # on every single URL.  Threshold = 3 consecutive.
@@ -501,6 +618,9 @@ class KillChainExecutor:
                             # Propagate auth credentials
                             if context.get("auth"):
                                 ctx.extra["auth"] = context["auth"]
+                            # Propagate WAF/CDN profile
+                            if cdn_name:
+                                ctx.extra["waf_profile"] = cdn_name.lower()
 
                             async for finding in scanner.scan(ctx):
                                 # Stamp module attribution if scanner didn't set it
@@ -534,6 +654,14 @@ class KillChainExecutor:
             self._emit("scanner_error", scanner=scanner_name, error=str(e))
 
         self._emit("scanner_done", scanner=scanner_name, findings=len(result["findings"]))
+
+        # Save scanner results to output directory (always, even with 0 findings)
+        if self.output_manager:
+            try:
+                self.output_manager.write_scanner_result(scanner_name, result)
+            except Exception:
+                pass  # Output saving is best-effort
+
         return result
 
     async def _merge_scanner_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -608,11 +736,26 @@ class KillChainExecutor:
             except Exception as e:
                 self._emit("scanner_error", scanner="amass", error=str(e))
 
+        # Save subdomain enumeration results
+        if self.output_manager and context.get("subdomains"):
+            try:
+                self.output_manager.write_context_snapshot("subdomains", {"subdomains": context["subdomains"]}, phase=1)
+            except Exception:
+                pass
+
         # ── Step 1: Crawl the target ──────────────────────────────────────────
         crawler = self.engine.modules.get("crawl")
         crawl_result = None
 
         if crawler:
+            # Wire scope patterns so crawler follows in-scope subdomain links
+            scope_patterns = context.get("scope", [])
+            if not scope_patterns and not target_is_ip:
+                # Default scope: *.domain for full-scan mode
+                scope_patterns = [f"*.{domain}", domain]
+            if scope_patterns and hasattr(crawler, "_scope"):
+                crawler._scope = scope_patterns
+
             self._emit("crawl_start", target=url)
             try:
                 crawl_result = await crawler.crawl(url, auth=context.get("auth"))
@@ -625,9 +768,9 @@ class KillChainExecutor:
                 context["js_files"] = list(crawl_result.js_files)
                 context["forms"] = crawl_result.forms
                 context["technologies"] = crawl_result.technologies
-                # Normalize to dict for consistent downstream use
+                # Normalize to dict, parsing version strings like "nginx/1.20.1"
                 if isinstance(context["technologies"], list):
-                    context["technologies"] = {t: "" for t in context["technologies"]}
+                    context["technologies"] = _merge_technologies({}, context["technologies"])
                 context["discovered_paths"] = list(crawl_result.paths)
                 context["cookies"] = crawl_result.cookies
                 context["crawl_extra"] = {
@@ -652,6 +795,192 @@ class KillChainExecutor:
 
             except Exception as e:
                 self._emit("crawl_error", error=str(e))
+
+        # Save crawl results
+        if self.output_manager and crawl_result:
+            try:
+                self.output_manager.write_context_snapshot("crawl", {
+                    "pages_crawled": crawl_result.pages_crawled,
+                    "urls": sorted(crawl_result.urls)[:500],
+                    "urls_with_params": sorted(crawl_result.urls_with_params)[:500],
+                    "js_files": sorted(crawl_result.js_files),
+                    "forms": crawl_result.forms,
+                    "technologies": crawl_result.technologies,
+                    "paths": sorted(crawl_result.paths)[:200],
+                    "cookies": crawl_result.cookies,
+                    "resolved_url": crawl_result.resolved_url,
+                }, phase=1)
+            except Exception:
+                pass
+
+        # ── Step 1b: robots.txt + sitemap.xml (T1594) ─────────────────────
+        # Parse robots.txt for Disallow paths (admin panels, staging endpoints,
+        # internal APIs) and sitemap.xml for the site's own URL map.
+        if run_deep_recon and not target_is_ip:
+            try:
+                from beatrix.core.recon_helpers import parse_robots_txt, parse_sitemap
+                import aiohttp
+
+                connector = aiohttp.TCPConnector(ssl=False)
+                async with aiohttp.ClientSession(connector=connector) as _recon_session:
+                    robots = await parse_robots_txt(_recon_session, url)
+
+                    # Add robots.txt paths to attack surface
+                    if robots["paths"]:
+                        context.setdefault("discovered_urls", []).extend(robots["paths"])
+                        self._emit("info", message=f"robots.txt: {len(robots['paths'])} paths, {len(robots['disallowed'])} Disallow entries")
+
+                    if robots["interesting"]:
+                        self._emit("info", message=f"robots.txt interesting paths: {', '.join(robots['interesting'][:10])}")
+
+                    # Parse sitemaps from robots.txt + default sitemap URL
+                    sitemap_urls = list(robots["sitemaps"])
+                    default_sitemap = url.rstrip("/") + "/sitemap.xml"
+                    if default_sitemap not in sitemap_urls:
+                        sitemap_urls.append(default_sitemap)
+
+                    sitemap_discovered = set()
+                    for sm_url in sitemap_urls[:5]:
+                        try:
+                            sm_urls = await parse_sitemap(_recon_session, sm_url)
+                            sitemap_discovered.update(sm_urls)
+                        except Exception:
+                            continue
+
+                    if sitemap_discovered:
+                        context.setdefault("discovered_urls", []).extend(sitemap_discovered)
+                        param_urls = [u for u in sitemap_discovered if "?" in u]
+                        if param_urls:
+                            context.setdefault("urls_with_params", []).extend(param_urls)
+                        self._emit("info", message=f"sitemap.xml: {len(sitemap_discovered)} URLs discovered")
+
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="robots_sitemap", error=str(e))
+
+        # Save robots/sitemap results
+        if self.output_manager:
+            try:
+                _robots_data = {}
+                if 'robots' in dir() or 'robots' in locals():
+                    _rb = locals().get('robots')
+                    if _rb:
+                        _robots_data["robots"] = {k: list(v) if isinstance(v, set) else v for k, v in _rb.items()}
+                if 'sitemap_discovered' in dir() or 'sitemap_discovered' in locals():
+                    _sm = locals().get('sitemap_discovered')
+                    if _sm:
+                        _robots_data["sitemap_urls"] = sorted(_sm)
+                if _robots_data:
+                    self.output_manager.write_context_snapshot("robots_sitemap", _robots_data, phase=1)
+            except Exception:
+                pass
+
+        # ── Step 1c: HTML comment + hidden input extraction (T1594) ───────
+        # Extract intelligence from HTML in crawled pages. Hidden inputs become
+        # injection targets, IP addresses in comments feed SSRF, meta generators
+        # confirm framework versions.
+        if crawl_result and run_deep_recon:
+            try:
+                from beatrix.core.recon_helpers import extract_html_intel
+                from beatrix.core.types import Finding, Severity, Confidence
+
+                html_intel_aggregated = {
+                    "hidden_param_names": set(),
+                    "comments_with_ips": [],
+                    "comments_with_secrets": [],
+                    "meta_generators": [],
+                    "internal_urls": set(),
+                }
+
+                # The crawler stores page bodies if available; we also
+                # do a lightweight re-fetch of the main page for extraction.
+                try:
+                    import aiohttp
+                    connector = aiohttp.TCPConnector(ssl=False)
+                    async with aiohttp.ClientSession(connector=connector) as _html_session:
+                        try:
+                            async with _html_session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                                if resp.status == 200:
+                                    body = await resp.text(errors="replace")
+                                    intel = extract_html_intel(body, url)
+                                    html_intel_aggregated["hidden_param_names"].update(intel["hidden_param_names"])
+                                    html_intel_aggregated["comments_with_ips"].extend(intel["comments_with_ips"])
+                                    html_intel_aggregated["comments_with_secrets"].extend(intel["comments_with_secrets"])
+                                    html_intel_aggregated["meta_generators"].extend(intel["meta_generator"])
+                                    html_intel_aggregated["internal_urls"].update(intel["internal_urls"])
+
+                                    # Hidden inputs → parameter list for injection testing
+                                    if intel["hidden_inputs"]:
+                                        context.setdefault("hidden_params", []).extend(intel["hidden_inputs"])
+                                        self._emit("info", message=f"HTML extraction: {len(intel['hidden_inputs'])} hidden inputs ({', '.join(list(intel['hidden_param_names'])[:5])})")
+
+                        except Exception:
+                            pass
+                except ImportError:
+                    pass
+
+                # IP addresses in comments → potential SSRF targets
+                if html_intel_aggregated["comments_with_ips"]:
+                    all_ips = []
+                    for _, ips in html_intel_aggregated["comments_with_ips"]:
+                        all_ips.extend(ips)
+                    unique_ips = list(set(all_ips))
+                    context.setdefault("internal_ips_from_comments", []).extend(unique_ips)
+                    results.append({"findings": [Finding(
+                        severity=Severity.LOW,
+                        confidence=Confidence.CONFIRMED,
+                        url=url,
+                        title=f"Internal IP Addresses in HTML Comments ({len(unique_ips)} unique)",
+                        description=f"HTML comments contain internal IP addresses: {', '.join(unique_ips[:10])}. These may reveal internal infrastructure.",
+                        evidence={"ips": unique_ips[:20]},
+                        scanner_module="html_comment_analysis",
+                        mitre_technique="T1594",
+                    )], "assets": [], "context": {}, "modules": ["html_comment_analysis"], "requests": 0})
+
+                # Secrets in comments → findings
+                if html_intel_aggregated["comments_with_secrets"]:
+                    results.append({"findings": [Finding(
+                        severity=Severity.LOW,
+                        confidence=Confidence.TENTATIVE,
+                        url=url,
+                        title=f"Sensitive Keywords in HTML Comments ({len(html_intel_aggregated['comments_with_secrets'])} occurrences)",
+                        description="HTML comments contain keywords suggesting sensitive information (passwords, tokens, TODO/FIXME, debug, staging).",
+                        evidence={"comments": html_intel_aggregated["comments_with_secrets"][:10]},
+                        scanner_module="html_comment_analysis",
+                        mitre_technique="T1594",
+                    )], "assets": [], "context": {}, "modules": ["html_comment_analysis"], "requests": 0})
+
+                # Meta generators → tech fingerprint
+                if html_intel_aggregated["meta_generators"]:
+                    tech_dict = context.get("technologies", {})
+                    if not isinstance(tech_dict, dict):
+                        tech_dict = _merge_technologies({}, tech_dict)
+                    _merge_technologies(tech_dict, html_intel_aggregated["meta_generators"])
+                    context["technologies"] = tech_dict
+                    self._emit("info", message=f"Meta generator tags: {', '.join(html_intel_aggregated['meta_generators'])}")
+
+                # Internal URLs from comments → discovered URLs
+                if html_intel_aggregated["internal_urls"]:
+                    context.setdefault("discovered_urls", []).extend(html_intel_aggregated["internal_urls"])
+
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="html_extraction", error=str(e))
+
+        # Save HTML extraction results
+        if self.output_manager and 'html_intel_aggregated' in locals() and html_intel_aggregated:
+            try:
+                self.output_manager.write_context_snapshot("html_extraction", {
+                    "hidden_param_names": sorted(html_intel_aggregated.get("hidden_param_names", set())),
+                    "comments_with_ips": html_intel_aggregated.get("comments_with_ips", []),
+                    "comments_with_secrets": html_intel_aggregated.get("comments_with_secrets", []),
+                    "meta_generators": html_intel_aggregated.get("meta_generators", []),
+                    "internal_urls": sorted(html_intel_aggregated.get("internal_urls", set())),
+                }, phase=1)
+            except Exception:
+                pass
 
         # ── Step 2: Network Reconnaissance Pipeline ─────────────────────────
         # 3-phase adaptive pipeline: DISCOVER → ANALYZE → AUDIT
@@ -809,8 +1138,32 @@ class KillChainExecutor:
             # The target for all nmap/network scans — either origin IP or domain
             scan_target = context["network"].get("scan_target", domain)
 
+            # ── CDN Gate ─────────────────────────────────────────────────
+            # When a CDN (Cloudflare, Akamai, etc.) is detected and we have
+            # NO origin IP, scanning the domain resolves to CDN edge infra.
+            # A full port scan would enumerate Cloudflare's infrastructure,
+            # not the target's — wasting time and producing false data.
+            # HTTP-layer scanners still run normally (they test through CDN).
+            cdn_no_origin = (
+                bool(context["network"].get("cdn_detected"))
+                and scan_target == domain
+                and not target_is_ip
+            )
+
+            if cdn_no_origin:
+                cdn_name = context["network"]["cdn_detected"]
+                self._emit("info", message=(
+                    f"CDN gate: {cdn_name} detected, no origin IP found — "
+                    f"skipping network Phases 1-3 (port scan, firewall analysis, service audit). "
+                    f"Scanning {domain} would only enumerate {cdn_name} edge infrastructure. "
+                    f"HTTP-layer scanners will still test the web application through the CDN."
+                ))
+
             # ── Phase 1: DISCOVER (nmap) ──────────────────────────────────
-            try:
+            if cdn_no_origin:
+                self._emit("info", message=f"Phase 1: SKIPPED — {context['network']['cdn_detected']} CDN shields infrastructure")
+            else:
+              try:
                 import nmap as _nmap_check  # noqa: F811, F401
 
                 from beatrix.core.nmap_scanner import NetworkScanner
@@ -898,6 +1251,17 @@ class KillChainExecutor:
                     context["network"]["open_ports"] = enriched_ports
                     context["network"]["services"] = services_map
                     self._emit("info", message=f"Phase 1b: Services detected: {', '.join(f'{k}:{v}' for k, v in services_map.items())}")
+
+                    # Merge nmap service product/version data into technologies
+                    tech_dict = context.get("technologies", {})
+                    if not isinstance(tech_dict, dict):
+                        tech_dict = _merge_technologies({}, tech_dict)
+                    for port_info in enriched_ports:
+                        product = port_info.get("product", "")
+                        version = port_info.get("version", "")
+                        if product:
+                            _merge_technologies(tech_dict, {product: version})
+                    context["technologies"] = tech_dict
 
                     # 1c-1e: NSE script scans (vuln, discovery, auth) on open ports
                     nse_findings = []
@@ -992,14 +1356,16 @@ class KillChainExecutor:
                 else:
                     self._emit("info", message=f"Phase 1a: No open ports found on {scan_label}")
 
-            except ImportError:
+              except ImportError:
                 self._emit("info", message="python-nmap not installed — network scanning skipped")
-            except Exception as e:
+              except Exception as e:
                 self._emit("scanner_error", scanner="nmap_pipeline", error=str(e))
 
             # ── Phase 2: ANALYZE (scapy) — firewall characterization ──────
             filtered_ports = context["network"].get("filtered_ports", [])
-            if filtered_ports:
+            if cdn_no_origin:
+                self._emit("info", message=f"Phase 2: SKIPPED — {context['network']['cdn_detected']} CDN shields infrastructure")
+            elif filtered_ports:
                 try:
                     from beatrix.core.packet_crafter import PacketCrafter
                     crafter = PacketCrafter(timeout=3.0)
@@ -1108,7 +1474,11 @@ class KillChainExecutor:
                 self._emit("info", message="Phase 2: No filtered ports — firewall analysis skipped")
 
             # ── Phase 3: AUDIT — service-specific deep auditing ───────────
-            services_map = context["network"].get("services", {})
+            if cdn_no_origin:
+                self._emit("info", message=f"Phase 3: SKIPPED — {context['network']['cdn_detected']} CDN shields infrastructure")
+                services_map = {}
+            else:
+              services_map = context["network"].get("services", {})
 
             # 3a: SSH audit (paramiko)
             ssh_ports = services_map.get("ssh", [])
@@ -1272,6 +1642,13 @@ class KillChainExecutor:
                 f"{total_findings} network findings"
             ))
 
+            # Save network recon results
+            if self.output_manager:
+                try:
+                    self.output_manager.write_context_snapshot("network_recon", context["network"], phase=1)
+                except Exception:
+                    pass
+
             # ── Nuclei Network Scan — protocol-specific checks on non-HTTP ports ──
             # Feeds discovered services (Redis, MongoDB, FTP, SMTP, etc.) to nuclei's
             # network templates for unauthenticated access, default creds, CVEs.
@@ -1316,6 +1693,48 @@ class KillChainExecutor:
                             self._emit("scanner_done", scanner="nuclei_network", findings=len(net_result["findings"]))
                     except Exception as e:
                         self._emit("scanner_error", scanner="nuclei_network", error=str(e))
+
+        # ── Step 2b: Crawl non-standard HTTP ports (T1595.001) ───────────
+        # When nmap discovers HTTP services on ports other than 80/443,
+        # crawl them to expand the attack surface beyond the primary URL.
+        if run_deep_recon and crawler:
+            net = context.get("network", {})
+            services = net.get("services", {})
+            extra_http_targets = []
+            for port in services.get("http", []):
+                if port != 80:
+                    extra_http_targets.append(f"http://{domain}:{port}")
+            for port in services.get("https", []):
+                if port != 443:
+                    extra_http_targets.append(f"https://{domain}:{port}")
+
+            if extra_http_targets:
+                self._emit("info", message=f"Step 2b: Crawling {len(extra_http_targets)} non-standard HTTP ports")
+                for extra_url in extra_http_targets[:5]:
+                    try:
+                        extra_result = await crawler.crawl(extra_url, auth=context.get("auth"))
+                        if extra_result and extra_result.pages_crawled > 0:
+                            context.setdefault("discovered_urls", []).extend(extra_result.urls)
+                            context.setdefault("urls_with_params", []).extend(extra_result.urls_with_params)
+                            context.setdefault("js_files", []).extend(extra_result.js_files)
+                            context.setdefault("forms", []).extend(extra_result.forms)
+                            # Merge technologies
+                            tech_dict = context.get("technologies", {})
+                            if not isinstance(tech_dict, dict):
+                                tech_dict = _merge_technologies({}, tech_dict)
+                            if isinstance(extra_result.technologies, list):
+                                _merge_technologies(tech_dict, extra_result.technologies)
+                            context["technologies"] = tech_dict
+                            # Merge error responses
+                            context.setdefault("error_responses", []).extend(extra_result.error_responses)
+                            self._emit("info", message=f"  {extra_url}: {extra_result.pages_crawled} pages, {len(extra_result.urls)} URLs")
+                    except Exception as e:
+                        self._emit("scanner_error", scanner=f"crawl_{extra_url}", error=str(e))
+
+        # ── Wire crawl error responses into context ──────────────────────
+        if crawl_result and hasattr(crawl_result, "error_responses") and crawl_result.error_responses:
+            context.setdefault("error_responses", []).extend(crawl_result.error_responses)
+            self._emit("info", message=f"Captured {len(crawl_result.error_responses)} error responses for tech fingerprinting")
 
         # ── Step 3: External crawlers — katana, gospider, hakrawler, gau ──
         # Feed discovered URLs back into the attack surface
@@ -1417,6 +1836,111 @@ class KillChainExecutor:
             except Exception as e:
                 self._emit("scanner_error", scanner="external_crawlers", error=str(e))
 
+        # ── Step 3a-i: GAU URL parameter deduplication (T1593) ────────────
+        # GAU returns hundreds of URLs for the same endpoint with different
+        # parameter values. Deduplicate by (path, sorted_param_names) to
+        # avoid redundant injection testing.
+        if run_deep_recon:
+            try:
+                from beatrix.core.recon_helpers import deduplicate_parameterized_urls
+                before_dedup = len(context.get("urls_with_params", []))
+                if before_dedup > 10:
+                    context["urls_with_params"] = deduplicate_parameterized_urls(
+                        context["urls_with_params"]
+                    )
+                    after_dedup = len(context["urls_with_params"])
+                    if before_dedup > after_dedup:
+                        self._emit("info", message=(
+                            f"GAU dedup: {before_dedup} → {after_dedup} parameterized URLs "
+                            f"({before_dedup - after_dedup} duplicates removed)"
+                        ))
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="gau_dedup", error=str(e))
+
+        # ── Step 3a-ii: SSL SAN extraction (T1596.003) ───────────────────
+        # Extract Subject Alternative Names from the TLS certificate.
+        # Zero-cost source of subdomain data.
+        if run_deep_recon and not target_is_ip:
+            try:
+                from beatrix.core.recon_helpers import extract_ssl_sans
+                san_hostnames = await extract_ssl_sans(domain)
+                if san_hostnames:
+                    existing_subs = set(context.get("subdomains", []))
+                    new_sans = [h for h in san_hostnames if h not in existing_subs and h != domain and not h.startswith("*")]
+                    wildcard_sans = [h for h in san_hostnames if h.startswith("*")]
+                    if new_sans:
+                        context.setdefault("subdomains", []).extend(new_sans)
+                        self._emit("info", message=f"SSL SAN: {len(new_sans)} new subdomains from certificate ({len(wildcard_sans)} wildcards)")
+                    if wildcard_sans:
+                        context.setdefault("san_wildcards", []).extend(wildcard_sans)
+            except Exception as e:
+                self._emit("scanner_error", scanner="ssl_san", error=str(e))
+
+        # Save SSL SAN results
+        if self.output_manager and context.get("subdomains"):
+            try:
+                self.output_manager.write_context_snapshot("ssl_sans", {
+                    "subdomains": context["subdomains"],
+                    "san_wildcards": context.get("san_wildcards", []),
+                }, phase=1)
+            except Exception:
+                pass
+
+        # ── Step 3a-iii: DNS record analysis (T1590.002 + T1596.001) ─────
+        # Comprehensive DNS recon: MX, TXT, NS, CNAME, SOA + SPF/DMARC analysis.
+        if run_deep_recon and not target_is_ip:
+            try:
+                from beatrix.core.recon_helpers import dns_recon
+                from beatrix.core.types import Finding, Severity, Confidence
+                dns_data = await dns_recon(domain)
+                context["dns_records"] = dns_data
+
+                # Feed DNS-discovered subdomains
+                if dns_data["subdomains_from_dns"]:
+                    existing_subs = set(context.get("subdomains", []))
+                    new_dns_subs = [s for s in dns_data["subdomains_from_dns"] if s not in existing_subs]
+                    if new_dns_subs:
+                        context.setdefault("subdomains", []).extend(new_dns_subs)
+                        self._emit("info", message=f"DNS recon: {len(new_dns_subs)} subdomains from MX/NS/CNAME")
+
+                # DMARC policy weakness
+                if dns_data.get("dmarc_policy") in (None, "none"):
+                    results.append({"findings": [Finding(
+                        severity=Severity.INFO,
+                        confidence=Confidence.CONFIRMED,
+                        url=domain,
+                        title="Missing or Weak DMARC Policy",
+                        description=f"Domain {domain} has DMARC policy: {dns_data.get('dmarc_policy', 'absent')}. "
+                                    f"This allows email spoofing.",
+                        evidence={"dmarc": dns_data.get("dmarc_policy"), "txt_records": dns_data.get("txt_records", [])[:5]},
+                        scanner_module="dns_recon",
+                        mitre_technique="T1590.002",
+                    )], "assets": [], "context": {}, "modules": ["dns_recon"], "requests": 0})
+
+                # SPF includes → infrastructure mapping
+                if dns_data.get("spf_includes"):
+                    self._emit("info", message=f"SPF includes: {', '.join(dns_data['spf_includes'])}")
+
+                self._emit("info", message=(
+                    f"DNS recon: A={len(dns_data.get('a_records', []))}, "
+                    f"MX={len(dns_data.get('mx_records', []))}, "
+                    f"NS={len(dns_data.get('ns_records', []))}, "
+                    f"TXT={len(dns_data.get('txt_records', []))}"
+                ))
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="dns_recon", error=str(e))
+
+        # Save DNS recon results
+        if self.output_manager and context.get("dns_records"):
+            try:
+                self.output_manager.write_context_snapshot("dns_recon", context["dns_records"], phase=1)
+            except Exception:
+                pass
+
         # ── Step 3b: URL Liveness Gate — drop URLs on unresolvable hosts ──
         # GAU and other historical crawlers return URLs on hosts that may no
         # longer exist.  Without this gate, every dead host wastes ~30s of
@@ -1428,14 +1952,10 @@ class KillChainExecutor:
         # ── Step 4: Tech fingerprinting — whatweb + webanalyze ─────────────
         if run_deep_recon:
             try:
-                combined_techs = {}
-                # Preserve existing technologies from crawler (List[str] → Dict[str, str])
-                existing = context.get("technologies", [])
-                if isinstance(existing, list):
-                    for tech in existing:
-                        combined_techs[tech] = ""
-                elif isinstance(existing, dict):
-                    combined_techs.update(existing)
+                # Start with existing technologies (already a normalized dict)
+                tech_dict = context.get("technologies", {})
+                if not isinstance(tech_dict, dict):
+                    tech_dict = _merge_technologies({}, tech_dict)
 
                 # WhatWeb — deep tech fingerprinting (1800+ plugins)
                 if toolkit.whatweb.available:
@@ -1443,7 +1963,7 @@ class KillChainExecutor:
                     try:
                         whatweb_techs = await toolkit.whatweb.fingerprint(url)
                         if whatweb_techs:
-                            combined_techs.update(whatweb_techs)
+                            _merge_technologies(tech_dict, whatweb_techs)
                             self._emit("info", message=f"WhatWeb identified {len(whatweb_techs)} technologies")
                     except Exception as e:
                         self._emit("scanner_error", scanner="whatweb", error=str(e))
@@ -1454,16 +1974,129 @@ class KillChainExecutor:
                     try:
                         wa_techs = await toolkit.webanalyze.fingerprint(url)
                         if wa_techs:
-                            combined_techs.update(wa_techs)
+                            _merge_technologies(tech_dict, wa_techs)
                             self._emit("info", message=f"Webanalyze identified {len(wa_techs)} technologies")
                     except Exception as e:
                         self._emit("scanner_error", scanner="webanalyze", error=str(e))
 
-                if combined_techs:
-                    context["technologies"] = combined_techs
+                context["technologies"] = tech_dict
 
             except Exception as e:
                 self._emit("scanner_error", scanner="tech_fingerprint", error=str(e))
+
+        # Save tech fingerprint results
+        if self.output_manager and context.get("technologies"):
+            try:
+                self.output_manager.write_context_snapshot("technologies", context["technologies"], phase=1)
+            except Exception:
+                pass
+
+        # ── Step 4b: Tech-driven probing (T1592.002 + T1595.002) ─────────
+        # When specific technologies are detected, probe for technology-specific
+        # endpoints (actuator, wp-json, phpinfo, etc.).
+        if run_deep_recon:
+            try:
+                from beatrix.core.recon_helpers import get_tech_probe_paths
+                tech_dict = context.get("technologies", {})
+                if isinstance(tech_dict, dict) and tech_dict:
+                    probe_paths = get_tech_probe_paths(tech_dict)
+                    if probe_paths:
+                        self._emit("info", message=f"Tech-driven probing: {len(probe_paths)} technology-specific paths to check")
+                        import aiohttp
+                        connector = aiohttp.TCPConnector(ssl=False)
+                        async with aiohttp.ClientSession(connector=connector) as _tech_session:
+                            from beatrix.core.types import Finding, Severity, Confidence
+                            base = url.rstrip("/")
+                            tech_findings = []
+                            for path, desc, tech_name in probe_paths:
+                                try:
+                                    probe_url = f"{base}{path}"
+                                    async with _tech_session.get(
+                                        probe_url,
+                                        timeout=aiohttp.ClientTimeout(total=8),
+                                        allow_redirects=False,
+                                    ) as resp:
+                                        if resp.status in (200, 301, 302, 403):
+                                            context.setdefault("discovered_urls", []).append(probe_url)
+                                            context.setdefault("discovered_paths", []).append(path)
+                                            if resp.status == 200:
+                                                # Active endpoint — report as finding
+                                                body_preview = ""
+                                                try:
+                                                    body_preview = (await resp.text(errors="replace"))[:500]
+                                                except Exception:
+                                                    pass
+                                                sev = Severity.MEDIUM if any(k in path for k in ("/heapdump", "/env", "debug", "/script", "config")) else Severity.LOW
+                                                tech_findings.append(Finding(
+                                                    severity=sev,
+                                                    confidence=Confidence.CONFIRMED,
+                                                    url=probe_url,
+                                                    title=f"Tech-Specific Endpoint: {desc}",
+                                                    description=f"Technology-driven probe found {desc} at {path} (detected: {tech_name}). Status: {resp.status}.",
+                                                    evidence={"path": path, "status": resp.status, "tech": tech_name, "body_preview": body_preview[:200]},
+                                                    scanner_module="tech_probe",
+                                                    mitre_technique="T1592.002",
+                                                ))
+                                except Exception:
+                                    continue
+                            if tech_findings:
+                                results.append({"findings": tech_findings, "assets": [], "context": {}, "modules": ["tech_probe"], "requests": len(probe_paths)})
+                                self._emit("info", message=f"Tech-driven probing: {len(tech_findings)} findings")
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="tech_probe", error=str(e))
+
+        # ── Step 4c: Tech-version-to-CVE lookup (T1592.002 + T1596.005) ──
+        # Check detected technologies against known CVE ranges.
+        if run_deep_recon:
+            try:
+                from beatrix.core.recon_helpers import check_known_cves
+                from beatrix.core.types import Finding, Severity, Confidence
+                tech_dict = context.get("technologies", {})
+                if isinstance(tech_dict, dict):
+                    cve_matches = check_known_cves(tech_dict)
+                    if cve_matches:
+                        cve_findings = []
+                        for cve in cve_matches:
+                            sev_map = {"CRITICAL": Severity.CRITICAL, "HIGH": Severity.HIGH, "MEDIUM": Severity.MEDIUM}
+                            cve_findings.append(Finding(
+                                severity=sev_map.get(cve["severity"], Severity.MEDIUM),
+                                confidence=Confidence.FIRM,
+                                url=url,
+                                title=f"Outdated Component: {cve['tech']} {cve['version']} ({', '.join(cve['cves'][:3])})",
+                                description=cve["description"],
+                                evidence={"tech": cve["tech"], "version": cve["version"], "cves": cve["cves"], "fixed_in": cve["fixed_in"]},
+                                scanner_module="cve_lookup",
+                                owasp_category="A06:2021",
+                                mitre_technique="T1592.002",
+                            ))
+                        results.append({"findings": cve_findings, "assets": [], "context": {}, "modules": ["cve_lookup"], "requests": 0})
+                        self._emit("info", message=f"CVE lookup: {len(cve_findings)} outdated components with known CVEs")
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="cve_lookup", error=str(e))
+
+        # ── Step 4d: Favicon hash fingerprinting (T1592.002) ─────────────
+        if run_deep_recon:
+            try:
+                from beatrix.core.recon_helpers import check_favicon_hash
+                import aiohttp
+                connector = aiohttp.TCPConnector(ssl=False)
+                async with aiohttp.ClientSession(connector=connector) as _fav_session:
+                    favicon_tech = await check_favicon_hash(_fav_session, url)
+                    if favicon_tech:
+                        tech_dict = context.get("technologies", {})
+                        if not isinstance(tech_dict, dict):
+                            tech_dict = _merge_technologies({}, tech_dict)
+                        _merge_technologies(tech_dict, [favicon_tech])
+                        context["technologies"] = tech_dict
+                        self._emit("info", message=f"Favicon fingerprint: {favicon_tech}")
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="favicon", error=str(e))
 
         # ── Step 5: Dirsearch — directory and file brute-force ─────────────
         if run_deep_recon:
@@ -1555,6 +2188,7 @@ class KillChainExecutor:
                     if hasattr(nuclei, 'set_technologies'):
                         techs = context.get("technologies", {})
                         nuclei.set_technologies(techs)
+                        self._emit("info", message=f"Nuclei recon: {len(techs)} technologies fed for tag selection")
 
                     # Configure auth for authenticated recon
                     auth = context.get("auth")
@@ -1607,6 +2241,79 @@ class KillChainExecutor:
                 self._emit("scanner_error", scanner="recon", error=str(r))
             else:
                 results.append(r)
+
+        # ── Extract tech info from header scanner findings ────────────────
+        # The headers scanner reports server/x-powered-by as findings but
+        # this data never fed back into context["technologies"].  Extract
+        # version info from header disclosure findings so it enriches the
+        # tech fingerprint for Phase 4 and nuclei.
+        _sensitive_header_names = {"server", "x-powered-by", "x-aspnet-version",
+                                   "x-aspnetmvc-version", "x-generator"}
+        tech_dict = context.get("technologies", {})
+        if not isinstance(tech_dict, dict):
+            tech_dict = _merge_technologies({}, tech_dict)
+        for r in results:
+            for finding in r.get("findings", []):
+                scanner = getattr(finding, "scanner_module", "") if hasattr(finding, "scanner_module") else ""
+                if scanner != "headers":
+                    continue
+                evidence = getattr(finding, "evidence", "") or ""
+                for hdr_name in _sensitive_header_names:
+                    prefix = f"{hdr_name}: "
+                    if evidence.lower().startswith(prefix):
+                        hdr_value = evidence[len(prefix):].strip()
+                        if hdr_value:
+                            _merge_technologies(tech_dict, [hdr_value])
+                        break
+        context["technologies"] = tech_dict
+
+        # ── Per-endpoint header analysis (T1592.002) ─────────────────────
+        # Different path prefixes often have different header configurations
+        # (e.g. /api/, /admin/, static assets). Run the headers scanner on
+        # representative endpoints to catch inconsistent security headers.
+        if run_deep_recon:
+            try:
+                from urllib.parse import urlparse as _urlparse_hdr
+                ep_paths = set()
+                for disc_url in context.get("discovered_urls", [])[:200]:
+                    try:
+                        _p = _urlparse_hdr(disc_url)
+                        if _p.path and _p.path != "/":
+                            # Extract first path segment as prefix
+                            parts = _p.path.strip("/").split("/")
+                            if parts and parts[0]:
+                                ep_paths.add(f"/{parts[0]}/")
+                    except Exception:
+                        continue
+                # Pick up to 8 distinct path prefixes
+                header_targets = []
+                base = url.rstrip("/")
+                for path_prefix in sorted(ep_paths)[:8]:
+                    candidate = f"{base}{path_prefix}"
+                    if candidate != url and candidate not in header_targets:
+                        header_targets.append(candidate)
+                if header_targets:
+                    self._emit("info", message=f"Per-endpoint headers: testing {len(header_targets)} path prefixes")
+                    for ht_url in header_targets:
+                        try:
+                            r = await self._run_scanner("headers", ht_url, context)
+                            if r and r.get("findings"):
+                                results.append(r)
+                        except Exception:
+                            continue
+            except Exception as e:
+                self._emit("scanner_error", scanner="per_endpoint_headers", error=str(e))
+
+        # Log the full versioned tech fingerprint for visibility
+        versioned = [f"{k} {v}".strip() for k, v in sorted(tech_dict.items()) if v]
+        unversioned = [k for k, v in sorted(tech_dict.items()) if not v]
+        if versioned or unversioned:
+            parts = []
+            if versioned:
+                parts.append(f"versioned: {', '.join(versioned)}")
+            if unversioned:
+                parts.append(f"unversioned: {', '.join(unversioned)}")
+            self._emit("info", message=f"Tech fingerprint: {'; '.join(parts)}")
 
         # ── Step 7: Extract JS-discovered endpoints and feed them back ────
         # JS bundle scanner and endpoint_prober store discovered URLs only
@@ -1674,7 +2381,326 @@ class KillChainExecutor:
             f"{len(urls_with_params)} with params (+{len(urls_with_params) - prev_param_count})"
         ))
 
+        # ── Step 8: Source map discovery (T1592.004 + T1594) ─────────────
+        # Probe discovered JS files for .map source maps. Exposed source maps
+        # reveal full unminified source code, API routes, secrets, env vars.
+        if run_deep_recon:
+            try:
+                from beatrix.core.recon_helpers import discover_source_maps
+                from beatrix.core.types import Finding, Severity, Confidence
+                js_files = context.get("js_files", [])
+                if js_files:
+                    import aiohttp
+                    connector = aiohttp.TCPConnector(ssl=False)
+                    async with aiohttp.ClientSession(connector=connector) as _map_session:
+                        sm_result = await discover_source_maps(_map_session, js_files[:30], url)
+
+                    if sm_result["exposed_maps"]:
+                        sm_findings = []
+                        for sm in sm_result["exposed_maps"]:
+                            # Source map exposure is a standalone finding
+                            sm_findings.append(Finding(
+                                severity=Severity.MEDIUM,
+                                confidence=Confidence.CONFIRMED,
+                                url=sm["map_url"],
+                                title=f"Source Map Exposed ({sm['source_count']} original source files)",
+                                description=(
+                                    f"JavaScript source map at {sm['map_url']} exposes {sm['source_count']} "
+                                    f"original source files. This reveals unminified source code."
+                                ),
+                                evidence={
+                                    "js_url": sm["js_url"],
+                                    "map_url": sm["map_url"],
+                                    "source_count": sm["source_count"],
+                                    "sources": sm["sources"][:20],
+                                },
+                                scanner_module="source_map_discovery",
+                                mitre_technique="T1592.004",
+                                owasp_category="A01:2021",
+                            ))
+
+                            # Secrets from source maps → HIGH findings
+                            for secret in sm.get("secrets", []):
+                                sm_findings.append(Finding(
+                                    severity=Severity.HIGH,
+                                    confidence=Confidence.FIRM,
+                                    url=sm["map_url"],
+                                    title=f"Secret in Source Map: {secret['type']}",
+                                    description=f"Source map contains a {secret['type']} value.",
+                                    evidence={"type": secret["type"], "source_map": sm["map_url"]},
+                                    scanner_module="source_map_discovery",
+                                    mitre_technique="T1589.001",
+                                ))
+
+                            # Feed extracted API endpoints into attack surface
+                            if sm.get("endpoints"):
+                                base = url.rstrip("/")
+                                for ep in sm["endpoints"]:
+                                    full_ep = f"{base}{ep}" if ep.startswith("/") else ep
+                                    discovered_urls.add(full_ep)
+                                    if "?" in full_ep:
+                                        urls_with_params.add(full_ep)
+
+                        if sm_findings:
+                            results.append({"findings": sm_findings, "assets": [], "context": {}, "modules": ["source_map_discovery"], "requests": 0})
+                            self._emit("info", message=f"Source maps: {len(sm_result['exposed_maps'])} exposed, {sm_result['total_source_files']} source files")
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="source_map", error=str(e))
+
+        # ── Step 9: Feed auth-protected endpoints to context (T1589) ─────
+        # Endpoint prober finds 401/403 pages. Store them for the auth scanner
+        # to test in Phase 4 instead of using its own hardcoded path list.
+        auth_protected = []
+        for r in results:
+            for finding in r.get("findings", []):
+                scanner = getattr(finding, "scanner_module", "") if hasattr(finding, "scanner_module") else ""
+                if scanner == "endpoint_prober":
+                    ep_url = getattr(finding, "url", "")
+                    title = getattr(finding, "title", "") or ""
+                    if ep_url and ("401" in title or "403" in title or "Auth" in title or "Protected" in title):
+                        auth_protected.append(ep_url)
+        if auth_protected:
+            context["auth_protected_endpoints"] = auth_protected
+            self._emit("info", message=f"Auth-protected endpoints for Phase 4: {len(auth_protected)} ({', '.join(auth_protected[:5])})")
+
+        # ── Step 10: Internal host probing (T1590.004) ───────────────────
+        # Check if JS-discovered internal hostnames resolve and are accessible.
+        if run_deep_recon:
+            internal_hosts = context.get("internal_hosts", [])
+            if internal_hosts:
+                try:
+                    from beatrix.core.recon_helpers import probe_internal_hosts
+                    from beatrix.core.types import Finding, Severity, Confidence
+                    host_results = await probe_internal_hosts(internal_hosts)
+
+                    if host_results["accessible"]:
+                        for host, status in host_results["accessible"]:
+                            sev = Severity.HIGH if status == 200 else Severity.MEDIUM
+                            results.append({"findings": [Finding(
+                                severity=sev,
+                                confidence=Confidence.CONFIRMED,
+                                url=f"https://{host}",
+                                title=f"Internal Host Accessible: {host} (status {status})",
+                                description=f"Internal hostname {host} discovered in JS bundles resolves and responds to HTTP (status {status}). This may expose internal services.",
+                                evidence={"host": host, "status": status, "source": "js_bundle"},
+                                scanner_module="internal_host_probe",
+                                mitre_technique="T1590.004",
+                            )], "assets": [], "context": {}, "modules": ["internal_host_probe"], "requests": 0})
+
+                            # Feed accessible internal hosts into discovered URLs
+                            discovered_urls.add(f"https://{host}")
+                            context.setdefault("subdomains", []).append(host)
+
+                        self._emit("info", message=f"Internal hosts: {len(host_results['accessible'])} accessible, {len(host_results['resolvable'])} resolvable, {len(host_results['unresolvable'])} unresolvable")
+
+                    elif host_results["unresolvable"]:
+                        # Non-resolvable internal hosts are still an info leak
+                        results.append({"findings": [Finding(
+                            severity=Severity.INFO,
+                            confidence=Confidence.CONFIRMED,
+                            url=url,
+                            title=f"Internal Hostnames Disclosed ({len(internal_hosts)} hosts)",
+                            description=f"JS bundles reveal internal hostnames: {', '.join(internal_hosts[:10])}. These do not resolve externally but reveal internal infrastructure naming.",
+                            evidence={"hosts": internal_hosts[:20]},
+                            scanner_module="internal_host_probe",
+                            mitre_technique="T1590.004",
+                        )], "assets": [], "context": {}, "modules": ["internal_host_probe"], "requests": 0})
+
+                except ImportError:
+                    pass
+                except Exception as e:
+                    self._emit("scanner_error", scanner="internal_host_probe", error=str(e))
+
+        # ── Step 11: Subdomain liveness scanning (T1595.001) ─────────────
+        # Probe discovered subdomains for liveness. Alive subdomains become
+        # scanning targets for all subsequent phases.
+        if run_deep_recon and not target_is_ip:
+            subdomains = context.get("subdomains", [])
+            if subdomains:
+                try:
+                    from beatrix.core.recon_helpers import probe_subdomain_liveness
+                    self._emit("info", message=f"Probing {min(len(subdomains), 100)} subdomains for liveness")
+                    sub_results = await probe_subdomain_liveness(subdomains)
+
+                    alive = sub_results.get("alive", [])
+                    if alive:
+                        context["alive_subdomains"] = alive
+                        # Feed alive subdomain URLs into discovered URLs
+                        for sub_info in alive:
+                            sub_url = sub_info.get("url", "")
+                            if sub_url:
+                                discovered_urls.add(sub_url)
+                            # Merge subdomain tech fingerprints
+                            for tech in sub_info.get("technologies", []):
+                                if tech:
+                                    tech_dict = context.get("technologies", {})
+                                    if not isinstance(tech_dict, dict):
+                                        tech_dict = _merge_technologies({}, tech_dict)
+                                    _merge_technologies(tech_dict, [tech])
+                                    context["technologies"] = tech_dict
+
+                        self._emit("info", message=(
+                            f"Subdomain liveness: {len(alive)}/{len(subdomains)} alive "
+                            f"({', '.join(s['subdomain'] for s in alive[:5])})"
+                        ))
+                    else:
+                        self._emit("info", message=f"Subdomain liveness: 0/{len(subdomains)} responded")
+
+                except ImportError:
+                    pass
+                except Exception as e:
+                    self._emit("scanner_error", scanner="subdomain_probe", error=str(e))
+
+        # ── Step 12: GitHub domain-wide code search (T1593.003) ──────────
+        # Search GitHub for third-party repos referencing the target domain
+        # (leaked API keys, internal URLs, config files).
+        if run_deep_recon and not target_is_ip:
+            try:
+                from beatrix.core.recon_helpers import github_domain_search
+                from beatrix.core.types import Finding, Severity, Confidence
+                import os
+                gh_token = os.environ.get("GITHUB_TOKEN", "")
+                gh_results = await github_domain_search(domain, token=gh_token)
+                if gh_results:
+                    gh_findings = []
+                    for gr in gh_results:
+                        gh_findings.append(Finding(
+                            severity=Severity.MEDIUM,
+                            confidence=Confidence.TENTATIVE,
+                            url=gr.get("url", ""),
+                            title=f"Domain Referenced in GitHub: {gr.get('repo', 'unknown')}",
+                            description=(
+                                f"File {gr.get('file', '')} in repo {gr.get('repo', '')} "
+                                f"references {domain}. Query: {gr.get('query', '')}. "
+                                f"May contain leaked credentials or internal configurations."
+                            ),
+                            evidence={"repo": gr.get("repo"), "file": gr.get("file"), "query": gr.get("query")},
+                            scanner_module="github_domain_search",
+                            mitre_technique="T1593.003",
+                        ))
+                    if gh_findings:
+                        results.append({"findings": gh_findings, "assets": [], "context": {}, "modules": ["github_domain_search"], "requests": 0})
+                        self._emit("info", message=f"GitHub domain search: {len(gh_findings)} third-party references found")
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="github_domain_search", error=str(e))
+
+        # ── Step 13: WHOIS / ASN lookup (T1596.002) ──────────────────────
+        # Infrastructure mapping via WHOIS and ASN data.
+        if run_deep_recon and not target_is_ip:
+            try:
+                from beatrix.core.recon_helpers import whois_asn_lookup
+                asn_data = await whois_asn_lookup(domain)
+                if asn_data.get("asn"):
+                    context["asn_info"] = asn_data
+                    self._emit("info", message=f"ASN: {asn_data.get('asn')} ({asn_data.get('asn_org', 'unknown')})")
+            except ImportError:
+                pass
+            except Exception as e:
+                self._emit("scanner_error", scanner="whois_asn", error=str(e))
+
+        # Save WHOIS/ASN results
+        if self.output_manager and context.get("asn_info"):
+            try:
+                self.output_manager.write_context_snapshot("whois_asn", context["asn_info"], phase=1)
+            except Exception:
+                pass
+
+        # Update context with final enriched URL sets
+        context["discovered_urls"] = sorted(discovered_urls)
+        context["urls_with_params"] = sorted(urls_with_params)
+
         merged = await self._merge_scanner_results(results)
+
+        # ── Finding enricher for recon-phase findings ────────────────────
+        # Enrich CWE, impact, poc_curl, reproduction steps on all recon
+        # findings before they flow into subsequent phases.
+        try:
+            from beatrix.core.finding_enricher import FindingEnricher
+            enricher = FindingEnricher()
+            recon_findings = merged.get("findings", [])
+            if recon_findings:
+                enricher.enrich_batch(recon_findings)
+                self._emit("info", message=f"Enriched {len(recon_findings)} recon findings (CWE, impact, PoC)")
+        except ImportError:
+            pass
+        except Exception as e:
+            self._emit("scanner_error", scanner="finding_enricher", error=str(e))
+
+        # ── Unified parameter registry ───────────────────────────────────
+        # Build a (endpoint, param_name) → {sources, values_seen} registry
+        # so downstream scanners know exactly which parameters to test and
+        # can correlate parameters across discovery sources.
+        param_registry: Dict[str, Dict] = {}  # param_name → {endpoints, sources}
+        # Crawl-discovered parameters
+        if crawl_result:
+            for param_name, param_urls in crawl_result.parameters.items():
+                entry = param_registry.setdefault(param_name, {"endpoints": set(), "sources": set()})
+                entry["endpoints"].update(param_urls)
+                entry["sources"].add("crawler")
+        # Hidden inputs from HTML extraction
+        for hp in context.get("hidden_params", []):
+            if isinstance(hp, dict):
+                pname = hp.get("name", "")
+            else:
+                pname = str(hp)
+            if pname:
+                entry = param_registry.setdefault(pname, {"endpoints": set(), "sources": set()})
+                entry["sources"].add("html_hidden_input")
+        # URL query parameters from urls_with_params
+        from urllib.parse import urlparse as _urlparse_reg, parse_qs as _parse_qs_reg
+        for disc_url in context.get("urls_with_params", []):
+            try:
+                _p = _urlparse_reg(disc_url)
+                for pname in _parse_qs_reg(_p.query).keys():
+                    entry = param_registry.setdefault(pname, {"endpoints": set(), "sources": set()})
+                    entry["endpoints"].add(disc_url)
+                    entry["sources"].add("url_discovery")
+            except Exception:
+                continue
+        # Form parameters
+        for form in context.get("forms", []):
+            action = form.get("action", "")
+            for param in form.get("params", []):
+                pname = param.get("name", "")
+                if pname:
+                    entry = param_registry.setdefault(pname, {"endpoints": set(), "sources": set()})
+                    if action:
+                        entry["endpoints"].add(action)
+                    entry["sources"].add("form")
+        # Serialize sets for JSON compat and store
+        context["param_registry"] = {
+            pname: {
+                "endpoints": sorted(data["endpoints"])[:20],
+                "sources": sorted(data["sources"]),
+                "count": len(data["endpoints"]),
+            }
+            for pname, data in param_registry.items()
+        }
+        if param_registry:
+            self._emit("info", message=(
+                f"Parameter registry: {len(param_registry)} unique params "
+                f"across {sum(len(d['endpoints']) for d in param_registry.values())} endpoints"
+            ))
+
+        # Save parameter registry and final attack surface
+        if self.output_manager:
+            try:
+                if context.get("param_registry"):
+                    self.output_manager.write_context_snapshot("param_registry", context["param_registry"], phase=1)
+                self.output_manager.write_context_snapshot("attack_surface", {
+                    "discovered_urls": sorted(discovered_urls)[:1000],
+                    "urls_with_params": sorted(urls_with_params)[:1000],
+                    "js_files": context.get("js_files", []),
+                    "forms": context.get("forms", []),
+                    "internal_hosts": context.get("internal_hosts", []),
+                    "alive_subdomains": context.get("alive_subdomains", []),
+                }, phase=1)
+            except Exception:
+                pass
 
         # Add discovered assets to the merged result
         all_discovered = sorted(discovered_urls)
@@ -2024,8 +3050,18 @@ class KillChainExecutor:
         results.append(await self._run_scanner_on_urls("idor", idor_targets, context))
         results.append(await self._run_scanner_on_urls("bac", idor_targets, context))
 
-        # ── Auth — runs on base URL checking for auth issues ──────────────────
-        results.append(await self._run_scanner("auth", url, context))
+        # ── Auth — runs on base URL + auth-protected endpoints from recon ─────
+        # Phase 1 recon stores 401/403 endpoints in context["auth_protected_endpoints"].
+        # Feed these to auth and BAC scanners as priority targets instead of
+        # relying solely on hardcoded path lists.
+        auth_targets = [url]
+        auth_endpoints = context.get("auth_protected_endpoints", [])
+        if auth_endpoints:
+            auth_targets.extend(auth_endpoints[:15])
+            self._emit("info", message=f"Auth scanner: testing {len(auth_endpoints)} recon-discovered auth-protected endpoints")
+        results.append(await self._run_scanner_on_urls("auth", auth_targets, context))
+        if auth_endpoints:
+            results.append(await self._run_scanner_on_urls("bac", auth_endpoints[:15], context))
 
         # ── GraphQL — discovers and tests GraphQL endpoints ───────────────────
         results.append(await self._run_scanner("graphql", url, context))
@@ -2089,6 +3125,7 @@ class KillChainExecutor:
             if hasattr(nuclei, 'set_technologies'):
                 techs = context.get("technologies", {})
                 nuclei.set_technologies(techs)
+                self._emit("info", message=f"Nuclei exploit: {len(techs)} technologies fed for tag selection")
 
             # Configure authentication for nuclei
             auth = context.get("auth")
@@ -3125,6 +4162,17 @@ class KillChainExecutor:
                 self._emit("phase_done", phase=phase.name_pretty,
                            findings=len(result.findings),
                            duration=result.duration)
+
+                # Save phase context snapshot to output directory
+                if self.output_manager and result.context:
+                    try:
+                        self.output_manager.write_context_snapshot(
+                            f"phase_{phase.value}_{phase.name_pretty}",
+                            result.context,
+                            phase=phase.value,
+                        )
+                    except Exception:
+                        pass  # Output saving is best-effort
             else:
                 # No handler registered, skip
                 result.status = PhaseStatus.SKIPPED

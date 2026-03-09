@@ -50,7 +50,11 @@ except ImportError:
 
 # WAF bypass payload generation
 try:
-    from beatrix.utils.advanced_waf_bypass import get_waf_bypass_payloads as _get_adv_bypass
+    from beatrix.utils.advanced_waf_bypass import (
+        get_waf_bypass_payloads as _get_adv_bypass,
+        PayloadObfuscator,
+        AdvancedWAFBypass,
+    )
     HAS_WAF_BYPASS = True
 except ImportError:
     HAS_WAF_BYPASS = False
@@ -97,6 +101,16 @@ class InjectionScanner(BaseScanner):
         self.insertion_detector = InsertionPointDetector(config)
         self._seclists = None
         self._payloads = None  # Lazy-loaded on first scan
+        self._waf_profile = None  # Set by kill_chain via set_waf_profile()
+        self._obfuscator = PayloadObfuscator() if HAS_WAF_BYPASS else None
+
+    def set_waf_profile(self, waf_name: str) -> None:
+        """Set the WAF profile for targeted payload encoding.
+
+        Called by the kill chain when a CDN/WAF is detected during recon.
+        """
+        self._waf_profile = waf_name
+        self.log(f"WAF profile set: {waf_name} — payloads will be obfuscated")
 
     @property
     def payloads(self) -> Dict[str, List[Payload]]:
@@ -575,6 +589,39 @@ class InjectionScanner(BaseScanner):
             payloads = self.payloads.get(category, [])
             found_in_category = False
 
+            # ── WAF-aware payload enrichment ───────────────────────────
+            # When a WAF profile is set, generate obfuscated variants of
+            # each payload BEFORE batching — bypass-first, not bypass-last.
+            if self._waf_profile and self._obfuscator and payloads:
+                attack_type_map = {"sqli": "sqli", "xss": "xss", "cmdi": "cmdi",
+                                   "ssti": "ssti", "path": "lfi"}
+                attack_type = attack_type_map.get(category, "sqli")
+                enriched = []
+                seen = set()
+                for p in payloads:
+                    # Original payload first
+                    if p.value not in seen:
+                        enriched.append(p)
+                        seen.add(p.value)
+                    # Generate 3 WAF bypass variants per payload
+                    try:
+                        bypasses = _get_adv_bypass(p.value, attack_type, self._waf_profile)[:3]
+                        for bp in bypasses:
+                            if bp not in seen:
+                                seen.add(bp)
+                                enriched.append(Payload(
+                                    value=bp,
+                                    name=f"{p.name}_waf",
+                                    category=p.category,
+                                    detection=p.detection,
+                                    patterns=p.patterns,
+                                    severity=p.severity,
+                                    time_threshold=p.time_threshold,
+                                ))
+                    except Exception:
+                        pass
+                payloads = enriched
+
             # D-02: parallel batching — split payloads into non-time (batchable)
             # and time-based (must be sequential for timing accuracy).
             _BATCH_SIZE = self.config.get("payload_batch_size", 5)
@@ -612,9 +659,9 @@ class InjectionScanner(BaseScanner):
                             self._found_categories.add(category)
                         break
 
-            # WAF bypass fallback — if no findings in this category and WAF bypass
-            # payloads are available, retry the first payload with evasion variants
-            if not found_in_category and HAS_WAF_BYPASS and payloads:
+            # WAF bypass fallback — only if no WAF profile was set upfront
+            # (if profile was set, payloads were already enriched above)
+            if not found_in_category and not self._waf_profile and HAS_WAF_BYPASS and payloads:
                 attack_type_map = {"sqli": "sqli", "xss": "xss", "cmdi": "cmdi",
                                    "ssti": "ssti", "path": "lfi"}
                 attack_type = attack_type_map.get(category, "sqli")

@@ -549,6 +549,7 @@
                 <li class="sub-item"><a href="#config">Configuration</a></li>
                 
                 <li><a href="#architecture">3. Architecture & Kill Chain</a></li>
+                <li class="sub-item"><a href="#scan-output">Scan Output Directory</a></li>
                 
                 <li><a href="#commands">4. Command Reference</a></li>
                 <li class="sub-item"><a href="#cmd-probe">probe</a></li>
@@ -819,6 +820,20 @@ beatrix strike https://api.example.com/v1/users -m idor</code></pre>
                     <li><strong>📡 Command &amp; Control:</strong> OOB callback polling via the built-in <code>PoCServer</code> (pure asyncio HTTP server, auto-binds free port, auto-detects local IP) or external <code>interact.sh</code>. The <code>LocalPoCClient</code> wraps the PoC server with offset-based dedup polling &mdash; correlates DNS/HTTP callbacks from blind SSRF, XXE, and RCE payloads injected during Phase 4. Confirmed interactions become CRITICAL findings. The PoC server also hosts CORS exploitation PoCs, clickjacking PoCs, and data exfiltration collection endpoints.</li>
                     <li><strong>🎯 Objectives:</strong> Finding aggregation, deduplication, and impact assessment.</li>
                 </ol>
+
+                <h3 id="scan-output">📁 Scan Output Directory</h3>
+                <p>Every <code>beatrix hunt</code> automatically creates an organized output directory in the current working directory. The directory is named after the target with a timestamp:</p>
+                <pre><code>{target}-scan-{DD}-{Mon}-{YYYY}_{HH}-{MM}-{SS}/
+├── scan_info.txt               # Scan metadata (target, times, duration)
+├── recon/                      # Phase 1: katana, amass, nmap, whatweb raw output
+├── weaponization/              # Phase 2: takeover, error disclosure results
+├── delivery/                   # Phase 3: CORS, redirect, smuggling results
+├── exploitation/               # Phase 4: sqlmap, dalfox, injection results
+├── installation/               # Phase 5: file upload results
+├── c2/                         # Phase 6: OOB callback results
+├── actions/                    # Phase 7: VRT classification results
+└── findings/                   # Final aggregated findings JSON + summary</code></pre>
+                <p>All 13 external tool runners automatically capture raw stdout. Scanner results are saved as JSON after each module completes. Context snapshots (technologies, URLs, etc.) are saved after each kill chain phase. No extra flags needed &mdash; output is always saved automatically.</p>
             </section>
 
             <section id="commands">

@@ -721,7 +721,8 @@ beatrix/
 │   ├── correlation_engine.py # MITRE ATT&CK correlation
 │   ├── findings_db.py       # SQLite findings storage (WAL mode)
 │   ├── issue_consolidator.py # Finding deduplication
-│   └── poc_chain_engine.py  # PoC generation + Metasploit integration
+│   ├── poc_chain_engine.py  # PoC generation + Metasploit integration
+│   └── scan_output.py       # Per-scan organized output directory
 ├── scanners/
 │   ├── base.py              # BaseScanner ABC — rate limiting, httpx client
 │   ├── crawler.py           # Target spider — foundation for all scanning
@@ -740,6 +741,27 @@ beatrix/
 ├── integrations/            # HackerOne API client
 └── utils/                   # WAF bypass, VRT classifier, helpers, response_analyzer
 ```
+
+---
+
+## Scan Output
+
+Every `beatrix hunt` automatically creates an organized output directory in the current working directory, named after the target and timestamped:
+
+```
+example.com-scan-09-Mar-2026_17-53-48/
+├── scan_info.txt               # Scan metadata (target, times, duration)
+├── recon/                      # Phase 1: katana, amass, nmap, whatweb output
+├── weaponization/              # Phase 2: takeover, error disclosure results
+├── delivery/                   # Phase 3: CORS, redirect, smuggling results
+├── exploitation/               # Phase 4: sqlmap, dalfox, injection results
+├── installation/               # Phase 5: file upload results
+├── c2/                         # Phase 6: OOB callback results
+├── actions/                    # Phase 7: VRT classification results
+└── findings/                   # Final aggregated findings JSON + summary
+```
+
+All 13 external tool runners automatically capture raw stdout, and scanner results are saved as JSON after each module completes. No extra flags needed — output is always saved.
 
 ---
 
