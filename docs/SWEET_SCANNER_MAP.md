@@ -57,7 +57,7 @@ String key → class instance, all wired in `core/engine.py`:
 | `business_logic` | `BusinessLogicScanner` | `scanners/business_logic.py` |
 | `redos` | `ReDoSScanner` | `scanners/redos.py` |
 | `payment` | `PaymentScanner` | `scanners/payment_scanner.py` |
-| `nuclei` | `NucleiScanner` | `scanners/nuclei.py` (versioned tech Dict, WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI) |
+| `nuclei` | `NucleiScanner` | `scanners/nuclei.py` (versioned tech Dict, WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI). All scanners inherit 11-profile WAF bypass from BaseScanner |
 | `file_upload` | `FileUploadScanner` | `scanners/file_upload.py` |
 | `backslash` | `BackslashPoweredScanner` | `scanners/backslash_scanner.py` |
 | `param_miner` | `ParamMiner` | `scanners/param_miner.py` |
@@ -127,7 +127,8 @@ All scanners extend `BaseScanner` (`scanners/base.py`):
 | `apply_auth(auth_creds)` | Injects headers + cookies into httpx client |
 | `reapply_auth(auth_creds)` | Re-injects after mid-scan re-authentication |
 | `session_appears_dead` | True after ≥3 consecutive 401s |
-| `request(method, url, **kw)` | Rate-limited HTTP with 429 retry (3×) and 401 tracking |
+| `request(method, url, **kw)` | Rate-limited HTTP with 429 retry (3×), 401 tracking, WAF bypass (11 profiles, 3-strategy retry with adaptive learning, 30 CDN challenge markers) |
+| `set_waf_profile(waf_name)` | Set WAF profile for profile-aware bypass — auto-called by kill chain on CDN detection, normalizes aliases (Incapsula→imperva, CloudFront→aws_waf) |
 | `create_finding(...)` | Pre-stamps `scanner_module`, `owasp_category`, `mitre_technique`, `found_at` |
 
 `ScanContext` dataclass: `url`, `base_url`, `request`, `response`, `parameters`, `headers`, `cookies`, `insertion_points`, `extra`, `timestamp`. Factory: `ScanContext.from_url(url)`.

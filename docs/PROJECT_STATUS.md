@@ -1,8 +1,8 @@
 # BEATRIX Project Status
 
-**Version:** 1.0.4
+**Version:** 1.0.5
 **Last Updated:** March 10, 2026
-**Current Phase:** Stable — All 47/47 audit items fixed, IP address target support added, nuclei integration fully fixed (16 issues), injection/JS bundle/auth scanner false positives fixed, origin IP pipeline hardened with ASN validation, **version-aware tech fingerprint pipeline implemented**, **per-scan organized output directories implemented**, **CDN gate — skips network Phases 1-3 when behind CDN with no origin IP**, **MITRE ATT&CK TA0043 recon advancement — 13-step pipeline with recon_helpers.py**
+**Current Phase:** Stable — All 47/47 audit items fixed, IP address target support added, nuclei integration fully fixed (16 issues), injection/JS bundle/auth scanner false positives fixed, origin IP pipeline hardened with ASN validation, **version-aware tech fingerprint pipeline implemented**, **per-scan organized output directories implemented**, **CDN gate — skips network Phases 1-3 when behind CDN with no origin IP**, **MITRE ATT&CK TA0043 recon advancement — 13-step pipeline with recon_helpers.py**, **WAF bypass overhaul — 11 WAF profiles, profile-aware 3-strategy retry, adaptive learning**
 **Framework LOC:** ~75,300 (113 Python files total, ~67,800 in inner package)
 
 ---
@@ -20,7 +20,7 @@
 | Integrations | 683 | 2 | ✅ Working | HackerOne API client |
 | Validators | 1,277 | 3 | ✅ Working | ImpactValidator, ReadinessGate |
 | Reporters | 1,294 | 2 | ✅ Working | Chain reporting, HTML output, VRT enrichment (Bugcrowd VRT + CVSS 3.1) |
-| Utils | 3,716 | 6 | ✅ Working | WAF bypass, VRT classifier, helpers (`is_ip_address()` used by 6 modules), response validator |
+| Utils | 3,716 | 6 | ✅ Working | WAF bypass (11 profiles: Cloudflare, Akamai, Imperva, ModSecurity, AWS WAF, F5, PerimeterX, DataDome, Kasada, Sucuri, Fastly), VRT classifier, helpers (`is_ip_address()` used by 6 modules), response validator |
 
 ---
 
@@ -125,7 +125,7 @@ beatrix/                       # Inner framework package
 │   ├── finding_enricher.py    # Deterministic finding enrichment (poc_curl, impact, CWE) (542 LOC)
 │   └── scan_output.py         # ScanOutputManager — per-scan organized output directory (~300 LOC)
 ├── scanners/                  # Scanner modules (29.5K LOC, 40 files)
-│   ├── base.py                # BaseScanner ABC, ScanContext
+│   ├── base.py                # BaseScanner ABC, ScanContext (WAF: 11-profile bypass, 3-strategy retry, 30 CDN markers, adaptive learning)
 │   ├── injection.py           # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads, response_analyzer behavioral detection, WAF bypass fallback)
 │   ├── ssrf.py                # SSRF (44 payloads, gopher/AWS/GCP/Azure)
 │   ├── idor.py                # IDOR + method override
@@ -187,7 +187,7 @@ beatrix/                       # Inner framework package
 │   └── chain_reporting.py     # Attack chain HTML reports
 └── utils/                     # Shared utilities (3.7K LOC, 6 files)
     ├── helpers.py             # HTTP helpers, encoding, parsing, is_ip_address() (used by kill_chain, recon, rapid, cors, github_recon, subfinder)
-    ├── advanced_waf_bypass.py # WAF evasion techniques
+    ├── advanced_waf_bypass.py # WAF evasion (11 profiles, 14 encoding types, 9 transforms, alias normalization)
     ├── vrt_classifier.py      # Bugcrowd VRT classification
     └── response_validator.py  # Response validation utilities
 ```
@@ -229,6 +229,7 @@ Ported from Java `AIAgentV2.java` (1,215 lines) → Python `ghost.py` (~700 line
 - [x] Version-aware tech fingerprint pipeline — versions preserved from all sources (crawler, nmap, WhatWeb, Webanalyze, headers) through to nuclei
 - [x] Per-scan organized output directories — `ScanOutputManager` auto-creates `{target}-scan-{date}_{time}` folder with phase-organized raw tool output, scanner results, context snapshots, and findings
 - [x] MITRE ATT&CK TA0043 recon advancement — 13-step reconnaissance pipeline mapped to 7 MITRE technique families (T1594, T1595, T1590, T1592, T1593, T1596, T1589), `recon_helpers.py` (700 LOC, 14 functions), scope-aware crawling, error response capture, per-endpoint header analysis, unified parameter registry, finding enrichment, ReconRunner deprecated
+- [x] WAF bypass overhaul — 11 WAF profiles (Cloudflare, Akamai, Imperva, ModSecurity, AWS WAF, F5, PerimeterX, DataDome, Kasada, Sucuri, Fastly), profile-aware 3-strategy retry in BaseScanner, adaptive learning, SmartFuzzer profile-aware encoding, CDN name alias normalization, 30 challenge markers
 - [ ] Move `bounty_hunter.py` into `beatrix/hunters/bounty.py` (proper framework module)
 - [ ] Add unit tests for GHOST agent
 - [ ] Add unit tests for scanner modules

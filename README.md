@@ -147,11 +147,11 @@ beatrix list --modules
 
 Every `hunt` follows the Cyber Kill Chain methodology:
 
-1. 🛡️ **CDN Bypass** — Detects Cloudflare/Akamai/Fastly/CloudFront via IP range + header fingerprinting. Discovers origin IPs through 6+ techniques (DNS history, crt.sh SSL certs, MX records, subdomain correlation, misconfiguration checks, WHOIS). If origin found, all network scans target the real server instead of CDN edge. Optional API keys (SecurityTrails, Censys, Shodan) via environment variables.
+1. 🛡️ **CDN Bypass** — Detects Cloudflare/Akamai/Fastly/CloudFront/Sucuri/Incapsula/PerimeterX/DataDome/Kasada via IP range + header fingerprinting. Discovers origin IPs through 6+ techniques (DNS history, crt.sh SSL certs, MX records, subdomain correlation, misconfiguration checks, WHOIS). If origin found, all network scans target the real server instead of CDN edge. Optional API keys (SecurityTrails, Censys, Shodan) via environment variables.
 2. 🔍 **Reconnaissance** — Subdomain enum (`subfinder`, `amass`), crawling (`katana`, `gospider`, `hakrawler`, `gau`), **full 65535-port TCP scan** (`nmap -sS -p-`) against origin IP when available, service fingerprinting, NSE vuln/discovery/auth scripts, UDP top-50 scan, **firewall fingerprinting + bypass testing** (`scapy`), **SSH deep audit** (`paramiko`), JS analysis, endpoint probing, tech fingerprinting (`whatweb`, `webanalyze`), **nuclei recon** (fast tech/panel/WAF detection), **nuclei network** (protocol checks on non-HTTP services)
 2. ⚔️ **Weaponization** — Subdomain takeover, error disclosure, cache poisoning, prototype pollution
 3. 📦 **Delivery** — CORS, open redirects, OAuth redirect, HTTP smuggling, WebSocket testing
-4. 💥 **Exploitation** — Injection (SQLi/XSS/CMDi) with response_analyzer behavioral detection and WAF bypass fallback, SSRF, IDOR, BAC, auth bypass, SSTI, XXE, deserialization, GraphQL, mass assignment, business logic, ReDoS, payment, **nuclei exploit scan** (CVEs, workflows, authenticated, interactsh OOB, **WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI**), **nuclei headless** (DOM XSS, prototype pollution). SmartFuzzer runs ffuf-verified fuzzing on parameterized URLs. Confirmed findings are escalated to deep exploitation tools (`sqlmap`, `dalfox`, `commix`, `jwt_tool`)
+4. 💥 **Exploitation** — Injection (SQLi/XSS/CMDi) with response_analyzer behavioral detection and WAF bypass fallback (11 WAF profiles, profile-aware 3-strategy retry with adaptive learning), SSRF, IDOR, BAC, auth bypass, SSTI, XXE, deserialization, GraphQL, mass assignment, business logic, ReDoS, payment, **nuclei exploit scan** (CVEs, workflows, authenticated, interactsh OOB, **WAF bypass: realistic UA, CDN-aware rate limiting, origin IP rewrite with TLS SNI**), **nuclei headless** (DOM XSS, prototype pollution). SmartFuzzer runs ffuf-verified fuzzing with profile-targeted WAF encoding on parameterized URLs. Confirmed findings are escalated to deep exploitation tools (`sqlmap`, `dalfox`, `commix`, `jwt_tool`)
 5. 🔧 **Installation** — File upload bypass, polyglot uploads, path traversal
 6. 📡 **Command & Control** — OOB callback correlation via built-in `PoCServer` (pure asyncio HTTP server, auto-binds free port) or external `interact.sh`. Blind SSRF/XXE/RCE confirmation from callbacks registered during Phase 4. `LocalPoCClient` provides offset-based dedup polling.
 7. 🎯 **Objectives** — VRT classification (Bugcrowd VRT + CVSS 3.1), exploit chain generation via PoCChainEngine (correlates ≥2 findings), finding aggregation, deduplication, impact assessment
@@ -204,7 +204,7 @@ Run `beatrix arsenal` for the full table. 32 registered modules across 5 kill ch
 
 | Module | What It Does |
 |--------|-------------|
-| `origin_ip` | CDN detection (Cloudflare/Akamai/Fastly/CloudFront) + origin IP discovery via DNS history, SSL certs, MX records, subdomain correlation, misconfig checks |
+| `origin_ip` | CDN detection (Cloudflare/Akamai/Fastly/CloudFront/Sucuri/Incapsula/PerimeterX/DataDome/Kasada) + origin IP discovery via DNS history, SSL certs, MX records, subdomain correlation, misconfig checks |
 | `crawl` | Depth-limited spider with soft-404 detection, form/param extraction |
 | `endpoint_prober` | Probes 200+ common API/admin/debug paths |
 | `js_analysis` | Extracts API routes, secrets, source maps from JS bundles |
@@ -237,7 +237,7 @@ Run `beatrix arsenal` for the full table. 32 registered modules across 5 kill ch
 
 | Module | What It Does |
 |--------|-------------|
-| `injection` | SQLi, XSS, CMDi, LFI, SSTI — 57K+ payloads via SecLists + PayloadsAllTheThings, response_analyzer behavioral detection, WAF bypass fallback |
+| `injection` | SQLi, XSS, CMDi, LFI, SSTI — 57K+ payloads via SecLists + PayloadsAllTheThings, response_analyzer behavioral detection, profile-aware WAF bypass (11 profiles) |
 | `ssrf` | 44+ payloads, cloud metadata, internal service access |
 | `idor` | Sequential/UUID/negative ID manipulation |
 | `bac` | Method override, force browsing, privilege escalation |
@@ -250,7 +250,7 @@ Run `beatrix arsenal` for the full table. 32 registered modules across 5 kill ch
 | `business_logic` | Race conditions, boundary testing |
 | `redos` | Regular expression denial of service |
 | `payment` | Checkout flow manipulation, price tampering |
-| `nuclei` | Intelligent multi-phase scanner — recon, exploit, network, headless. 18,000+ templates with WAF bypass (realistic UA, CDN-aware rate limiting, origin IP rewrite) |
+| `nuclei` | Intelligent multi-phase scanner — recon, exploit, network, headless. 18,000+ templates with WAF bypass (realistic UA, CDN-aware rate limiting, origin IP rewrite). All scanners: 11-profile WAF bypass with 3-strategy retry and adaptive learning |
 
 **Phase 5 — Installation:**
 

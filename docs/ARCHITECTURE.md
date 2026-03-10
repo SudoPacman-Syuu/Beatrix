@@ -75,7 +75,7 @@ module key shown below.
 | 1. Reconnaissance | `_handle_recon` | `crawl` (scope-aware, error capture), `endpoint_prober`, `js_analysis`, `headers` (per-endpoint), `github_recon` + external: subfinder, amass, nmap, katana, gospider, hakrawler, gau, whatweb, webanalyze, dirsearch + `recon_helpers`: robots/sitemap, HTML intel, SSL SAN, DNS recon, source maps, CVE lookup, favicon hash, subdomain liveness, WHOIS/ASN, GitHub domain search, internal host probe + **browser crawl fallback** (Playwright when WAF blocks HTTP crawler) + **per-subdomain crawling** (up to 15 alive subdomains) |
 | 2. Weaponization | `_handle_weaponization` | `takeover`, `error_disclosure`, `cache_poisoning`, `prototype_pollution` |
 | 3. Delivery | `_handle_delivery` | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` |
-| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass + baseline XSS filter), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` (WAF bypass: realistic UA, CDN-aware rate limiting, additive origin IP scan with TLS SNI, FTL error detection, stats parsing) + SmartFuzzer (ffuf verification, WAF-aware rate limiting) + parameterized URL recovery from `discovered_urls` + external: sqlmap, dalfox, commix, jwt_tool |
+| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass + baseline XSS filter), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` (11-profile WAF bypass, 3-strategy retry, CDN-aware rate limiting, additive origin IP scan with TLS SNI, FTL error detection, stats parsing) + SmartFuzzer (ffuf verification, WAF-profile-aware payload mutation via AdvancedWAFBypass) + parameterized URL recovery from `discovered_urls` + external: sqlmap, dalfox, commix, jwt_tool |
 | 5. Installation | `_handle_installation` | `file_upload` |
 | 6. C2 | `_handle_c2` | OOB detector polling — `LocalPoCClient` (built-in) or `InteractshClient` (external). PoCServer callbacks are polled with dedup tracking. |
 | 7. Actions | `_handle_actions` | VRT classification (Bugcrowd VRT + CVSS 3.1) → PoCChainEngine (exploit chain generation from correlated findings) → aggregation via `KillChainState.all_findings` |
@@ -321,7 +321,7 @@ crawling — expanding attack surface discovery beyond same-origin links.
 
 ## CDN Gate — Network Scan Intelligence
 
-When a CDN (Cloudflare, Akamai, Fastly, CloudFront, Sucuri, Incapsula) is detected via `origin_ip_discovery.py` and **no origin IP** can be discovered, the network pipeline's Phases 1–3 are **skipped entirely**:
+When a CDN (Cloudflare, Akamai, Fastly, CloudFront, Sucuri, Incapsula, PerimeterX, DataDome, Kasada) is detected via `origin_ip_discovery.py` and **no origin IP** can be discovered, the network pipeline's Phases 1–3 are **skipped entirely**:
 
 | Scenario | Phase 0 (CDN detect) | Phases 1–3 (nmap/scapy/SSH) | HTTP scanners |
 |----------|---------------------|------------------------------|---------------|
@@ -491,7 +491,7 @@ beatrix/
 │   ├── finding_enricher.py        # Deterministic finding enrichment (poc_curl, impact, CWE)
 │   └── scan_output.py             # ScanOutputManager — per-scan organized output directory
 ├── scanners/
-│   ├── base.py                    # BaseScanner ABC — rate limiter, httpx client, WAF bypass (UA rotation, header profiles, CDN challenge detection, adaptive throttle)
+│   ├── base.py                    # BaseScanner ABC — rate limiter, httpx client, WAF bypass (11-profile 3-strategy retry, 29 CDN markers, adaptive learning, profile-specific bypass headers)
 │   ├── crawler.py                 # Target spider — soft-404, forms, params, version-preserving tech fingerprint
 │   ├── injection.py               # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads via SecLists + PATT, response_analyzer behavioral detection, baseline-filtered XSS reflection, WAF bypass fallback)
 │   ├── ssrf.py                    # 44-payload SSRF scanner
@@ -546,7 +546,7 @@ beatrix/
 ├── validators/                    # ImpactValidator + ReadinessGate
 └── utils/
     ├── helpers.py                 # Shared utilities, is_ip_address() (used by 6 modules for IP target detection)
-    ├── advanced_waf_bypass.py     # WAF evasion techniques
+    ├── advanced_waf_bypass.py     # WAF evasion engine (11 WAF profiles, 14 encoding types, 9 transforms, alias normalization)
     ├── vrt_classifier.py          # Bugcrowd VRT classification
     └── response_validator.py      # HTTP response validation
 ```
@@ -698,13 +698,31 @@ All 13 external tools are managed via `ExternalToolkit` (a lazy singleton on the
 
 ---
 
-## WAF Bypass System (`scanners/base.py`)
+## WAF Bypass System
 
-All 28+ scanners inherit automatic WAF evasion from `BaseScanner.request()`. When a
-WAF profile is set (via `set_waf_profile()` or CDN auto-detection), the following
-defenses activate transparently:
+Two layers work together: `BaseScanner` (HTTP-level bypass in `scanners/base.py`) and
+`AdvancedWAFBypass` (payload-level mutation in `utils/advanced_waf_bypass.py`). All
+28+ scanners inherit both layers transparently.
 
-### Request-Level Evasion
+### 11 WAF Profiles (`AdvancedWAFBypass.WAF_PROFILES`)
+
+| Profile | Vendor | Encoding Weaknesses | Transform Weaknesses |
+|---------|--------|-------------------|---------------------|
+| `cloudflare` | Cloudflare Inc. | UNICODE_FULL, UTF8_OVERLONG | CONCAT, CHAR_FUNC |
+| `akamai` | Akamai Technologies | DOUBLE_URL, TRIPLE_URL | COMMENT_INJECT |
+| `imperva` | Imperva Inc. | UNICODE | CASE_SWAP, WHITESPACE_SUB |
+| `modsecurity` | OWASP | URL, DOUBLE_URL, UTF8_OVERLONG | NULL_BYTE, CONCAT |
+| `aws_waf` | Amazon Web Services | UNICODE, HTML_HEX | CHAR_FUNC |
+| `f5_bigip` | F5 Networks | DOUBLE_URL | BUFFER_OVERFLOW, NEWLINE |
+| `perimeterx` | HUMAN Security | UNICODE_FULL, DOUBLE_URL, HTML_HEX | CASE_SWAP, WHITESPACE_SUB |
+| `datadome` | DataDome | UTF8_OVERLONG, TRIPLE_URL, UNICODE | COMMENT_INJECT, NULL_BYTE |
+| `kasada` | Kasada | HTML_ENTITY, UNICODE, UTF8_OVERLONG | WHITESPACE_SUB, NEWLINE |
+| `sucuri` | GoDaddy / Sucuri | DOUBLE_URL, UNICODE, HTML_ENTITY | COMMENT_INJECT, CASE_SWAP |
+| `fastly` | Fastly / Signal Sciences | HTML_HEX, UTF8_OVERLONG, DOUBLE_URL | NULL_BYTE, CONCAT |
+
+WAF name aliases normalize CDN detection names: `incapsula` → `imperva`, `cloudfront` → `aws_waf`, `f5`/`bigip` → `f5_bigip`, `human` → `perimeterx`, `signal sciences` → `fastly`. Applied in both `BaseScanner.set_waf_profile()` and `AdvancedWAFBypass.mutate_payload()`.
+
+### Request-Level Evasion (`BaseScanner`)
 
 | Technique | Implementation | Trigger |
 |-----------|---------------|--------|
@@ -716,31 +734,52 @@ defenses activate transparently:
 
 ### CDN Challenge Detection
 
-23 markers across 7 WAF vendors, checked on 403/406/503 responses:
+29 markers across 9 vendor categories, checked on 403/406/503 responses:
 
-| Vendor | Markers |
-|--------|---------|
-| PerimeterX | `perimeterx`, `/_px/`, `px-captcha`, `PXmvTNFT`, `human-challenge` |
-| Cloudflare | `cf-browser-verification`, `cf_clearance`, `challenge-platform` |
-| Akamai | `akam/13/`, `_abck` |
-| Imperva/Incapsula | `incapsula`, `_Incapsula_Resource`, `robots.incapsula.com` |
-| DataDome | `datadome`, `dd.datadome.com` |
-| Kasada | `ips.js` |
-| Generic | `bot detection`, `automated request`, `checking your browser`, `captcha`, `access denied` |
+| Vendor | Count | Markers |
+|--------|-------|---------|
+| Cloudflare | 7 | `Just a moment...`, `Attention Required!`, `Access denied`, `cf-browser-verification`, `cf_chl_opt`, `challenges.cloudflare.com`, `cdn-cgi/challenge-platform` |
+| Akamai | 3 | `Pardon Our Interruption`, `akam/13/`, `_abck` |
+| PerimeterX | 5 | `perimeterx`, `/_px/`, `px-captcha`, `PXmvTNFT`, `human-challenge` |
+| Imperva/Incapsula | 3 | `incapsula`, `_Incapsula_Resource`, `robots.incapsula.com` |
+| DataDome | 2 | `datadome`, `dd.datadome.com` |
+| Kasada | 2 | `ips.js`, `cd-s=` |
+| Sucuri | 3 | `sucuri`, `cloudproxy`, `block.sucuri.net` |
+| Fastly/Signal Sciences | 2 | `x-sigsci-`, `signal sciences` |
+| Generic | 2 | `bot detection`, `automated request` |
 
-### Auto-Bypass Retry
+### 3-Strategy Auto-Bypass Retry
 
-When a CDN challenge is detected, `request()` automatically retries with:
-1. IP spoofing headers (`X-Forwarded-For`, `X-Originating-IP`, `X-Original-URL`, `X-Rewrite-URL`)
-2. Method override (POST with `X-HTTP-Method-Override: GET`) for GET requests
+When a CDN challenge is detected, `request()` retries up to 3 times with escalating strategies:
+
+| Strategy | Technique | Details |
+|----------|-----------|---------|
+| 1. Origin Spoof | IP spoof headers + profile-specific headers | `X-Forwarded-For`, `X-Originating-IP`, `X-Remote-IP`, `X-Remote-Addr` (base) + per-profile headers (e.g. `CF-Connecting-IP` for Cloudflare, `Pragma: akamai-x-cache-on` for Akamai) + `X-Original-URL`/`X-Rewrite-URL` path headers |
+| 2. Method Override | POST with GET override or path mangling | GET requests: `X-HTTP-Method-Override: GET` + `X-Method-Override: GET` sent as POST. Non-GET: `/..;/path` prefix mangling |
+| 3. Fingerprint Rotation | Fresh UA + cache-bust + Accept variation | New random UA, `Accept: */*`, `Cache-Control: no-cache, no-store`, random `_=NNNNNN` query param |
+
+Profile-specific bypass headers are applied on all strategies for these 11 WAFs:
+`cloudflare` (CF-Connecting-IP, True-Client-IP), `akamai` (Pragma, True-Client-IP), `imperva` (X-Forwarded-Host, Client-IP), `modsecurity` (Content-Type ibm037, Transfer-Encoding chunked), `aws_waf` (X-Amzn-Trace-Id), `f5_bigip` (Transfer-Encoding chunked, Connection keep-alive), `perimeterx` (True-Client-IP), `datadome` (X-Requested-With XMLHttpRequest), `sucuri` (X-Sucuri-ClientIP), `fastly` (Fastly-Client-IP), `kasada` (True-Client-IP, X-Requested-With XMLHttpRequest).
+
+### Adaptive Learning
+
+`BaseScanner._waf_success_strategy` tracks which strategy number (1/2/3) last
+succeeded for each WAF profile. On subsequent blocks against the same WAF, the
+successful strategy is preferred, reducing bypass latency.
 
 ### WAF-Aware Fuzzing Pipeline
 
 ```
-KillChain → SmartFuzzer(waf_profile=cdn_detected) → FFufEngine(waf_profile=...)
-                                                       ├── Auto rate-cap: 30 rps
-                                                       ├── Thread cap: 20
-                                                       └── Random UA per invocation
+KillChain
+  → SmartFuzzer(waf_profile=cdn_detected)
+       → AdvancedWAFBypass.mutate_payload(payload, waf_profile=self.waf_profile)
+            ├── Profile-aware encoding chain (14 encoding types)
+            ├── Context-sensitive transformations (9 transform types)
+            └── Random combo mutations
+       → FFufEngine(waf_profile=...)
+            ├── Auto rate-cap: 30 rps
+            ├── Thread cap: 20
+            └── Random UA per invocation
 ```
 
 ---
@@ -753,7 +792,7 @@ that the HTTP crawler couldn't reach.
 
 ### Trigger Conditions
 
-- Crawler got < 5 pages **AND** WAF detected (PerimeterX, Cloudflare, Akamai, Imperva, DataDome, Kasada, Shape, Distil, Incapsula)
+- Crawler got < 5 pages **AND** WAF detected (PerimeterX, Cloudflare, Akamai, Imperva, DataDome, Kasada, Shape, Distil, Incapsula, Sucuri, Fastly)
 - Crawler got ≤ 1 page (regardless of WAF detection)
 
 ### What It Extracts
