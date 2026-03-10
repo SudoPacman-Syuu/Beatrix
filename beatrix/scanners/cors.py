@@ -147,6 +147,30 @@ class CORSScanner(BaseScanner):
             },
         ]
 
+        # If target has subdomains (full hostname != base domain),
+        # add full-hostname variants for prefix/suffix/subdomain bypasses
+        if target_domain != base_domain:
+            tests.extend([
+                {
+                    "origin": f"https://{self.EVIL_DOMAIN}{target_domain}",
+                    "name": "prefix_bypass",
+                    "description": "Domain prefix bypass (full hostname)",
+                    "severity": Severity.HIGH,
+                },
+                {
+                    "origin": f"https://{target_domain}.{self.EVIL_DOMAIN}",
+                    "name": "suffix_bypass",
+                    "description": "Domain suffix bypass (full hostname)",
+                    "severity": Severity.HIGH,
+                },
+                {
+                    "origin": f"https://evil.{target_domain}",
+                    "name": "subdomain_injection",
+                    "description": "Arbitrary subdomain accepted (full hostname)",
+                    "severity": Severity.MEDIUM,
+                },
+            ])
+
         return tests
 
     async def scan(self, context: ScanContext) -> AsyncIterator[Finding]:
@@ -265,27 +289,36 @@ class CORSScanner(BaseScanner):
                 **auth_headers,
             }
 
-            response = await self.get(url, headers=headers)
+            # Try GET first, then POST — some servers only set CORS headers on POST
+            for method in ("GET", "POST"):
+                if method == "GET":
+                    response = await self.get(url, headers=headers)
+                else:
+                    response = await self.post(url, headers=headers)
 
-            acao = response.headers.get("access-control-allow-origin", "")
-            acac = response.headers.get("access-control-allow-credentials", "")
+                acao = response.headers.get("access-control-allow-origin", "")
+                acac = response.headers.get("access-control-allow-credentials", "")
 
-            vuln = self._analyze_cors_response(origin, acao, acac, test)
+                vuln = self._analyze_cors_response(origin, acao, acac, test)
 
-            if vuln:
-                # Check if authenticated response contains PII
-                pii_detected = self._detect_pii_in_cors_response(response.text)
+                if vuln:
+                    # Check if authenticated response contains PII
+                    pii_detected = self._detect_pii_in_cors_response(response.text)
 
-                finding = self._create_cors_finding(url, origin, acao, acac, test, response)
+                    finding = self._create_cors_finding(url, origin, acao, acac, test, response)
 
-                if pii_detected:
-                    finding.description += f"\n\n**CRITICAL: Authenticated response contains PII:** {', '.join(pii_detected.keys())}"
-                    finding.description += "\nAn attacker can steal this PII from authenticated users via cross-origin request."
-                    finding.severity = Severity.CRITICAL
-                    finding.title = f"[AUTH] {finding.title}"
-                    finding.evidence = (finding.evidence or "") + f"\n\nPII in response: {', '.join(pii_detected.keys())}"
+                    if pii_detected:
+                        finding.description += f"\n\n**CRITICAL: Authenticated response contains PII:** {', '.join(pii_detected.keys())}"
+                        finding.description += "\nAn attacker can steal this PII from authenticated users via cross-origin request."
+                        finding.severity = Severity.CRITICAL
+                        finding.title = f"[AUTH] {finding.title}"
+                        finding.evidence = (finding.evidence or "") + f"\n\nPII in response: {', '.join(pii_detected.keys())}"
 
-                return finding
+                    return finding
+
+                # If GET returned CORS headers (even non-vuln), no need to try POST
+                if acao:
+                    break
 
         except Exception as e:
             self.log(f"Error testing authenticated CORS {origin}: {type(e).__name__}: {e}")
@@ -376,25 +409,29 @@ This allows cross-origin write requests (PUT/PATCH/DELETE) from attacker-control
         Returns Finding if vulnerable, None otherwise.
         """
         origin = test["origin"]
+        req_headers = {
+            "Origin": origin,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
 
         try:
-            response = await self.get(
-                url,
-                headers={
-                    "Origin": origin,
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                }
-            )
+            # Try GET first, then POST — some servers only set CORS headers on POST
+            for method in ("GET", "POST"):
+                if method == "GET":
+                    response = await self.get(url, headers=req_headers)
+                else:
+                    response = await self.post(url, headers=req_headers)
 
-            # Check for CORS headers
-            acao = response.headers.get("access-control-allow-origin", "")
-            acac = response.headers.get("access-control-allow-credentials", "")
+                acao = response.headers.get("access-control-allow-origin", "")
+                acac = response.headers.get("access-control-allow-credentials", "")
 
-            # Analyze the response
-            vuln = self._analyze_cors_response(origin, acao, acac, test)
+                vuln = self._analyze_cors_response(origin, acao, acac, test)
+                if vuln:
+                    return self._create_cors_finding(url, origin, acao, acac, test, response)
 
-            if vuln:
-                return self._create_cors_finding(url, origin, acao, acac, test, response)
+                # If GET returned CORS headers (even non-vuln), no need to try POST
+                if acao:
+                    break
 
         except Exception as e:
             self.log(f"Error testing origin {origin}: {type(e).__name__}: {e}")

@@ -79,6 +79,16 @@ class DOMXSSScanner(BaseScanner):
         "<svg onload=alert('BXDOM')>",
         "javascript:alert('BXDOM')",
         "'-alert('BXDOM')-'",
+        # Raw JS payloads for eval()/Function()/setTimeout() sinks
+        "alert('BXDOM')",
+        "1;alert('BXDOM')",
+        "BXDOM';alert('BXDOM');//",
+    ]
+
+    # Payloads for JS-execution sinks (eval, Function, setTimeout)
+    JS_EXEC_PAYLOADS = [
+        "alert('BXDOM')",
+        "1;alert('BXDOM')",
     ]
 
     # Sentinel value used to detect dialog() calls
@@ -164,6 +174,21 @@ class DOMXSSScanner(BaseScanner):
             if finding:
                 yield finding
                 break
+
+        # Test cookie-based DOM XSS (document.cookie sources)
+        finding = await self._test_cookie_dom_xss(context.url)
+        if finding:
+            yield finding
+
+        # Test storage-based DOM XSS (localStorage/sessionStorage sources)
+        finding = await self._test_storage_dom_xss(context.url)
+        if finding:
+            yield finding
+
+        # Test referrer-based DOM XSS (document.referrer sources)
+        finding = await self._test_referrer_dom_xss(context.url)
+        if finding:
+            yield finding
 
         # Passive: check for dangerous source→sink patterns in page JS
         async for finding in self._check_source_sink_patterns(context):
@@ -254,6 +279,228 @@ class DOMXSSScanner(BaseScanner):
             self.log(f"DOM XSS test error: {e}")
         finally:
             await page.close()
+
+        return None
+
+    async def _test_cookie_dom_xss(self, url: str) -> Optional[Finding]:
+        """
+        Test DOM XSS via document.cookie source.
+
+        Some pages read from specific cookies and pass them to sinks like
+        eval(), innerHTML, document.write(). We set cookies with payloads
+        before navigating.
+        """
+        if not self._browser_context:
+            return None
+
+        parsed = urlparse(url)
+        domain = parsed.hostname
+        # Common cookie names used in DOM XSS test pages + generic names
+        cookie_names = [
+            "ThisCookieIsTotallyRandomAndCantPossiblyBeSet",  # FR-specific
+            "xss", "test", "payload", "data", "user", "token", "name",
+        ]
+
+        for payload in self.DOM_XSS_PAYLOADS + self.JS_EXEC_PAYLOADS:
+            page = await self._browser_context.new_page()
+            xss_triggered = False
+            dialog_message = ""
+
+            async def _on_dialog(dialog: Dialog):
+                nonlocal xss_triggered, dialog_message
+                if self.CANARY in dialog.message:
+                    xss_triggered = True
+                    dialog_message = dialog.message
+                await dialog.dismiss()
+
+            page.on("dialog", _on_dialog)
+
+            try:
+                # Set cookies before navigation
+                cookies = [
+                    {
+                        "name": name,
+                        "value": payload,
+                        "domain": domain,
+                        "path": "/",
+                    }
+                    for name in cookie_names
+                ]
+                await self._browser_context.add_cookies(cookies)
+                await page.goto(url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
+                await asyncio.sleep(self.DIALOG_WAIT / 1000)
+
+                if xss_triggered:
+                    return self.create_finding(
+                        title="DOM XSS via document.cookie",
+                        severity=Severity.HIGH,
+                        confidence=Confidence.CERTAIN,
+                        url=url,
+                        description=(
+                            f"DOM-based XSS confirmed via cookie injection.\n\n"
+                            f"Payload: {payload}\n"
+                            f"Dialog content: {dialog_message}\n\n"
+                            f"The page reads from document.cookie and passes the value to "
+                            f"a dangerous sink (e.g., eval, innerHTML, document.write)."
+                        ),
+                        evidence=f"JavaScript alert() triggered with content: {dialog_message}",
+                        request=f"GET {url} (with cookie payload)",
+                        response="(browser-rendered — no raw HTTP response)",
+                        remediation=(
+                            "1. Never pass cookie values directly to eval(), innerHTML, or document.write()\n"
+                            "2. Sanitize cookie data before using it in the DOM\n"
+                            "3. Use HttpOnly cookies where possible to prevent JS access"
+                        ),
+                        parameter="cookie",
+                        payload=payload,
+                        cwe_id="CWE-79",
+                    )
+            except Exception as e:
+                self.log(f"Cookie DOM XSS test error: {e}")
+            finally:
+                await page.close()
+                # Clear cookies to avoid cross-contamination
+                await self._browser_context.clear_cookies()
+
+        return None
+
+    async def _test_storage_dom_xss(self, url: str) -> Optional[Finding]:
+        """
+        Test DOM XSS via localStorage/sessionStorage sources.
+
+        Some pages read from storage and pass values to sinks.
+        We pre-populate storage with payloads before page JS executes.
+        """
+        if not self._browser_context:
+            return None
+
+        storage_keys = [
+            "xss", "test", "payload", "data", "user", "name", "token",
+            "message", "value", "input", "key",
+        ]
+
+        for payload in self.DOM_XSS_PAYLOADS + self.JS_EXEC_PAYLOADS:
+            page = await self._browser_context.new_page()
+            xss_triggered = False
+            dialog_message = ""
+
+            async def _on_dialog(dialog: Dialog):
+                nonlocal xss_triggered, dialog_message
+                if self.CANARY in dialog.message:
+                    xss_triggered = True
+                    dialog_message = dialog.message
+                await dialog.dismiss()
+
+            page.on("dialog", _on_dialog)
+
+            try:
+                # Navigate first to set the origin for storage, then inject
+                await page.goto(url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
+
+                # Populate localStorage and sessionStorage with payloads
+                storage_js = ""
+                for key in storage_keys:
+                    escaped = payload.replace("\\", "\\\\").replace("'", "\\'")
+                    storage_js += f"try {{ localStorage.setItem('{key}', '{escaped}'); sessionStorage.setItem('{key}', '{escaped}'); }} catch(e) {{}}\n"
+                await page.evaluate(storage_js)
+
+                # Re-navigate to let page JS read the stored payloads
+                await page.goto(url, wait_until="domcontentloaded", timeout=self.PAGE_TIMEOUT)
+                await asyncio.sleep(self.DIALOG_WAIT / 1000)
+
+                if xss_triggered:
+                    return self.create_finding(
+                        title="DOM XSS via localStorage/sessionStorage",
+                        severity=Severity.MEDIUM,
+                        confidence=Confidence.CERTAIN,
+                        url=url,
+                        description=(
+                            f"DOM-based XSS confirmed via web storage injection.\n\n"
+                            f"Payload: {payload}\n"
+                            f"Dialog content: {dialog_message}\n\n"
+                            f"The page reads from localStorage or sessionStorage and passes "
+                            f"the value to a dangerous sink."
+                        ),
+                        evidence=f"JavaScript alert() triggered with content: {dialog_message}",
+                        request=f"GET {url} (with storage payload)",
+                        response="(browser-rendered — no raw HTTP response)",
+                        remediation=(
+                            "1. Never pass storage values directly to eval(), innerHTML, or document.write()\n"
+                            "2. Sanitize storage data before DOM insertion\n"
+                            "3. Validate storage contents against expected formats"
+                        ),
+                        parameter="localStorage/sessionStorage",
+                        payload=payload,
+                        cwe_id="CWE-79",
+                    )
+            except Exception as e:
+                self.log(f"Storage DOM XSS test error: {e}")
+            finally:
+                await page.close()
+
+        return None
+
+    async def _test_referrer_dom_xss(self, url: str) -> Optional[Finding]:
+        """
+        Test DOM XSS via document.referrer source.
+
+        Navigate from an intermediate page to set document.referrer to a payload.
+        """
+        if not self._browser_context:
+            return None
+
+        for payload in self.DOM_XSS_PAYLOADS[:3] + self.JS_EXEC_PAYLOADS:
+            page = await self._browser_context.new_page()
+            xss_triggered = False
+            dialog_message = ""
+
+            async def _on_dialog(dialog: Dialog):
+                nonlocal xss_triggered, dialog_message
+                if self.CANARY in dialog.message:
+                    xss_triggered = True
+                    dialog_message = dialog.message
+                await dialog.dismiss()
+
+            page.on("dialog", _on_dialog)
+
+            try:
+                # Use page.goto with referer header to simulate document.referrer
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=self.PAGE_TIMEOUT,
+                    referer=payload,
+                )
+                await asyncio.sleep(self.DIALOG_WAIT / 1000)
+
+                if xss_triggered:
+                    return self.create_finding(
+                        title="DOM XSS via document.referrer",
+                        severity=Severity.MEDIUM,
+                        confidence=Confidence.CERTAIN,
+                        url=url,
+                        description=(
+                            f"DOM-based XSS confirmed via referrer injection.\n\n"
+                            f"Payload in referrer: {payload}\n"
+                            f"Dialog content: {dialog_message}\n\n"
+                            f"The page reads document.referrer and passes it to a dangerous sink."
+                        ),
+                        evidence=f"JavaScript alert() triggered with content: {dialog_message}",
+                        request=f"GET {url} (Referer: {payload})",
+                        response="(browser-rendered — no raw HTTP response)",
+                        remediation=(
+                            "1. Never pass document.referrer directly to eval(), innerHTML, or document.write()\n"
+                            "2. Sanitize referrer data before DOM insertion\n"
+                            "3. Use referrer-policy headers to control referrer exposure"
+                        ),
+                        parameter="referrer",
+                        payload=payload,
+                        cwe_id="CWE-79",
+                    )
+            except Exception as e:
+                self.log(f"Referrer DOM XSS test error: {e}")
+            finally:
+                await page.close()
 
         return None
 

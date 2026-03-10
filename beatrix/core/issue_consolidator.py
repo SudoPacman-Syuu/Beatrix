@@ -90,11 +90,14 @@ class IssueConsolidator:
         param = (f.parameter or "").lower()
         module = f.scanner_module.lower()
 
-        # For injection-class vulns with a known parameter, drop the path
-        # AND the module — same host + same param + same vuln type = same
-        # underlying bug regardless of which scanner found it (F-06).
+        # F-06 (revised): include the path for ALL findings.
+        # Different URL paths nearly always mean different backend handlers,
+        # and dropping the path caused massive over-dedup (e.g. every XSS on
+        # param "q" across dozens of endpoints collapsed into one finding).
+        # Cross-scanner dedup (injection vs smart_fuzzer, same URL) is still
+        # handled by dropping the module from injection-class vulns.
         if vuln_type in self.INJECTION_VULN_TYPES and param:
-            components = [host, vuln_type, param]
+            components = [host, path, vuln_type, param]
         else:
             components = [host, path, vuln_type, param, module]
 

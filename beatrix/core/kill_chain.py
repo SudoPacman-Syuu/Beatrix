@@ -375,7 +375,10 @@ class KillChainExecutor:
         "ssh_auditor": 900,   # 15 minutes — SSH fingerprint + cred checks
         "packet_crafter": 900,  # 15 minutes — firewall analysis
         "origin_ip_discovery": 300,  # 5 minutes — CDN bypass / origin IP lookup
-        "injection": 1200,    # D-06: 20 minutes — large payload space
+        "injection": 2400,    # 40 minutes — tests all unique paths, no cap
+        "dom_xss": 900,       # 15 minutes — Playwright-based, slower per URL
+        "ssti": 900,          # 15 minutes — template injection testing
+        "redos": 900,         # 15 minutes — regex DoS testing
     }
 
     async def _run_scanner(self, scanner_name: str, target: str, context: Dict[str, Any],

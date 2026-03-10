@@ -14,9 +14,11 @@ Inspired by Sweet Scanner's active scanner approach.
 
 import asyncio
 import re
+import secrets
 import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Dict, List, Optional, Tuple
+from urllib.parse import urlencode, urlparse, urlunparse
 
 from beatrix.core.types import Confidence, Finding, InsertionPoint, InsertionPointType, Severity
 
@@ -43,6 +45,7 @@ try:
         payloads_for_context,
         evasion_payloads_for_context,
         detect_char_escaping,
+        _classify_context,
     )
     HAS_REFLECTION_ANALYZER = True
 except ImportError:
@@ -496,6 +499,28 @@ class InjectionScanner(BaseScanner):
 
         # Detect insertion points
         insertion_points = self.insertion_detector.detect(request)
+
+        # ── Parameter discovery for paramless URLs ────────────────────
+        # Many pages accept query parameters that aren't in the crawled URL
+        # (e.g. /reflected/parameter/body accepts ?q=).  When no URL_PARAM
+        # insertion points exist, probe with common param names + a canary
+        # to discover hidden parameters.
+        has_url_params = any(ip.type == InsertionPointType.URL_PARAM for ip in insertion_points)
+        if not has_url_params:
+            discovered = await self._discover_params(request)
+            if discovered:
+                insertion_points = discovered + insertion_points
+                # Re-parse request with the first discovered param so
+                # baseline captures reflect the parameterized page.
+                first_param = discovered[0]
+                new_url = self._build_param_url(request.url, first_param.name, first_param.value)
+                request = self.insertion_detector.parse_request(
+                    method=request.method,
+                    url=new_url,
+                    headers=dict(request.headers),
+                    body=request.body,
+                )
+
         self.log(f"Found {len(insertion_points)} insertion points")
 
         # D-04: Capture baseline ONCE per URL, not per insertion point.
@@ -556,6 +581,63 @@ class InjectionScanner(BaseScanner):
         for ip in insertion_points:
             async for finding in self._test_insertion_point(request, ip):
                 yield finding
+
+    # ── Parameter discovery ───────────────────────────────────────────
+    # Common parameter names that frequently accept and reflect user input.
+    _PROBE_PARAMS = [
+        "q", "s", "search", "id", "query", "name", "url", "page",
+        "input", "redirect", "file", "path", "callback", "data",
+        "text", "value", "p", "key", "action", "cmd", "type",
+        "user", "email", "lang", "next", "ref", "src", "target",
+        "return", "view", "cat", "dir", "msg", "title", "content",
+    ]
+
+    async def _discover_params(self, request: ParsedRequest) -> List[InsertionPoint]:
+        """Probe a paramless URL with common param names to discover hidden parameters."""
+        canary = "bxD" + secrets.token_hex(4)
+        # Build a single probe URL with ALL common params set to
+        # unique canary values so we can identify which param(s) reflect.
+        tagged = {p: f"{canary}_{p}" for p in self._PROBE_PARAMS}
+        probe_url = self._build_param_url(request.url, None, None, tagged)
+
+        try:
+            resp = await self.request(
+                request.method, probe_url,
+                headers=dict(request.headers),
+                content=request.body if request.body else None,
+            )
+        except Exception:
+            return []
+
+        body = resp.text
+        discovered = []
+        for pname in self._PROBE_PARAMS:
+            if f"{canary}_{pname}" in body:
+                discovered.append(InsertionPoint(
+                    name=pname,
+                    value="test",
+                    type=InsertionPointType.URL_PARAM,
+                    original_request=None,
+                    position=(0, 0),
+                ))
+        if discovered:
+            self.log(f"Parameter discovery found {len(discovered)} hidden params: "
+                     f"{[ip.name for ip in discovered]}")
+        return discovered
+
+    @staticmethod
+    def _build_param_url(base_url: str, name: Optional[str], value: Optional[str],
+                         params: Optional[Dict[str, str]] = None) -> str:
+        """Construct a URL by adding query parameters."""
+        parsed = urlparse(base_url)
+        if params:
+            qs = urlencode(params)
+        else:
+            qs = urlencode({name: value})
+        return urlunparse((
+            parsed.scheme, parsed.netloc, parsed.path,
+            parsed.params, qs, parsed.fragment,
+        ))
 
     async def _test_insertion_point(
         self,
@@ -865,6 +947,7 @@ class InjectionScanner(BaseScanner):
                 payload, response.text, elapsed, baseline_time,
                 response_status=response.status_code,
                 response_headers=dict(response.headers) if hasattr(response, 'headers') else {},
+                ip_type=ip.type,
             )
 
             if is_vuln:
@@ -887,6 +970,7 @@ class InjectionScanner(BaseScanner):
                                 payload, cresp.text, celapsed, baseline_time,
                                 response_status=cresp.status_code,
                                 response_headers=dict(cresp.headers) if hasattr(cresp, 'headers') else {},
+                                ip_type=ip.type,
                             )
                             if c_vuln:
                                 confirm_count += 1
@@ -914,6 +998,7 @@ class InjectionScanner(BaseScanner):
         baseline_time: float = 0.0,
         response_status: int = 0,
         response_headers: Optional[Dict[str, str]] = None,
+        ip_type: Optional[InsertionPointType] = None,
     ) -> Tuple[bool, str]:
         """
         Check if the response indicates a vulnerability.
@@ -958,6 +1043,25 @@ class InjectionScanner(BaseScanner):
                         if baseline_body and re.search(pattern, baseline_body, re.IGNORECASE):
                             continue  # Match exists in baseline — not reflection
 
+                    # For XSS reflection, verify the match is in an executable
+                    # HTML context. Skip matches inside comments, <head>,
+                    # <textarea>, <title>, <style>, <noscript> where event
+                    # handlers and scripts cannot execute.
+                    if payload.detection == "reflect" and HAS_REFLECTION_ANALYZER:
+                        matched_text = match.group(0)
+                        ctx = _classify_context(response_text, match.start(), matched_text)
+                        _NON_EXEC = {
+                            ReflectionContext.HTML_COMMENT,
+                            ReflectionContext.HEAD,
+                            ReflectionContext.TEXTAREA,
+                            ReflectionContext.TITLE,
+                            ReflectionContext.NOSCRIPT,
+                            ReflectionContext.CSS_VALUE,
+                            ReflectionContext.CSS_URL,
+                        }
+                        if ctx in _NON_EXEC:
+                            continue  # Payload in non-executable context
+
                     # Get context around match
                     start = max(0, match.start() - 50)
                     end = min(len(response_text), match.end() + 50)
@@ -967,15 +1071,43 @@ class InjectionScanner(BaseScanner):
         # Behavioral detection — 30-dimension response fingerprint comparison
         # Detects blind injection through subtle response structure differences
         if payload.detection == "behavior" and HAS_RESPONSE_ANALYZER:
+            # ── Skip behavioral SQLi for URL path segments ──────────────
+            # Changing a URL path segment almost always returns a completely
+            # different page (404, different route) regardless of injection.
+            # Behavioral diffs from path changes are routing artifacts, not
+            # evidence of SQL execution.  Time-based detection still works.
+            if payload.category == "sqli" and ip_type in (
+                InsertionPointType.URL_PATH, InsertionPointType.URL_PATH_FOLDER,
+            ):
+                return False, ""
+
             baseline_body = getattr(self, '_baseline_body', '')
             baseline_status = getattr(self, '_baseline_status', 200)
             baseline_headers = getattr(self, '_baseline_headers', {})
             variant_attrs = getattr(self, '_variant_attrs', set())
             if baseline_body:
+                ignore = set(variant_attrs)
+
+                # ── Check if payload is reflected (raw or encoded) ──────
+                # On reflecting pages, ANY response diff (body, status code,
+                # content type, tag structure) can be caused by input processing
+                # rather than SQL execution.  Behavioral SQLi is unreliable
+                # when the page echoes back the payload in any form.
+                if payload.category == "sqli" and payload.value:
+                    import html as _html
+                    from urllib.parse import quote as _quote
+                    reflected = (
+                        payload.value in response_text
+                        or _html.escape(payload.value) in response_text
+                        or _quote(payload.value, safe='') in response_text
+                    )
+                    if reflected:
+                        return False, ""
+
                 diffs = responses_differ(
                     baseline_status, baseline_headers, baseline_body,
                     response_status, response_headers or {}, response_text,
-                    ignore_attrs=variant_attrs,
+                    ignore_attrs=ignore,
                 )
                 if diffs and is_blind_indicator(diffs, min_attrs=2):
                     diff_attrs = ', '.join(a.name for a in list(diffs.keys())[:5])
