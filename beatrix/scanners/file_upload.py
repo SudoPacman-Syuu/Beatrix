@@ -200,7 +200,7 @@ class FileUploadScanner(BaseScanner):
             return "php"
 
         try:
-            resp = await self.client.request("GET", url)
+            resp = await self.request("GET", url)
         except Exception:
             return "php"
 

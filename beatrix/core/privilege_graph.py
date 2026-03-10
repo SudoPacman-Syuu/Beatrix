@@ -502,6 +502,8 @@ class WebAppPrivilegeGraph:
 
             for predecessor in self.graph.predecessors(node_id):
                 edge_data = self.graph.get_edge_data(predecessor, node_id)
+                if not edge_data:
+                    continue
                 if edge_data.get('type') == EdgeType.OWNS.value:
                     owners.add(predecessor)
                 elif edge_data.get('type') in [
@@ -569,16 +571,20 @@ class WebAppPrivilegeGraph:
             # Get claims from token
             for successor in self.graph.successors(node_id):
                 edge_data = self.graph.get_edge_data(node_id, successor)
+                if not edge_data:
+                    continue
                 if edge_data.get('type') == EdgeType.HAS_CLAIM.value:
                     token_claims.add(successor)
                 elif edge_data.get('type') == EdgeType.ISSUED_TO.value:
                     # Get user's role permissions
                     user = successor
                     for user_edge in self.graph.successors(user):
-                        if self.graph.get_edge_data(user, user_edge).get('type') == EdgeType.HAS_ROLE.value:
+                        ue_data = self.graph.get_edge_data(user, user_edge)
+                        if ue_data and ue_data.get('type') == EdgeType.HAS_ROLE.value:
                             # Get permissions from role
                             for role_edge in self.graph.successors(user_edge):
-                                if self.graph.get_edge_data(user_edge, role_edge).get('type') == EdgeType.GRANTS.value:
+                                re_data = self.graph.get_edge_data(user_edge, role_edge)
+                                if re_data and re_data.get('type') == EdgeType.GRANTS.value:
                                     role_permissions.add(role_edge)
 
             # Compare
@@ -788,12 +794,14 @@ class WebAppPrivilegeGraph:
         owner_roles = set()
 
         for successor in self.graph.successors(accessor):
-            if self.graph.get_edge_data(accessor, successor).get('type') == EdgeType.HAS_ROLE.value:
+            ed = self.graph.get_edge_data(accessor, successor)
+            if ed and ed.get('type') == EdgeType.HAS_ROLE.value:
                 accessor_roles.add(successor)
 
         for owner in owners:
             for successor in self.graph.successors(owner):
-                if self.graph.get_edge_data(owner, successor).get('type') == EdgeType.HAS_ROLE.value:
+                ed = self.graph.get_edge_data(owner, successor)
+                if ed and ed.get('type') == EdgeType.HAS_ROLE.value:
                     owner_roles.add(successor)
 
         # If they share an admin role, access is legitimate

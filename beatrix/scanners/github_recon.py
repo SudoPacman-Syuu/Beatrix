@@ -442,14 +442,14 @@ class GitHubRecon(BaseScanner):
         while True:
             try:
                 # Try org endpoint first
-                resp = await self.client.get(
+                resp = await self.get(
                     f"{self.GITHUB_API}/orgs/{self.org_name}/repos",
                     params={"type": "public", "per_page": 100, "page": page},
                 )
 
                 if resp.status_code == 404:
                     # Might be a user, not an org
-                    resp = await self.client.get(
+                    resp = await self.get(
                         f"{self.GITHUB_API}/users/{self.org_name}/repos",
                         params={"type": "public", "per_page": 100, "page": page},
                     )
@@ -479,7 +479,7 @@ class GitHubRecon(BaseScanner):
     async def _respect_rate_limit(self, min_remaining: int = 10) -> None:
         """Check GitHub rate limit headers and back off if needed."""
         try:
-            resp = await self.client.get(f"{self.GITHUB_API}/rate_limit")
+            resp = await self.get(f"{self.GITHUB_API}/rate_limit")
             if resp.status_code == 200:
                 data = resp.json()
                 remaining = data.get("resources", {}).get("core", {}).get("remaining", 999)
@@ -499,7 +499,7 @@ class GitHubRecon(BaseScanner):
     async def get_repo_tree(self, repo_name: str, branch: str = "main") -> List[str]:
         """Get full file tree of a repository"""
         try:
-            resp = await self.client.get(
+            resp = await self.get(
                 f"{self.GITHUB_API}/repos/{repo_name}/git/trees/{branch}",
                 params={"recursive": "1"},
             )
@@ -522,7 +522,7 @@ class GitHubRecon(BaseScanner):
     ) -> Optional[str]:
         """Get raw file content from a repository"""
         try:
-            resp = await self.client.get(
+            resp = await self.get(
                 f"https://raw.githubusercontent.com/{repo_name}/{branch}/{file_path}",
                 headers={"Accept": "text/plain"},
             )
@@ -548,7 +548,7 @@ class GitHubRecon(BaseScanner):
             if path:
                 params["path"] = path
 
-            resp = await self.client.get(
+            resp = await self.get(
                 f"{self.GITHUB_API}/repos/{repo_name}/commits",
                 params=params,
             )
@@ -565,7 +565,7 @@ class GitHubRecon(BaseScanner):
     async def get_commit_diff(self, repo_name: str, commit_sha: str) -> Optional[str]:
         """Get the diff for a specific commit"""
         try:
-            resp = await self.client.get(
+            resp = await self.get(
                 f"https://github.com/{repo_name}/commit/{commit_sha}.diff",
                 headers={"Accept": "text/plain", "User-Agent": "BEATRIX/1.0"},
             )

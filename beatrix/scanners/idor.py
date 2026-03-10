@@ -600,7 +600,7 @@ class IDORScanner(BaseScanner):
         # actually supports, avoiding 405 spam and accidental writes.
         allowed_methods: set[str] = set()
         try:
-            opts_resp = await self.client.request(
+            opts_resp = await self.request(
                 "OPTIONS", candidate.original_url,
                 headers={**auth_headers, "User-Agent": "BEATRIX-IDOR-Scanner/2.0"},
             )
@@ -652,7 +652,7 @@ class IDORScanner(BaseScanner):
             request_kwargs["content"] = b'{}'
 
         try:
-            original_response = await self.client.request(
+            original_response = await self.request(
                 method,
                 candidate.original_url,
                 **request_kwargs,
@@ -671,7 +671,7 @@ class IDORScanner(BaseScanner):
                 cross_kwargs["content"] = b'{}'
 
             try:
-                cross_response = await self.client.request(
+                cross_response = await self.request(
                     method,
                     candidate.original_url,
                     **cross_kwargs,
@@ -740,7 +740,7 @@ The application does not properly validate resource ownership.
             test_url = self.build_test_url(candidate.original_url, candidate, test_id)
 
             try:
-                test_response = await self.client.request(
+                test_response = await self.request(
                     method,
                     test_url,
                     **request_kwargs,
@@ -973,7 +973,7 @@ class BACScanner(IDORScanner):
             url = f"{base_url.rstrip('/')}{endpoint}"
 
             try:
-                response = await self.client.get(url, headers=auth_headers)
+                response = await self.get(url, headers=auth_headers)
 
                 # If we get 200 on admin endpoint as non-admin, potential issue
                 if response.status_code == 200:

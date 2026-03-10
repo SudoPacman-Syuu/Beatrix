@@ -335,7 +335,7 @@ JWTs are only base64-encoded, not encrypted - anyone can read the payload.
         for username in likely_real_usernames[:2]:
             try:
                 start = asyncio.get_running_loop().time()
-                response = await self.client.post(
+                response = await self.post(
                     login_url,
                     data={"username": username, "password": "wrongpassword123"},
                     headers={"Content-Type": "application/x-www-form-urlencoded"}
@@ -352,7 +352,7 @@ JWTs are only base64-encoded, not encrypted - anyone can read the payload.
         for username in fake_usernames:
             try:
                 start = asyncio.get_running_loop().time()
-                response = await self.client.post(
+                response = await self.post(
                     login_url,
                     data={"username": username, "password": "wrongpassword123"},
                     headers={"Content-Type": "application/x-www-form-urlencoded"}
@@ -485,7 +485,7 @@ This suggests different code paths are executed based on username validity.
             url = f"{base_url.rstrip('/')}{path}"
             try:
                 # Test with a random new email
-                new_resp = await self.client.post(
+                new_resp = await self.post(
                     url,
                     json={"email": test_email, "firstName": "Test", "lastName": "User"},
                     headers={"Content-Type": "application/json"}
@@ -496,7 +496,7 @@ This suggests different code paths are executed based on username validity.
 
                 # This endpoint exists — now test with likely-registered emails
                 for likely_email in likely_emails:
-                    existing_resp = await self.client.post(
+                    existing_resp = await self.post(
                         url,
                         json={"email": likely_email, "firstName": "Test", "lastName": "User"},
                         headers={"Content-Type": "application/json"}
@@ -648,7 +648,7 @@ without any authentication, CAPTCHA, or rate limiting.
 
             try:
                 # Test with new email
-                new_resp = await self.client.post(
+                new_resp = await self.post(
                     url,
                     json={"email": test_email, "password": "TestPass123!@#"},
                     headers={"Content-Type": "application/json"}
@@ -656,7 +656,7 @@ without any authentication, CAPTCHA, or rate limiting.
 
                 # Test with likely-existing email
                 for likely_email in likely_emails:
-                    existing_resp = await self.client.post(
+                    existing_resp = await self.post(
                         url,
                         json={"email": likely_email, "password": "TestPass123!@#"},
                         headers={"Content-Type": "application/json"}
@@ -753,12 +753,12 @@ new vs existing emails, revealing whether an account exists.
         for path in reset_paths:
             url = f"{base_url.rstrip('/')}{path}"
             try:
-                valid_resp = await self.client.post(
+                valid_resp = await self.post(
                     url,
                     json={"email": "admin@test.com"},
                     headers={"Content-Type": "application/json"}
                 )
-                invalid_resp = await self.client.post(
+                invalid_resp = await self.post(
                     url,
                     json={"email": test_email},
                     headers={"Content-Type": "application/json"}
@@ -844,7 +844,7 @@ a reset link has been sent."
         for path in wellknown_paths:
             url = f"{base_url.rstrip('/')}{path}"
             try:
-                resp = await self.client.get(url)
+                resp = await self.get(url)
                 if resp.status_code == 200:
                     try:
                         config = resp.json()
@@ -897,7 +897,7 @@ This information aids in testing OAuth flows for vulnerabilities.
                 for realm in ['master', brand if len(domain_parts) >= 2 else 'app']:
                     url = f"{login_host}/auth/realms/{realm}/.well-known/openid-configuration"
                     try:
-                        resp = await self.client.get(url, timeout=5)
+                        resp = await self.get(url, timeout=5)
                         if resp.status_code == 200:
                             config = resp.json()
                             if 'authorization_endpoint' in config:
@@ -977,7 +977,7 @@ Found OpenID Connect configuration at {url}
                         f"&redirect_uri={redirect_uri}&scope=openid"
                         f"&state=beatrix_test&nonce=beatrix_nonce"
                     )
-                    resp = await self.client.get(test_url, follow_redirects=False)
+                    resp = await self.get(test_url, follow_redirects=False)
 
                     # Determine if accepted or rejected
                     is_accepted = False
@@ -1132,7 +1132,7 @@ This was the exact attack chain found in a real-world engagement.
             if token_endpoint and accepted_redirects:
                 try:
                     # Try to exchange a dummy code without client_secret
-                    token_resp = await self.client.post(
+                    token_resp = await self.post(
                         token_endpoint,
                         data={
                             'grant_type': 'authorization_code',
@@ -1199,7 +1199,7 @@ but the authorization code was invalid — proving no secret is needed)
                     f"{auth_endpoint}?response_type=token&client_id={client_id}"
                     f"&redirect_uri=https://{target_domain}/callback&scope=openid"
                 )
-                resp = await self.client.get(implicit_url, follow_redirects=False)
+                resp = await self.get(implicit_url, follow_redirects=False)
 
                 if resp.status_code in [200, 302]:
                     body_lower = resp.text[:3000].lower() if resp.status_code == 200 else ""
@@ -1235,7 +1235,7 @@ This returns tokens directly in the URL fragment, making them vulnerable to:
 
             # 3e: Test password grant (should be disabled for frontend clients)
             try:
-                password_resp = await self.client.post(
+                password_resp = await self.post(
                     token_endpoint,
                     data={
                         'grant_type': 'password',
@@ -1337,7 +1337,7 @@ The client '{client_id}' processed a password grant request
 
         for page_url in pages_to_check:
             try:
-                resp = await self.client.get(page_url)
+                resp = await self.get(page_url)
                 if resp.status_code == 200:
                     body = resp.text[:100000]  # First 100KB
                     for pattern in client_id_patterns:
@@ -1371,9 +1371,9 @@ The client '{client_id}' processed a password grant request
         for i in range(num_requests):
             try:
                 if method == "POST":
-                    response = await self.client.post(url, data=data)
+                    response = await self.post(url, data=data)
                 else:
-                    response = await self.client.get(url)
+                    response = await self.get(url)
 
                 responses.append(response.status_code)
                 if response.status_code not in [429, 403]:
@@ -1450,7 +1450,7 @@ The endpoint processed {success_count}/{num_requests} requests without rate limi
 
                 for bypass_data in bypass_tests:
                     try:
-                        response = await self.client.post(
+                        response = await self.post(
                             url,
                             data=bypass_data,
                             headers=auth_headers
