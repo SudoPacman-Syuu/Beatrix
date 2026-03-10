@@ -29,6 +29,12 @@ tests/
 # Scan output directory
 test/
 testscan/
+scans/
+**/scans/
+
+# Audit notes
+audit/
+**/audit/
 
 # Notes
 BURP_INSPIRATION_NOTES.md

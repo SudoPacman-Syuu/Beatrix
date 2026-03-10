@@ -17,7 +17,7 @@
 | AI Integration | 1,893 | 4 | ✅ Working | GHOST agent, HaikuGrunt, Bedrock/Anthropic |
 | Recon Module | 492 | 1 | ⚠️ Deprecated | Superseded by kill chain _handle_recon; retained for CLI `beatrix recon` |
 | Hunters | 474 | 3 | ✅ Working | RapidHunter, HaikuHunter |
-| Integrations | 683 | 2 | ✅ Working | HackerOne API client |
+| Integrations | 0 | 1 | ✅ Working | External service clients |
 | Validators | 1,277 | 3 | ✅ Working | ImpactValidator, ReadinessGate |
 | Reporters | 1,294 | 2 | ✅ Working | Chain reporting, HTML output, VRT enrichment (Bugcrowd VRT + CVSS 3.1) |
 | Utils | 3,716 | 6 | ✅ Working | WAF bypass (11 profiles: Cloudflare, Akamai, Imperva, ModSecurity, AWS WAF, F5, PerimeterX, DataDome, Kasada, Sucuri, Fastly), VRT classifier, helpers (`is_ip_address()` used by 6 modules), response validator |
@@ -37,7 +37,6 @@ beatrix haiku-hunt    # AI-assisted hunting via Bedrock
 beatrix bounty-hunt   # [DEPRECATED] → use `beatrix hunt --preset full`
 beatrix validate      # Validate findings from JSON
 beatrix github-recon  # GitHub org/user secret scanning
-beatrix h1            # HackerOne operations (programs/dupecheck/submit)
 beatrix mobile        # Mobile app traffic interception
 beatrix browser       # Playwright-based browser scanning (DOM XSS, WAF evasion)
 beatrix creds         # Credential validation (JWT, API keys, AWS, GitHub, Stripe)
@@ -178,8 +177,8 @@ beatrix/                       # Inner framework package
 ├── hunters/                   # Hunting workflows (474 LOC, 3 files)
 │   ├── rapid.py               # RapidHunter (multi-domain sweep)
 │   └── haiku.py               # HaikuHunter (AI-assisted)
-├── integrations/              # External services (683 LOC, 2 files)
-│   └── hackerone.py           # HackerOneClient, H1ReportDraft
+├── integrations/              # External services
+│   └── __init__.py
 ├── validators/                # Finding validation (1.3K LOC, 3 files)
 │   ├── impact_validator.py    # ImpactValidator
 │   └── readiness_gate.py      # ReadinessGate

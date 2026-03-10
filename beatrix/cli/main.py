@@ -444,30 +444,6 @@ API keys, passwords, tokens, database credentials, private keys.
   beatrix github-recon acme-corp --quick
   beatrix github-recon acme-corp --repo acme-corp/api-server -o report.md
 """,
-    "h1": """
-[bright_yellow]🎯 H1 — HackerOne Operations[/bright_yellow]
-
-[bold]Report management.[/bold] Submit reports, check for duplicates, list programs.
-
-[bold cyan]SUBCOMMANDS:[/bold cyan]
-  beatrix h1 programs               List available programs
-  beatrix h1 programs -s "target"   Search for a specific program
-  beatrix h1 dupecheck PROGRAM KWS  Check for duplicate reports
-  beatrix h1 submit PROGRAM [OPTS]  Submit a report
-
-[bold cyan]EXAMPLES:[/bold cyan]
-  [dim]# Search for a program[/dim]
-  beatrix h1 programs -s "example"
-
-  [dim]# Check for dupes before submitting[/dim]
-  beatrix h1 dupecheck example cors misconfiguration
-
-  [dim]# Submit a report[/dim]
-  beatrix h1 submit example -t "CORS Misconfig" -f report.md -i "Account takeover" -s high
-
-  [dim]# Dry run submission[/dim]
-  beatrix h1 submit example -t "CORS Misconfig" -f report.md -i "ATO" -s high --dry-run
-""",
     "validate": """
 [bright_yellow]✅ VALIDATE — Finding Validation[/bright_yellow]
 
@@ -817,7 +793,6 @@ def _show_quick_reference():
     table.add_row("ghost TARGET", "AI autonomous pentester", "beatrix ghost https://api.com")
     table.add_row("github-recon ORG", "GitHub secret scanner", "beatrix github-recon acme-corp")
     table.add_row("validate FILE", "Validate findings", "beatrix validate report.json")
-    table.add_row("h1 [sub]", "HackerOne operations", "beatrix h1 programs")
     table.add_row("mobile [sub]", "Mobile traffic intercept", "beatrix mobile intercept")
     table.add_row("config", "Configuration", "beatrix config --show")
     table.add_row("list", "List modules/presets", "beatrix list --modules")
@@ -3045,165 +3020,6 @@ def github_recon(ctx, org, repo, token, quick, output):
             console.print(f"\n[green]Report saved to {output}[/green]")
     except Exception as e:
         console.print(f"\n[red]Error: {e}[/red]")
-        sys.exit(1)
-
-
-# =============================================================================
-# H1 — HackerOne operations
-# =============================================================================
-
-@cli.group()
-@click.pass_context
-def h1(ctx):
-    """
-    HackerOne operations — submit, dupecheck, list programs.
-
-    \b
-    Run 'beatrix help h1' for details.
-    """
-    pass
-
-
-@h1.command("programs")
-@click.option("--search", "-s", help="Search for a specific program")
-@click.pass_context
-def h1_programs(ctx, search):
-    """List available HackerOne programs."""
-    from beatrix.integrations.hackerone import HackerOneClient
-
-    try:
-        client = HackerOneClient()
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
-        sys.exit(1)
-
-    if not client.verify_auth():
-        console.print("[red]Authentication failed. Check credentials.[/red]")
-        console.print("[dim]Set credentials in ~/.beatrix/config.yaml or config/hackerone_credentials.csv[/dim]")
-        sys.exit(1)
-
-    console.print(f"[green]Authenticated as: {client.username}[/green]\n")
-
-    if search:
-        program = client.search_program(search)
-        if program:
-            attrs = program.get("attributes", {})
-            console.print(f"[bold]{attrs.get('name')}[/bold] ({attrs.get('handle')})")
-            console.print(f"  State:  {attrs.get('state')}")
-            console.print(f"  Bounty: {'Yes' if attrs.get('offers_bounties') else 'No'}")
-        else:
-            console.print(f"[yellow]No program found matching '{search}'[/yellow]")
-    else:
-        programs = client.get_programs()
-
-        table = Table(title=f"HackerOne Programs ({len(programs)})")
-        table.add_column("Handle", style="cyan bold")
-        table.add_column("Name")
-        table.add_column("State")
-        table.add_column("Bounty")
-
-        for p in programs[:25]:
-            attrs = p.get("attributes", {})
-            table.add_row(
-                attrs.get("handle", ""),
-                attrs.get("name", ""),
-                attrs.get("state", ""),
-                "💰" if attrs.get("offers_bounties") else "—",
-            )
-
-        console.print(table)
-        if len(programs) > 25:
-            console.print(f"[dim]  ... and {len(programs) - 25} more[/dim]")
-
-
-@h1.command("dupecheck")
-@click.argument("program")
-@click.argument("keywords", nargs=-1, required=True)
-@click.pass_context
-def h1_dupecheck(ctx, program, keywords):
-    """
-    Check for duplicate reports before submitting.
-
-    \b
-    Examples:
-        beatrix h1 dupecheck example-program github leaked credentials
-    """
-    from beatrix.integrations.hackerone import HackerOneClient
-
-    try:
-        client = HackerOneClient()
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
-        sys.exit(1)
-
-    console.print(f"[cyan]Checking for duplicates on '{program}'...[/cyan]")
-    console.print(f"[dim]Keywords: {', '.join(keywords)}[/dim]\n")
-
-    dupes = client.check_duplicates(program, list(keywords))
-
-    if dupes:
-        console.print(f"[yellow]⚠️  Found {len(dupes)} potential duplicates:[/yellow]\n")
-        for d in dupes:
-            console.print(f"  [{d['source']}] #{d['id']} — {d['title']}")
-            console.print(f"    State: {d.get('state', '?')}, Severity: {d.get('severity', '?')}")
-    else:
-        console.print("[green]✅ No duplicates found. Clear to submit.[/green]")
-
-
-@h1.command("submit")
-@click.argument("program")
-@click.option("--title", "-t", required=True, help="Report title")
-@click.option("--body-file", "-f", type=click.Path(exists=True), required=True, help="Report body (markdown file)")
-@click.option("--impact", "-i", required=True, help="Impact statement")
-@click.option("--severity", "-s", type=click.Choice(["none", "low", "medium", "high", "critical"]), default="high")
-@click.option("--cwe", type=int, help="CWE ID")
-@click.option("--dry-run", is_flag=True, help="Show what would be submitted without submitting")
-@click.pass_context
-def h1_submit(ctx, program, title, body_file, impact, severity, cwe, dry_run):
-    """
-    Submit a report to HackerOne.
-
-    \b
-    Examples:
-        beatrix h1 submit example -t "CORS Misconfig" -f report.md -i "Account takeover" -s high
-        beatrix h1 submit example -t "CORS" -f report.md -i "ATO" --dry-run
-    """
-    from beatrix.integrations.hackerone import HackerOneClient
-
-    try:
-        client = HackerOneClient()
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
-        sys.exit(1)
-
-    body = Path(body_file).read_text()
-
-    if dry_run:
-        console.print("[yellow]DRY RUN — not submitting[/yellow]\n")
-        console.print(f"[bold]Program:[/bold]  {program}")
-        console.print(f"[bold]Title:[/bold]    {title}")
-        console.print(f"[bold]Severity:[/bold] {severity}")
-        console.print(f"[bold]CWE:[/bold]      {cwe or 'none'}")
-        console.print(f"[bold]Impact:[/bold]   {impact}")
-        console.print(f"[bold]Body:[/bold]     {len(body)} chars from {body_file}")
-        return
-
-    console.print(f"[bright_green]Submitting report to {program}...[/bright_green]")
-
-    result = client.submit_report(
-        program_handle=program,
-        title=title,
-        vulnerability_information=body,
-        impact=impact,
-        severity_rating=severity,
-        weakness_id=cwe,
-    )
-
-    if result:
-        report_id = result.get("data", {}).get("id", "?")
-        console.print(f"\n[bold green]✅ Report #{report_id} submitted![/bold green]")
-    else:
-        console.print("\n[bold red]❌ Submission failed[/bold red]")
         sys.exit(1)
 
 

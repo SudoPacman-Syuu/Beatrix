@@ -19,7 +19,7 @@ Architecture inspired by:
 - sqlmap's exploitation engine
 - Nuclei's workflow system
 - Sweet Scanner's scan issue reporting
-- HackerOne report templates
+- Bug bounty report templates
 
 Author: Beatrix Framework
 Version: 1.0

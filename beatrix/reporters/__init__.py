@@ -2,7 +2,7 @@
 BEATRIX Report Generator
 
 Auto-generates bug bounty reports from findings.
-Outputs Markdown reports ready for HackerOne/Bugcrowd submission.
+Outputs Markdown reports ready for bug bounty platform submission.
 Enriches findings with Bugcrowd VRT classification and CVSS 3.1 scores.
 """
 

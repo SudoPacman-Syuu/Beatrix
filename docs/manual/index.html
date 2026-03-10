@@ -559,7 +559,6 @@
                 <li class="sub-item"><a href="#cmd-batch">batch & rapid</a></li>
                 <li class="sub-item"><a href="#cmd-ghost">ghost</a></li>
                 <li class="sub-item"><a href="#cmd-findings">findings</a></li>
-                <li class="sub-item"><a href="#cmd-h1">h1 (HackerOne)</a></li>
                 <li class="sub-item"><a href="#cmd-mobile">mobile</a></li>
                 <li class="sub-item"><a href="#cmd-auth">auth</a></li>
                 <li class="sub-item"><a href="#cmd-browser">browser</a></li>
@@ -586,10 +585,9 @@
                 <li class="sub-item"><a href="#ghost-tools">The 10 Tools</a></li>
                 <li class="sub-item"><a href="#ghost-usage">Usage & Examples</a></li>
                 
-                <li><a href="#hackerone">7. HackerOne Integration</a></li>
-                <li><a href="#workflows">8. Advanced Workflows</a></li>
-                <li><a href="#pros-cons">9. Pros, Cons & Limitations</a></li>
-                <li><a href="#references">10. References</a></li>
+                <li><a href="#workflows">7. Advanced Workflows</a></li>
+                <li><a href="#pros-cons">8. Pros, Cons & Limitations</a></li>
+                <li><a href="#references">9. References</a></li>
             </ul>
             <a href="#top" class="back-to-top">↑ Back to Top</a>
         </nav>
@@ -602,7 +600,7 @@
 
             <section id="intro">
                 <h2>1. Introduction</h2>
-                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, Kill Chain methodology, AI-assisted analysis, and HackerOne integration directly to your terminal. Targets can be domains, URLs, or raw IP addresses.</p>
+                <p>Welcome to <strong>BEATRIX</strong>, a command-line bug bounty hunting framework designed for lethal efficiency. Named after the deadliest assassin, Beatrix brings 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, Kill Chain methodology, and AI-assisted analysis directly to your terminal. Targets can be domains, URLs, or raw IP addresses.</p>
                 <p>Beatrix is built for operators who prefer a terminal over a GUI. It bridges the gap between high-level automation (for rapid, wide-scale sweeps) and low-level manual control (for surgical, targeted strikes).</p>
                 
                 <div class="warning">
@@ -674,7 +672,7 @@ beatrix config --set ai.provider anthropic  # or 'bedrock'
 beatrix config --set ai.model claude-3-5-sonnet-20241022</code></pre>
 
                 <div class="pro-tip">
-                    <strong>Environment Variables:</strong> You can also configure sensitive keys via environment variables: <code>ANTHROPIC_API_KEY</code>, <code>AWS_REGION</code>, <code>GITHUB_TOKEN</code>, <code>H1_USERNAME</code>, <code>H1_API_TOKEN</code>. For CDN bypass: <code>SECURITYTRAILS_API_KEY</code>, <code>CENSYS_API_ID</code>, <code>CENSYS_API_SECRET</code>, <code>SHODAN_API_KEY</code> (all optional — free techniques work without them).
+                    <strong>Environment Variables:</strong> You can also configure sensitive keys via environment variables: <code>ANTHROPIC_API_KEY</code>, <code>AWS_REGION</code>, <code>GITHUB_TOKEN</code>. For CDN bypass: <code>SECURITYTRAILS_API_KEY</code>, <code>CENSYS_API_ID</code>, <code>CENSYS_API_SECRET</code>, <code>SHODAN_API_KEY</code> (all optional — free techniques work without them).
                 </div>
 
                 <h3 id="auth-config">Authentication Configuration</h3>
@@ -940,7 +938,7 @@ beatrix config --set ai.enabled true
 beatrix config --set ai.provider anthropic
 beatrix config --set ai.model claude-3-5-sonnet-20241022</code></pre>
                         <div class="pro-tip">
-                            <strong>Environment Variables:</strong> Sensitive keys can also be set via env vars: <code>ANTHROPIC_API_KEY</code>, <code>AWS_REGION</code>, <code>GITHUB_TOKEN</code>, <code>H1_USERNAME</code>, <code>H1_API_TOKEN</code>. CDN bypass (optional): <code>SECURITYTRAILS_API_KEY</code>, <code>CENSYS_API_ID</code>, <code>CENSYS_API_SECRET</code>, <code>SHODAN_API_KEY</code>.
+                            <strong>Environment Variables:</strong> Sensitive keys can also be set via env vars: <code>ANTHROPIC_API_KEY</code>, <code>AWS_REGION</code>, <code>GITHUB_TOKEN</code>. CDN bypass (optional): <code>SECURITYTRAILS_API_KEY</code>, <code>CENSYS_API_ID</code>, <code>CENSYS_API_SECRET</code>, <code>SHODAN_API_KEY</code>.
                         </div>
                     </div>
                 </details>
@@ -1253,39 +1251,6 @@ beatrix findings diff 3 7
 
 # Show full detail for finding #42
 beatrix findings show 42</code></pre>
-                    </div>
-                </details>
-
-                <details id="cmd-h1">
-                    <summary>h1 — HackerOne Integration</summary>
-                    <div class="detail-body">
-                        <pre><code>beatrix h1 programs|dupecheck|submit</code></pre>
-                        <p>Submit reports, check for duplicates, and browse programs directly from the terminal. Requires <code>H1_USERNAME</code> and <code>H1_API_TOKEN</code> environment variables.</p>
-
-                        <table>
-                            <tr><th>Subcommand</th><th>Usage</th><th>Description</th></tr>
-                            <tr><td><code>programs</code></td><td><code>beatrix h1 programs -s "example"</code></td><td>List/search available programs</td></tr>
-                            <tr><td><code>dupecheck</code></td><td><code>beatrix h1 dupecheck example cors auth bypass</code></td><td>Check for duplicate reports</td></tr>
-                            <tr><td><code>submit</code></td><td><code>beatrix h1 submit example -t "Title" -f report.md</code></td><td>Submit a report</td></tr>
-                        </table>
-
-                        <p><strong>Submit flags:</strong></p>
-                        <table class="flag-table">
-                            <tr><td>-t, --title TEXT</td><td><strong>(Required)</strong> Report title</td></tr>
-                            <tr><td>-f, --body-file PATH</td><td><strong>(Required)</strong> Report body (markdown file)</td></tr>
-                            <tr><td>-i, --impact TEXT</td><td><strong>(Required)</strong> Impact statement</td></tr>
-                            <tr><td>-s, --severity LEVEL</td><td>Severity: none/low/medium/high/critical (default: high)</td></tr>
-                            <tr><td>--cwe ID</td><td>CWE identifier number</td></tr>
-                            <tr><td>--dry-run</td><td>Preview what would be submitted</td></tr>
-                        </table>
-
-                        <pre><code># Full submission workflow
-beatrix h1 dupecheck example cors misconfiguration
-beatrix h1 submit example -t "CORS Misconfiguration on api.example.com" \
-  -f report.md -i "Account takeover via cross-origin data theft" -s high
-
-# Dry run (test without submitting)
-beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</code></pre>
                     </div>
                 </details>
 
@@ -2159,28 +2124,10 @@ beatrix ghost https://example.com/dashboard -H "Authorization: Bearer TOKEN" --m
                 </div>
             </section>
 
-            <section id="hackerone">
-                <h2>7. HackerOne Integration</h2>
-                <p>Beatrix streamlines the reporting process by integrating directly with the HackerOne API. You must set <code>H1_USERNAME</code> and <code>H1_API_TOKEN</code> in your environment or config.</p>
-
-                <pre><code># List available programs
-beatrix h1 programs
-
-# Search for a specific program
-beatrix h1 programs -s "example"
-
-# Check for duplicates before submitting (Saves reputation points!)
-beatrix h1 dupecheck example cors misconfiguration
-
-# Submit a report directly from the terminal
-beatrix h1 submit example -t "CORS Misconfiguration" -f report.md -i "Account takeover" -s high
-
-# Dry run submission (Test formatting without actually submitting)
-beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</code></pre>
-            </section>
+            <section id="hackerone" style="display:none;"></section>
 
             <section id="workflows">
-                <h2>8. Advanced Workflows</h2>
+                <h2>7. Advanced Workflows</h2>
                 <p>To truly master Beatrix, you must learn to chain its commands together.</p>
 
                 <h4>Workflow 1: The Wide Net</h4>
@@ -2202,8 +2149,7 @@ beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</cod
                 <ol>
                     <li>Run <code>beatrix hunt https://target.com --preset full -o report.json</code></li>
                     <li>Run <code>beatrix validate report.json</code> to ensure the findings are actually exploitable and not false positives.</li>
-                    <li>Run <code>beatrix h1 dupecheck target_program [finding_keywords]</code></li>
-                    <li>Run <code>beatrix h1 submit target_program -f validated_report.md</code></li>
+                    <li>Review the validated findings and craft your report manually for the target platform.</li>
                 </ol>
             </section>
 
@@ -2215,7 +2161,7 @@ beatrix h1 submit example -t "CORS" -f report.md -i "ATO" -s high --dry-run</cod
                     <li><strong>Speed & Automation:</strong> The Kill Chain methodology automates the tedious parts of hunting, allowing you to focus on complex logic flaws.</li>
                     <li><strong>AI Integration:</strong> GHOST provides intelligent, context-aware fuzzing that traditional scanners completely miss. It can chain vulnerabilities together.</li>
                     <li><strong>Extensibility:</strong> Written in Python, making it incredibly easy to add new scanner modules compared to Go or Java-based tools.</li>
-                    <li><strong>Workflow Integration:</strong> Built-in HackerOne submission, duplicate checking, and finding validation (ReadinessGate).</li>
+                    <li><strong>Workflow Integration:</strong> Built-in finding validation (ReadinessGate) ensures you only submit real bugs.</li>
                 </ul>
 
                 <h3>What Needs Improvement (Cons/Flaws)</h3>

@@ -1,12 +1,7 @@
 """
 BEATRIX Integrations
 
-External service integrations: HackerOne, GitHub, etc.
+External service integrations: GitHub, etc.
 """
 
-from beatrix.integrations.hackerone import H1ReportDraft, HackerOneClient
-
-__all__ = [
-    "HackerOneClient",
-    "H1ReportDraft",
-]
+__all__: list[str] = []

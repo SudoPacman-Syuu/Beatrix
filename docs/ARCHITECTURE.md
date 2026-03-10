@@ -47,7 +47,7 @@
 │ Finding dataclass│ ├──────────────┤ ├────────────────┤ │ Markdown / JSON   │
 │ → Consolidator   │ │ 13 async     │ │ Pure asyncio   │ │ HTML chain reports│
 │ → FindingsDB     │ │ subprocess   │ │ HTTP server    │ │ MITRE ATT&CK map  │
-│ → ImpactValidator│ │ runners with │ │ OOB callbacks  │ │ HackerOne submit  │
+│ → ImpactValidator│ │ runners with │ │ OOB callbacks  │ │                   │
 │ → ReadinessGate  │ │ timeouts     │ │ CORS/click PoC │ │                   │
 └──────────────────┘ └──────────────┘ │ exfil collect  │ └───────────────────┘
                                       └────────────────┘
@@ -540,7 +540,6 @@ beatrix/
 ├── recon/
 │   └── __init__.py                # ReconRunner — tool orchestration
 ├── integrations/
-│   └── hackerone.py               # HackerOne API client
 ├── reporters/
 │   └── chain_reporting.py         # HTML chain report, MITRE heatmap
 ├── validators/                    # ImpactValidator + ReadinessGate
@@ -621,7 +620,7 @@ beatrix/
                 │
                 ▼
 6. OUTPUT
-   Rich terminal display + optional file reports + HackerOne submission
+   Rich terminal display + optional file reports
 ```
 
 ---

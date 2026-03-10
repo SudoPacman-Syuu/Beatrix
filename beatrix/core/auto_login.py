@@ -239,6 +239,7 @@ class AutoLoginEngine:
         """
         waf_detected = False
         endpoints_tried = False
+        endpoint_found_but_creds_wrong = False
 
         async with httpx.AsyncClient(
             timeout=self.timeout,
@@ -310,20 +311,20 @@ class AutoLoginEngine:
                             endpoint_found_but_creds_wrong = True
 
                     if endpoint_found_but_creds_wrong:
-                        return LoginResult(
-                            success=False,
-                            message=f"Login endpoint(s) found on {self.base_url} but credentials were rejected. "
-                                    f"Check your username/email and password.",
-                        )
+                        # Don't bail out — a 401 from httpx may be due to missing
+                        # captcha/fingerprint/nonce that only the real browser
+                        # provides. Fall through to browser login before giving up.
+                        logger.info("httpx login rejected — trying browser login as fallback "
+                                    "(endpoint may require captcha/JS tokens)")
 
                     if waf_blocked_count > 0:
                         waf_detected = True
                         logger.info(f"WAF blocked {waf_blocked_count} endpoint(s) — switching to browser login")
 
         # ── Phase 3: Browser-based login (Playwright) ────────────────
-        # Used when WAF blocks httpx, or discovery found nothing
-        if waf_detected or not endpoints_tried:
-            logger.info("Attempting browser-based login to bypass WAF...")
+        # Used when WAF blocks httpx, discovery found nothing, or httpx got rejected
+        if waf_detected or not endpoints_tried or endpoint_found_but_creds_wrong:
+            logger.info("Attempting browser-based login...")
             browser_result = await self._try_browser_login()
             if browser_result.success or "rejected" in browser_result.message.lower():
                 return browser_result
@@ -334,6 +335,13 @@ class AutoLoginEngine:
                     success=False,
                     message=f"WAF/Cloudflare blocks automated requests to {self.base_url}. "
                             f"Browser login also failed: {browser_result.message}",
+                )
+            if endpoint_found_but_creds_wrong:
+                return LoginResult(
+                    success=False,
+                    message=f"Login endpoint(s) found on {self.base_url} but credentials were rejected "
+                            f"by both httpx and browser. Verify your username/email and password. "
+                            f"Browser: {browser_result.message}",
                 )
 
         return LoginResult(
@@ -927,8 +935,14 @@ class AutoLoginEngine:
             login_link = None
 
         if login_link == "__clicked__":
-            # Button was clicked, wait for navigation/modal
-            await asyncio.sleep(3)
+            # Button was clicked — wait for modal/navigation to render a password field
+            try:
+                await page.wait_for_selector(
+                    'input[type="password"], input[type="email"], input[name="email"], input[name="username"]',
+                    timeout=10000,
+                )
+            except Exception:
+                await asyncio.sleep(3)  # Fallback sleep if no field appears
             return page.url
         elif login_link:
             if login_link.startswith("http"):
@@ -952,24 +966,16 @@ class AutoLoginEngine:
         return None
 
     async def _browser_fill_credentials(self, page) -> bool:
-        """Find credential fields and fill them in the browser."""
+        """Find credential fields and fill them in the browser.
+
+        Handles both single-step forms (email + password visible together)
+        and multi-step forms (email first → continue → password appears).
+        """
         # Wait a moment for any SPA rendering
         await asyncio.sleep(1)
 
-        # Find the password field first (most reliable indicator of a login form)
-        password_field = await page.query_selector('input[type="password"]')
-        if not password_field:
-            # Try waiting for it (SPA might still be rendering)
-            try:
-                password_field = await page.wait_for_selector(
-                    'input[type="password"]', timeout=10000,
-                )
-            except Exception:
-                logger.warning("Browser: no password field found on page")
-                return False
-
-        # Find the username/email field
-        # Strategy: find input fields BEFORE the password field
+        # Find the username/email field first — on multi-step forms the
+        # password field won't exist yet.
         username_selectors = [
             f'input[name="{name}"]' for name in USERNAME_FIELD_NAMES
         ] + [
@@ -980,25 +986,96 @@ class AutoLoginEngine:
 
         username_field = None
         for selector in username_selectors:
-            el = await page.query_selector(selector)
-            if el:
-                # Make sure it's visible
-                is_visible = await el.is_visible()
-                if is_visible:
+            try:
+                el = await page.query_selector(selector)
+                if el and await el.is_visible():
                     username_field = el
                     break
+            except Exception:
+                continue
 
+        # If no username field, try waiting for one to render
         if not username_field:
-            logger.warning("Browser: no username/email field found on page")
-            return False
+            try:
+                username_field = await page.wait_for_selector(
+                    'input[type="email"], input[name="email"], input[name="username"], input[type="text"]',
+                    timeout=10000,
+                )
+            except Exception:
+                logger.warning("Browser: no username/email field found on page")
+                return False
 
-        # Fill the fields
+        # Fill email/username
         try:
             await username_field.fill(self.username)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"Browser: could not fill username: {e}")
+            return False
+
+        # Check if password field is already visible (single-step form)
+        password_field = await page.query_selector('input[type="password"]')
+        if password_field:
+            try:
+                if await password_field.is_visible():
+                    await password_field.fill(self.password)
+                    await asyncio.sleep(0.3)
+                    logger.info("Browser: credentials filled (single-step form)")
+                    return True
+            except Exception:
+                pass
+
+        # ── Multi-step form: submit email first, then wait for password ──
+        logger.info("Browser: password field not visible — trying multi-step login")
+
+        # Try clicking Continue/Next/Submit buttons after entering email
+        continue_selectors = [
+            'button[type="submit"]',
+            'input[type="submit"]',
+            'button:has-text("Continue")',
+            'button:has-text("Next")',
+            'button:has-text("Submit")',
+            'button:has-text("Sign in")',
+            'button:has-text("Log in")',
+            'button:has-text("Proceed")',
+        ]
+        clicked_continue = False
+        for selector in continue_selectors:
+            try:
+                btn = await page.query_selector(selector)
+                if btn and await btn.is_visible():
+                    await btn.click()
+                    clicked_continue = True
+                    break
+            except Exception:
+                continue
+
+        if not clicked_continue:
+            # Try pressing Enter on the username field
+            try:
+                await username_field.press("Enter")
+                clicked_continue = True
+            except Exception:
+                pass
+
+        if not clicked_continue:
+            logger.warning("Browser: could not advance past email step")
+            return False
+
+        # Wait for password field to appear
+        try:
+            password_field = await page.wait_for_selector(
+                'input[type="password"]', timeout=15000,
+            )
+        except Exception:
+            logger.warning("Browser: password field did not appear after email step")
+            return False
+
+        # Fill password
+        try:
             await password_field.fill(self.password)
             await asyncio.sleep(0.3)
-            logger.info("Browser: credentials filled")
+            logger.info("Browser: credentials filled (multi-step form)")
             return True
         except Exception as e:
             logger.warning(f"Browser: could not fill credentials: {e}")

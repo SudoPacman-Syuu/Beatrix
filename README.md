@@ -4,7 +4,7 @@
 
 **License:** Source Available — Free for non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE).
 
-A command-line bug bounty hunting framework. 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, 7-phase Kill Chain methodology, AI-assisted analysis, and HackerOne integration — all from your terminal. Targets can be domains, URLs, or raw IP addresses.
+A command-line bug bounty hunting framework. 32 scanner modules, 13 external tool integrations, full OWASP Top 10 coverage, 7-phase Kill Chain methodology, and AI-assisted analysis — all from your terminal. Targets can be domains, URLs, or raw IP addresses.
 
 Globally installable on any Linux system. Call it from anywhere.
 
@@ -100,7 +100,6 @@ beatrix arsenal                      # full module reference
 | `ghost TARGET` | AI autonomous pentester | `beatrix ghost https://api.com` |
 | `github-recon ORG` | GitHub secret scanner | `beatrix github-recon acme-corp` |
 | `validate FILE` | Validate findings | `beatrix validate report.json` |
-| `h1 [sub]` | HackerOne operations | `beatrix h1 programs` |
 | `mobile [sub]` | Mobile traffic intercept | `beatrix mobile intercept` |
 | `browser [sub]` | Playwright browser scanning | `beatrix browser scan https://app.com` |
 | `creds [sub]` | Credential validation | `beatrix creds validate jwt_secret TOKEN` |
@@ -560,25 +559,6 @@ beatrix auth config
 
 Auth config supports per-target credentials and IDOR dual-session testing (see `~/.beatrix/auth.yaml`).
 
-### HackerOne Integration
-
-```bash
-# List programs
-beatrix h1 programs
-
-# Search for a program
-beatrix h1 programs -s "example-program"
-
-# Check for duplicates before submitting
-beatrix h1 dupecheck example-program cors misconfiguration
-
-# Submit a report
-beatrix h1 submit example-program -t "CORS Misconfiguration" -f report.md -i "Account takeover" -s high
-
-# Dry run
-beatrix h1 submit example-program -t "CORS" -f report.md -i "ATO" -s high --dry-run
-```
-
 ### GitHub Secret Scanning
 
 ```bash
@@ -668,8 +648,6 @@ beatrix config --set output.dir ./my_results
 | `ANTHROPIC_API_KEY` | Anthropic API key (for GHOST) |
 | `AWS_REGION` | AWS region for Bedrock |
 | `GITHUB_TOKEN` | GitHub token for recon |
-| `H1_USERNAME` | HackerOne username |
-| `H1_API_TOKEN` | HackerOne API token |
 | `SECURITYTRAILS_API_KEY` | SecurityTrails DNS history (CDN bypass) |
 | `CENSYS_API_ID` | Censys certificate search (CDN bypass) |
 | `CENSYS_API_SECRET` | Censys API secret (CDN bypass) |
@@ -738,7 +716,7 @@ beatrix/
 ├── reporters/               # Markdown, JSON, HTML chain reports
 ├── recon/                   # ReconRunner — subfinder/amass/nmap integration
 ├── ai/                      # GHOST agent, Haiku integration
-├── integrations/            # HackerOne API client
+├── integrations/            # External service clients
 └── utils/                   # WAF bypass, VRT classifier, helpers, response_analyzer
 ```
 
