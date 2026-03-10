@@ -270,7 +270,7 @@ _install_wrapper_user() {
     local user_site
     user_site="$($PYTHON -c 'import site; print(site.getusersitepackages())')"
     local project_dir
-    project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    project_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
     local wrapper_content="#!/usr/bin/env bash
 # BEATRIX CLI wrapper — sudo-compatible (user-level install)
@@ -396,25 +396,6 @@ go_install_tool() {
     go install -v "$pkg" &>/dev/null && success "$name" || { warn "Failed to install $name"; return 1; }
 }
 
-# ── Node.js / npm ────────────────────────────────────────────
-
-ensure_node() {
-    if command_exists node && command_exists npm; then
-        return 0
-    fi
-    info "Installing Node.js..."
-    case "$PKG_MGR" in
-        apt)
-            curl -fsSL https://deb.nodesource.com/setup_20.x 2>/dev/null | sudo -E bash - &>/dev/null
-            sudo apt-get install -y -qq nodejs 2>/dev/null
-            ;;
-        dnf)    sudo dnf install -y -q nodejs npm 2>/dev/null ;;
-        pacman) sudo pacman -S --noconfirm --needed nodejs npm 2>/dev/null ;;
-        *)      warn "Cannot auto-install Node.js on this system"; return 1 ;;
-    esac
-    command_exists node && success "Node.js installed" || { warn "Node.js install failed"; return 1; }
-}
-
 # ── External Tools Installer ─────────────────────────────────
 
 install_external_tools() {
@@ -523,22 +504,26 @@ install_external_tools() {
             if [[ "$tool" == "httpx" ]] && command_exists httpx; then
                 if file "$(command -v httpx)" 2>/dev/null | grep -qi "python\|script\|text"; then
                     info "Found Python httpx shim — installing Go httpx (ProjectDiscovery)..."
-                    if go_install_tool "httpx" "${GO_TOOLS[httpx]}"; then
-                        ((installed++))
-                    else
-                        ((failed++))
-                    fi
-                    continue
+                    go install -v "${GO_TOOLS[httpx]}" &>/dev/null && \
+                        { success "httpx"; ((installed++)); } || \
+                        { warn "Failed to install httpx"; ((failed++)); }
+                else
+                    success "$tool (already installed)"
+                    ((skipped++))
                 fi
+                continue
             fi
 
             if command_exists "$tool"; then
                 success "$tool (already installed)"
                 ((skipped++))
             else
-                if go_install_tool "$tool" "${GO_TOOLS[$tool]}"; then
+                info "Installing $tool..."
+                if go install -v "${GO_TOOLS[$tool]}" &>/dev/null; then
+                    success "$tool"
                     ((installed++))
                 else
+                    warn "Failed to install $tool"
                     ((failed++))
                 fi
             fi
@@ -672,23 +657,20 @@ WRAPPER
     echo ""
     echo -e "${BOLD}[4/6] Playwright (browser automation)...${RESET}"
 
-    if command_exists playwright; then
-        success "playwright (already installed)"
+    local PW_PYTHON="$PYTHON"
+    [[ -x "$VENV_DIR/bin/python" ]] && PW_PYTHON="$VENV_DIR/bin/python"
+
+    # playwright is a core pip dependency (already installed with Beatrix).
+    # Here we just ensure the Chromium browser binary is downloaded.
+    if $PW_PYTHON -c 'import playwright' &>/dev/null; then
+        info "Installing Chromium browser for playwright..."
+        $PW_PYTHON -m playwright install chromium --with-deps &>/dev/null && \
+            success "playwright + Chromium" || \
+            { success "playwright (run 'playwright install chromium' for browser)"; }
         ((skipped++))
     else
-        info "Installing playwright..."
-        local PW_PYTHON="$PYTHON"
-        [[ -x "$VENV_DIR/bin/python" ]] && PW_PYTHON="$VENV_DIR/bin/python"
-        if $PIP_CMD playwright &>/dev/null; then
-            info "Installing Chromium browser for playwright..."
-            $PW_PYTHON -m playwright install chromium --with-deps &>/dev/null && \
-                success "playwright + Chromium" || \
-                { success "playwright (run 'playwright install chromium' for browser)"; }
-            ((installed++))
-        else
-            warn "Failed to install playwright"
-            ((failed++))
-        fi
+        warn "playwright Python package not found — reinstall Beatrix"
+        ((failed++))
     fi
 
     # ── 5. webanalyze (Go-based Wappalyzer) ──────────────
@@ -800,8 +782,10 @@ CORE_PYTHON_DEPS=(
     "scapy>=2.5.0"
     "playwright>=1.40.0"
     # Extended (full scanning support)
+    "mitmproxy>=10.0.0"
     "cloudscraper>=1.2.71"
     "networkx>=3.2.0"
+    "matplotlib>=3.8.0"
 )
 
 # Map package install names to their Python import names for verification
@@ -820,8 +804,10 @@ declare -A IMPORT_MAP=(
     [paramiko]="paramiko"
     [scapy]="scapy"
     [playwright]="playwright"
+    [mitmproxy]="mitmproxy"
     [cloudscraper]="cloudscraper"
     [networkx]="networkx"
+    [matplotlib]="matplotlib"
 )
 
 verify_python_deps() {

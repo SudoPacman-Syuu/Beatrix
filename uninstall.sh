@@ -8,6 +8,9 @@ DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
+INSTALL_DIR="${BEATRIX_INSTALL_DIR:-/usr/local/bin}"
+VENV_DIR="${BEATRIX_VENV:-$HOME/.beatrix}"
+
 echo ""
 echo -e "${BOLD}Uninstalling Beatrix CLI...${RESET}"
 echo ""
@@ -27,32 +30,33 @@ sudo python3 -m pip uninstall -y beatrix-cli 2>/dev/null && \
     echo -e "  ${GREEN}✓${RESET} Removed pip system install" || true
 
 # Config (ask first — before removing the venv directory)
-if [[ -f "$HOME/.beatrix/config.yaml" ]]; then
+if [[ -f "$VENV_DIR/config.yaml" ]]; then
     echo ""
-    read -rp "  Remove config (~/.beatrix/config.yaml)? [y/N] " answer
+    read -rp "  Remove config ($VENV_DIR/config.yaml)? [y/N] " answer
     if [[ ! "$answer" =~ ^[Yy]$ ]]; then
         # Preserve config — move it temporarily
         _beatrix_cfg_backup=$(mktemp)
-        cp "$HOME/.beatrix/config.yaml" "$_beatrix_cfg_backup"
+        cp "$VENV_DIR/config.yaml" "$_beatrix_cfg_backup"
     fi
 fi
 
-# venv + symlink
-if [[ -d "$HOME/.beatrix" ]]; then
-    rm -rf "$HOME/.beatrix"
-    echo -e "  ${GREEN}✓${RESET} Removed ~/.beatrix venv"
+# venv
+if [[ -d "$VENV_DIR" ]]; then
+    rm -rf "$VENV_DIR"
+    echo -e "  ${GREEN}✓${RESET} Removed $VENV_DIR venv"
 fi
 
 # Restore config if user chose to keep it
 if [[ -n "${_beatrix_cfg_backup:-}" ]]; then
-    mkdir -p "$HOME/.beatrix"
-    mv "$_beatrix_cfg_backup" "$HOME/.beatrix/config.yaml"
+    mkdir -p "$VENV_DIR"
+    mv "$_beatrix_cfg_backup" "$VENV_DIR/config.yaml"
     echo -e "  ${GREEN}✓${RESET} Config preserved"
 fi
 
-if [[ -f "/usr/local/bin/beatrix" ]] || [[ -L "/usr/local/bin/beatrix" ]]; then
-    sudo rm -f /usr/local/bin/beatrix
-    echo -e "  ${GREEN}✓${RESET} Removed /usr/local/bin/beatrix"
+# Wrapper script
+if [[ -f "$INSTALL_DIR/beatrix" ]] || [[ -L "$INSTALL_DIR/beatrix" ]]; then
+    sudo rm -f "$INSTALL_DIR/beatrix"
+    echo -e "  ${GREEN}✓${RESET} Removed $INSTALL_DIR/beatrix"
 fi
 
 echo ""
