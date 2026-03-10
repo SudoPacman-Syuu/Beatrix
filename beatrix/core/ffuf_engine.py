@@ -43,6 +43,7 @@ Version: 1.0
 
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -249,12 +250,19 @@ class FFufEngine:
         timeout: int = 10,
         verbose: bool = True,
         follow_redirects: bool = False,
+        waf_profile: Optional[str] = None,
     ):
         self.threads = threads
         self.rate_limit = rate_limit
         self.timeout = timeout
         self.verbose = verbose
         self.follow_redirects = follow_redirects
+        self._waf_profile = waf_profile
+
+        # When WAF detected, apply safe defaults to avoid triggering blocks
+        if waf_profile and rate_limit == 0:
+            self.rate_limit = 30  # Cap at 30 rps when WAF detected
+            self.threads = min(threads, 20)  # Reduce concurrency
 
         # Check if ffuf is available
         self.ffuf_path = self._find_ffuf()
@@ -347,8 +355,15 @@ class FFufEngine:
             for name, value in headers.items():
                 cmd.extend(["-H", f"{name}: {value}"])
 
-        # Add common headers
-        cmd.extend(["-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"])
+        # Add common headers with a random realistic User-Agent
+        _uas = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+        ]
+        cmd.extend(["-H", f"User-Agent: {random.choice(_uas)}"])
 
         # Cookies
         if cookies:

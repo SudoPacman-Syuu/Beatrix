@@ -274,6 +274,7 @@ class SmartFuzzer:
         verify_top_n: int = 100,  # Verify top N candidates per vuln type
         timeout: int = 10,
         verbose: bool = True,
+        waf_profile: str | None = None,
     ):
         self.threads = threads
         self.verify_top_n = verify_top_n
@@ -283,7 +284,8 @@ class SmartFuzzer:
         # Initialize ffuf engine
         if HAS_FFUF:
             try:
-                self.ffuf = FFufEngine(threads=threads, verbose=False)
+                self.ffuf = FFufEngine(threads=threads, verbose=False,
+                                       waf_profile=waf_profile)
             except Exception as e:
                 print(f"[!] FFuf not available: {e}")
                 self.ffuf = None

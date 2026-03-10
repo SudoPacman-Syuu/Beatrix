@@ -7,6 +7,7 @@ Inspired by Sweet Scanner's IScannerCheck interface.
 
 import asyncio
 import logging
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,6 +16,74 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 
 logger = logging.getLogger("beatrix.scanners.base")
+
+# ── User-Agent rotation pool ────────────────────────────────────────
+# Realistic, modern browser UAs.  Rotated per-request to avoid
+# trivial fingerprinting by WAFs that track a single static UA.
+_UA_POOL: list[str] = [
+    # Chrome on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Chrome on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Chrome on Linux
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Firefox on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    # Firefox on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+    # Edge on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+    # Safari on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+]
+
+
+def _random_ua() -> str:
+    """Return a random realistic User-Agent string."""
+    return random.choice(_UA_POOL)
+
+
+# ── Supplementary header sets for fingerprint diversity ─────────────
+# WAFs correlate header *sets* (presence/absence of Accept-Language,
+# DNT, Sec-Fetch-*, etc.) to fingerprint automated traffic.  We define
+# a few header "profiles" modelled after real browser behaviour and
+# pick one at random per BaseScanner instance.
+_HEADER_PROFILES: list[dict[str, str]] = [
+    {  # Chrome-like
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {  # Firefox-like
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {  # Edge-like
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    {  # Minimal (Safari-ish)
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    },
+]
 
 # G-02: Global rate limit shared across all scanner instances.
 # When multiple scanners run in parallel, each has its own per-scanner
@@ -165,21 +234,25 @@ class BaseScanner(ABC):
         self._cb_host_failures: Dict[str, int] = {}  # host -> consecutive failure count
         self._cb_tripped_hosts: set = set()  # hosts that have been circuit-broken
 
+        # WAF evasion state
+        self._waf_profile: Optional[str] = None
+        self._waf_block_count: int = 0   # consecutive WAF blocks
+        self._waf_throttle_delay: float = 0.0  # adaptive delay (seconds)
+        self._header_profile: dict[str, str] = random.choice(_HEADER_PROFILES)
+
     # Circuit breaker threshold — class-level constant
     _CB_THRESHOLD: int = 5
 
     async def __aenter__(self):
         """Async context manager entry"""
+        # Build initial headers: random UA + random header profile
+        _init_headers = {"User-Agent": _random_ua()}
+        _init_headers.update(self._header_profile)
         self.client = httpx.AsyncClient(
             timeout=self.timeout,
             follow_redirects=False,  # Security scanner: don't follow redirects by default
             verify=False,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                ),
-            },
+            headers=_init_headers,
         )
         return self
 
@@ -284,7 +357,14 @@ class BaseScanner(ABC):
         **kwargs,
     ) -> httpx.Response:
         """Make an HTTP request with rate limiting, circuit breaker, 429
-        retry, and session expiry detection.
+        retry, WAF evasion, and session expiry detection.
+
+        WAF evasion features (all automatic, zero scanner-level changes):
+        - Rotates User-Agent on every request
+        - Adds random timing jitter when WAF profile is set
+        - Detects WAF block pages and retries with HTTP-level bypasses
+        - Adaptive throttling: slows down when consecutive blocks detected
+        - Exponential backoff on 429 (up to 3 retries)
 
         Circuit breaker: tracks consecutive transport errors (DNS failure,
         connection refused, timeout) per host.  After _CB_THRESHOLD
@@ -309,6 +389,16 @@ class BaseScanner(ABC):
                 f"Circuit breaker open for {host} — "
                 f"{self._CB_THRESHOLD} consecutive transport errors"
             )
+
+        # ── UA rotation — new UA on every request ─────────────────────
+        self.client.headers["User-Agent"] = _random_ua()
+
+        # ── Request timing jitter — simulate human-like intervals ─────
+        # When a WAF profile is set, add 50-300ms random delay per
+        # request.  Added to adaptive throttle delay from WAF blocks.
+        if self._waf_profile or self._waf_throttle_delay > 0:
+            jitter = random.uniform(0.05, 0.3) + self._waf_throttle_delay
+            await asyncio.sleep(jitter)
 
         retry_count = 0
         while True:
@@ -337,7 +427,7 @@ class BaseScanner(ABC):
             if host in self._cb_host_failures:
                 del self._cb_host_failures[host]
 
-            # Retry on rate limit with exponential backoff (max 3 retries)
+            # ── 429 backoff — exponential retry with Retry-After ──────
             if response.status_code == 429 and retry_count < 3:
                 try:
                     retry_after = float(response.headers.get("retry-after", 2 ** retry_count))
@@ -346,7 +436,84 @@ class BaseScanner(ABC):
 
                 await asyncio.sleep(min(retry_after, 30))
                 retry_count += 1
+                # Engage adaptive throttle — WAF is rate-limiting us
+                self._waf_throttle_delay = min(
+                    self._waf_throttle_delay + 0.5, 3.0
+                )
                 continue
+
+            # ── CDN/WAF challenge page detection ──────────────────────
+            # If the response body is a WAF challenge page (not a real
+            # application response), try HTTP-level bypasses.
+            if (response.status_code in (403, 406, 503)
+                    and retry_count < 1):
+                try:
+                    body = response.text[:5000]
+                except Exception:
+                    body = ""
+                if self.is_cdn_challenge(body):
+                    retry_count += 1
+                    self._waf_block_count += 1
+                    # Adaptive throttle: ramp up delay on consecutive blocks
+                    self._waf_throttle_delay = min(
+                        0.5 * self._waf_block_count, 5.0
+                    )
+                    # Retry once with WAF bypass headers
+                    bypass_headers = dict(kwargs.get("headers", {}))
+                    bypass_headers.update({
+                        "X-Originating-IP": "127.0.0.1",
+                        "X-Forwarded-For": "127.0.0.1",
+                        "X-Remote-IP": "127.0.0.1",
+                        "X-Remote-Addr": "127.0.0.1",
+                        "X-Original-URL": _urlparse(url).path,
+                        "X-Rewrite-URL": _urlparse(url).path,
+                    })
+                    bypass_kwargs = dict(kwargs)
+                    bypass_kwargs["headers"] = bypass_headers
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                    try:
+                        async with _get_global_semaphore():
+                            async with self.semaphore:
+                                resp2 = await self.client.request(
+                                    method, url, **bypass_kwargs
+                                )
+                        if resp2.status_code not in (403, 406, 503):
+                            self._waf_block_count = max(
+                                self._waf_block_count - 1, 0
+                            )
+                            return resp2
+                    except Exception:
+                        pass
+                    # Method override attempt for GET requests
+                    if method == "GET":
+                        mo_headers = dict(bypass_headers)
+                        mo_headers["X-HTTP-Method-Override"] = "GET"
+                        mo_kwargs = dict(kwargs)
+                        mo_kwargs["headers"] = mo_headers
+                        try:
+                            async with _get_global_semaphore():
+                                async with self.semaphore:
+                                    resp3 = await self.client.request(
+                                        "POST", url, **mo_kwargs
+                                    )
+                            if resp3.status_code not in (403, 406, 503):
+                                self._waf_block_count = max(
+                                    self._waf_block_count - 1, 0
+                                )
+                                return resp3
+                        except Exception:
+                            pass
+                    # All bypass attempts failed — return original
+                    return response
+            else:
+                # Successful non-WAF response — decay throttle delay
+                if response.status_code < 400:
+                    self._waf_block_count = max(
+                        self._waf_block_count - 1, 0
+                    )
+                    self._waf_throttle_delay = max(
+                        self._waf_throttle_delay - 0.1, 0.0
+                    )
 
             # ── Session expiry detection ──────────────────────────────
             # When we're running authenticated and get 401, track it.
@@ -410,9 +577,10 @@ class BaseScanner(ABC):
     def set_waf_profile(self, waf_name: str) -> None:
         """Set WAF profile for HTTP-level bypass techniques.
 
-        Override in subclasses for scanner-specific behavior.
+        Activates per-request timing jitter, adaptive throttling on
+        blocks, and CDN challenge auto-bypass in ``request()``.
+        Override in subclasses for scanner-specific payload behavior.
         """
-        self._waf_profile = getattr(self, '_waf_profile', None)
         self._waf_profile = waf_name
 
     async def request_with_waf_bypass(
@@ -490,6 +658,7 @@ class BaseScanner(ABC):
 
     # Markers that indicate response is from a CDN/WAF challenge, not the real app
     _CDN_CHALLENGE_MARKERS = (
+        # Cloudflare
         "<title>Just a moment...</title>",       # Cloudflare JS challenge
         "<title>Attention Required!</title>",     # Cloudflare block page
         "<title>Access denied</title>",           # Cloudflare/Akamai block
@@ -497,7 +666,28 @@ class BaseScanner(ABC):
         "cf_chl_opt",                            # Cloudflare challenge options JS
         "challenges.cloudflare.com",             # Cloudflare challenge iframe
         "cdn-cgi/challenge-platform",            # Cloudflare challenge platform
+        # Akamai
         "Pardon Our Interruption",               # Akamai bot manager
+        "akam/13/",                              # Akamai sensor data
+        "_abck",                                 # Akamai bot manager cookie JS
+        # PerimeterX
+        "perimeterx",                            # PerimeterX challenge
+        "/_px/",                                 # PerimeterX challenge path
+        "px-captcha",                            # PerimeterX captcha div
+        "PXmvTNFT",                              # PerimeterX sensor ID
+        "human-challenge",                       # PerimeterX human challenge
+        # Imperva / Incapsula
+        "incapsula",                             # Incapsula block
+        "_Incapsula_Resource",                   # Incapsula resource check
+        "robots.incapsula.com",                  # Incapsula robot check
+        # DataDome
+        "datadome",                              # DataDome challenge
+        "dd.datadome.com",                       # DataDome JS SDK
+        # Kasada
+        "ips.js",                                # Kasada challenge
+        # Generic
+        "bot detection",                         # Generic bot detection
+        "automated request",                     # Generic block message
     )
 
     @staticmethod

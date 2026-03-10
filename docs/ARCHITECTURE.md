@@ -1,6 +1,6 @@
 # BEATRIX Architecture
 
-**Version:** 1.0.4  
+**Version:** 1.0.5  
 **Last Updated:** March 10, 2026
 
 ---
@@ -72,10 +72,10 @@ module key shown below.
 
 | Phase | Handler | Engine Module Keys |
 |-------|---------|-------------------|
-| 1. Reconnaissance | `_handle_recon` | `crawl` (scope-aware, error capture), `endpoint_prober`, `js_analysis`, `headers` (per-endpoint), `github_recon` + external: subfinder, amass, nmap, katana, gospider, hakrawler, gau, whatweb, webanalyze, dirsearch + `recon_helpers`: robots/sitemap, HTML intel, SSL SAN, DNS recon, source maps, CVE lookup, favicon hash, subdomain liveness, WHOIS/ASN, GitHub domain search, internal host probe |
+| 1. Reconnaissance | `_handle_recon` | `crawl` (scope-aware, error capture), `endpoint_prober`, `js_analysis`, `headers` (per-endpoint), `github_recon` + external: subfinder, amass, nmap, katana, gospider, hakrawler, gau, whatweb, webanalyze, dirsearch + `recon_helpers`: robots/sitemap, HTML intel, SSL SAN, DNS recon, source maps, CVE lookup, favicon hash, subdomain liveness, WHOIS/ASN, GitHub domain search, internal host probe + **browser crawl fallback** (Playwright when WAF blocks HTTP crawler) + **per-subdomain crawling** (up to 15 alive subdomains) |
 | 2. Weaponization | `_handle_weaponization` | `takeover`, `error_disclosure`, `cache_poisoning`, `prototype_pollution` |
 | 3. Delivery | `_handle_delivery` | `cors`, `redirect`, `oauth_redirect`, `http_smuggling`, `websocket` |
-| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass + baseline XSS filter), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` (WAF bypass: realistic UA, CDN-aware rate limiting, additive origin IP scan with TLS SNI, FTL error detection, stats parsing) + SmartFuzzer (ffuf verification) + external: sqlmap, dalfox, commix, jwt_tool |
+| 4. Exploitation | `_handle_exploitation` | `injection` (+ response_analyzer + WAF bypass + baseline XSS filter), `ssti`, `ssrf`, `mass_assignment`, `redos`, `xxe`, `deserialization`, `idor`, `bac`, `auth`, `graphql`, `business_logic`, `payment`, `nuclei` (WAF bypass: realistic UA, CDN-aware rate limiting, additive origin IP scan with TLS SNI, FTL error detection, stats parsing) + SmartFuzzer (ffuf verification, WAF-aware rate limiting) + parameterized URL recovery from `discovered_urls` + external: sqlmap, dalfox, commix, jwt_tool |
 | 5. Installation | `_handle_installation` | `file_upload` |
 | 6. C2 | `_handle_c2` | OOB detector polling — `LocalPoCClient` (built-in) or `InteractshClient` (external). PoCServer callbacks are polled with dedup tracking. |
 | 7. Actions | `_handle_actions` | VRT classification (Bugcrowd VRT + CVSS 3.1) → PoCChainEngine (exploit chain generation from correlated findings) → aggregation via `KillChainState.all_findings` |
@@ -257,6 +257,7 @@ MITRE ATT&CK TA0043 Reconnaissance (excluding social engineering: T1598, T1591).
 |------|-------------|-----------------|--------|
 | 0 | Subdomain enum (subfinder + amass) | T1596.003 | subfinder, amass |
 | 1 | Crawl target (scope-aware, error capture) | T1594 | crawler.py |
+| 1a | Browser crawl fallback (Playwright when WAF blocks crawler) | T1594 | browser_scanner |
 | 1b | robots.txt + sitemap.xml parsing | T1594 | recon_helpers |
 | 1c | HTML comment + hidden input extraction | T1594 | recon_helpers |
 | 2 | Network recon pipeline (nmap 3-phase) | T1595.001, T1595.002 | nmap_scanner |
@@ -277,6 +278,7 @@ MITRE ATT&CK TA0043 Reconnaissance (excluding social engineering: T1598, T1591).
 | 9 | Auth-protected endpoint extraction | T1589 | kill_chain |
 | 10 | Internal host probing | T1590.004 | recon_helpers |
 | 11 | Subdomain liveness scanning | T1595.001 | recon_helpers |
+| 11a | Per-subdomain crawling (up to 15 alive subs) | T1595.002 | crawler.py |
 | 12 | GitHub domain-wide code search | T1593.003 | recon_helpers |
 | 13 | WHOIS / ASN lookup | T1596.002 | recon_helpers |
 
@@ -303,7 +305,7 @@ MITRE ATT&CK TA0043 Reconnaissance (excluding social engineering: T1598, T1591).
 
 - **Auth-protected endpoints** → Phase 4 `auth` + `bac` scanners
 - **Source map API endpoints** → `discovered_urls` for injection testing
-- **Alive subdomains** → `discovered_urls` for all subsequent phases
+- **Alive subdomains** → `discovered_urls` for all subsequent phases (individually crawled for forms/params/JS)
 - **Error responses** → `context["error_responses"]` for error_disclosure targeting
 - **Parameter registry** → `context["param_registry"]` for unified injection testing
 - **Recon findings** → `FindingEnricher.enrich_batch()` for CWE/PoC enrichment
@@ -471,13 +473,13 @@ beatrix/
 │   ├── findings_db.py             # SQLite WAL-mode findings storage
 │   ├── issue_consolidator.py      # Multi-dimensional finding dedup
 │   ├── poc_chain_engine.py        # PoC generation + Metasploit search (wired into Phase 7)
-│   ├── smart_fuzzer.py            # Intelligent fuzzing engine (wired into Phase 4)
+│   ├── smart_fuzzer.py            # Intelligent fuzzing engine (wired into Phase 4, WAF-aware rate limiting)
 │   ├── response_analyzer.py       # HTTP response analysis (wired into injection.py)
 │   ├── privilege_graph.py         # Authorization graph analysis
 │   ├── methodology.py             # OWASP/MITRE framework alignment
 │   ├── nmap_scanner.py            # Nmap async wrapper
 │   ├── subfinder.py               # Subfinder async wrapper
-│   ├── ffuf_engine.py             # ffuf async integration
+│   ├── ffuf_engine.py             # ffuf async integration (WAF-aware: auto rate-cap, UA rotation)
 │   ├── parallel_haiku.py          # Concurrent AI workers
 │   ├── ssh_auditor.py             # SSH configuration auditing
 │   ├── auto_register.py           # Account auto-registration for authenticated testing
@@ -489,7 +491,7 @@ beatrix/
 │   ├── finding_enricher.py        # Deterministic finding enrichment (poc_curl, impact, CWE)
 │   └── scan_output.py             # ScanOutputManager — per-scan organized output directory
 ├── scanners/
-│   ├── base.py                    # BaseScanner ABC — rate limiter, httpx client
+│   ├── base.py                    # BaseScanner ABC — rate limiter, httpx client, WAF bypass (UA rotation, header profiles, CDN challenge detection, adaptive throttle)
 │   ├── crawler.py                 # Target spider — soft-404, forms, params, version-preserving tech fingerprint
 │   ├── injection.py               # SQLi, XSS, CMDi, LFI, SSTI (57K+ dynamic payloads via SecLists + PATT, response_analyzer behavioral detection, baseline-filtered XSS reflection, WAF bypass fallback)
 │   ├── ssrf.py                    # 44-payload SSRF scanner
@@ -573,6 +575,8 @@ beatrix/
      → All HTTP-based scanners run normally on IP targets
    Phase 1: _handle_recon
      → crawl target (crawler.py) → context["discovered_urls"], context["forms"]
+     → **browser crawl fallback**: if WAF blocks crawler (<5 pages), launches
+       headless Chromium (Playwright) to extract DOM links, forms, JS, network URLs
      → _fingerprint_tech() captures versioned Server/X-Powered-By headers
      → _merge_technologies() normalizes via alias table, preserves versions
      → external tools: subfinder, amass, nmap, katana, gospider
@@ -581,6 +585,8 @@ beatrix/
      → header scanner findings extracted back into context["technologies"]
      → tech fingerprint logged (versioned + unversioned summary)
      → endpoint_prober, js_analysis, headers, github_recon
+     → **per-subdomain crawling**: individually crawls up to 15 alive subdomains
+       for forms, param URLs, and JS files (skips VPN hosts)
      → **CDN Gate**: If CDN detected (Cloudflare/Akamai/Fastly/etc.) and no origin
        IP found, network Phases 1-3 (nmap, packet_crafter, ssh_auditor) are skipped
        entirely — scanning a CDN edge only enumerates CDN infrastructure, not the
@@ -592,8 +598,10 @@ beatrix/
                 │
    Phase 4: _handle_exploitation
      → OOB detector initialized for blind vuln confirmation
+     → **URL recovery**: harvests parameterized URLs from discovered_urls + functional
+       pages (/api/, /cart, /checkout, /login, /search, etc.) into injection targets
      → injection (+ response_analyzer behavioral detection + WAF bypass fallback), ssrf, idor, bac, auth, ssti, xxe, deserialization, ...
-     → SmartFuzzer: ffuf-verified fuzzing on parameterized URLs
+     → SmartFuzzer: ffuf-verified fuzzing on parameterized URLs (WAF-aware rate limiting)
      → Confirmed findings → sqlmap, dalfox, commix, jwt_tool (deep exploit)
                 │
    Phase 5-6: _handle_installation, _handle_c2
@@ -687,3 +695,97 @@ All 13 external tools are managed via `ExternalToolkit` (a lazy singleton on the
 | Config | YAML | Human-readable |
 | Go tools | nuclei, httpx, ffuf, subfinder, katana, etc. | Performance-critical scanning |
 | AI | Claude API (Bedrock/Anthropic) | GHOST agent, Haiku-assisted hunting |
+
+---
+
+## WAF Bypass System (`scanners/base.py`)
+
+All 28+ scanners inherit automatic WAF evasion from `BaseScanner.request()`. When a
+WAF profile is set (via `set_waf_profile()` or CDN auto-detection), the following
+defenses activate transparently:
+
+### Request-Level Evasion
+
+| Technique | Implementation | Trigger |
+|-----------|---------------|--------|
+| UA rotation | 10 realistic browser UAs (Chrome/Firefox/Edge/Safari on Win/macOS/Linux), random per-request | Always active |
+| Header profile randomization | 4 browser-like profiles (Accept, Accept-Language, Sec-Fetch-*, DNT), chosen at session start | Always active |
+| Timing jitter | 50–300ms random delay per request | When `_waf_profile` set |
+| Adaptive throttle | Extra delay ramps on consecutive WAF blocks, decays on success | When blocks detected |
+| 429 backoff | Exponential backoff (2/4/8s) with adaptive throttle ramp-up | On HTTP 429 |
+
+### CDN Challenge Detection
+
+23 markers across 7 WAF vendors, checked on 403/406/503 responses:
+
+| Vendor | Markers |
+|--------|---------|
+| PerimeterX | `perimeterx`, `/_px/`, `px-captcha`, `PXmvTNFT`, `human-challenge` |
+| Cloudflare | `cf-browser-verification`, `cf_clearance`, `challenge-platform` |
+| Akamai | `akam/13/`, `_abck` |
+| Imperva/Incapsula | `incapsula`, `_Incapsula_Resource`, `robots.incapsula.com` |
+| DataDome | `datadome`, `dd.datadome.com` |
+| Kasada | `ips.js` |
+| Generic | `bot detection`, `automated request`, `checking your browser`, `captcha`, `access denied` |
+
+### Auto-Bypass Retry
+
+When a CDN challenge is detected, `request()` automatically retries with:
+1. IP spoofing headers (`X-Forwarded-For`, `X-Originating-IP`, `X-Original-URL`, `X-Rewrite-URL`)
+2. Method override (POST with `X-HTTP-Method-Override: GET`) for GET requests
+
+### WAF-Aware Fuzzing Pipeline
+
+```
+KillChain → SmartFuzzer(waf_profile=cdn_detected) → FFufEngine(waf_profile=...)
+                                                       ├── Auto rate-cap: 30 rps
+                                                       ├── Thread cap: 20
+                                                       └── Random UA per invocation
+```
+
+---
+
+## Browser Crawl Fallback (kill_chain.py Step 1a)
+
+When the HTTP crawler is starved by a JS challenge (< 5 pages crawled), Beatrix
+launches a headless Chromium browser via Playwright to extract attack surface
+that the HTTP crawler couldn't reach.
+
+### Trigger Conditions
+
+- Crawler got < 5 pages **AND** WAF detected (PerimeterX, Cloudflare, Akamai, Imperva, DataDome, Kasada, Shape, Distil, Incapsula)
+- Crawler got ≤ 1 page (regardless of WAF detection)
+
+### What It Extracts
+
+| Source | Data |
+|--------|------|
+| Rendered DOM | `<a href>` links, `<form>` elements (action, method, inputs) |
+| `<script src>` | JS file URLs for downstream JS analysis |
+| Network requests | All URLs fetched during page load (XHR, fetch, images, etc.) |
+| Lazy-loaded content | Triggered by scrolling to bottom of page |
+
+### Data Merge
+
+Extracted URLs, parameterized URLs, forms, and JS files merge into the shared
+context (`discovered_urls`, `urls_with_params`, `forms`, `js_files`) — feeding
+all downstream exploitation scanners.
+
+---
+
+## Per-Subdomain Crawling (kill_chain.py Step 11a)
+
+After subdomain liveness probing, Beatrix individually crawls up to 15 alive
+subdomains to discover attack surface on different tech stacks (Apache, Strapi,
+WordPress, ColdFusion, etc.).
+
+### VPN Host Filtering
+
+Subdomains matching VPN-related patterns are automatically skipped:
+`vpn`, `globalprotect`, `sslvpn`, `remote-access`, `anyconnect`, `pulse`, `f5`
+
+### Data Feed
+
+Discovered URLs, parameterized URLs, JS files, and forms from each subdomain
+feed back into the shared `discovered_urls` and `urls_with_params` sets —
+ensuring Phase 4 exploitation scanners test the full attack surface.

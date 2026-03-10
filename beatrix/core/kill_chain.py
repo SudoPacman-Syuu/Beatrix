@@ -816,6 +816,110 @@ class KillChainExecutor:
             except Exception:
                 pass
 
+        # ── Step 1a: Browser crawl fallback when WAF blocks HTTP crawler ──
+        # If the crawler got very few pages, it was likely blocked by a JS
+        # challenge (PerimeterX, Cloudflare, DataDome, etc.).  Re-crawl
+        # key pages with a real Chromium browser to extract links, forms,
+        # and network requests that the HTTP crawler couldn't see.
+        if crawl_result and crawl_result.pages_crawled < 5:
+            techs = context.get("technologies", {})
+            _waf_names = ("perimeterx", "cloudflare", "akamai", "imperva",
+                          "datadome", "kasada", "shape", "distil", "incapsula")
+            _tech_str = str(techs).lower()
+            waf_detected = any(w in _tech_str for w in _waf_names)
+
+            if waf_detected or crawl_result.pages_crawled <= 1:
+                reason = "WAF detected" if waf_detected else f"only {crawl_result.pages_crawled} page(s) crawled"
+                self._emit("info", message=f"Crawler starved ({reason}). Launching headless browser fallback")
+                try:
+                    from beatrix.scanners.browser_scanner import BrowserScanner, PLAYWRIGHT_AVAILABLE
+                    if PLAYWRIGHT_AVAILABLE:
+                        async with BrowserScanner(headless=True) as _bscan:
+                            await _bscan.create_context()
+
+                            _browser_urls: set[str] = set()
+                            _browser_param_urls: set[str] = set()
+                            _browser_forms: list[dict] = []
+
+                            # Visit the target page with a real browser
+                            _bpage = await _bscan.context.new_page()
+                            _net_urls: list[str] = []
+                            _bpage.on("request", lambda req: _net_urls.append(req.url))
+
+                            try:
+                                await _bpage.goto(url, wait_until="networkidle", timeout=30000)
+                                await asyncio.sleep(2)
+
+                                # Scroll to trigger lazy-loaded content
+                                await _bpage.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                                await asyncio.sleep(1)
+
+                                # Extract links from rendered DOM
+                                _dom_links = await _bpage.evaluate(
+                                    "() => Array.from(document.querySelectorAll('a[href]'))"
+                                    "  .map(a => a.href).filter(h => h.startsWith('http'))"
+                                )
+
+                                # Extract forms from rendered DOM
+                                _dom_forms = await _bpage.evaluate("""() =>
+                                    Array.from(document.querySelectorAll('form')).map(f => ({
+                                        action: f.action,
+                                        method: f.method || 'GET',
+                                        inputs: Array.from(f.querySelectorAll('input,select,textarea'))
+                                            .map(i => ({name: i.name, type: i.type, value: i.value}))
+                                    }))
+                                """)
+
+                                # Extract JS file URLs
+                                _dom_scripts = await _bpage.evaluate(
+                                    "() => Array.from(document.querySelectorAll('script[src]'))"
+                                    "  .map(s => s.src).filter(s => s.startsWith('http'))"
+                                )
+
+                            finally:
+                                await _bpage.close()
+
+                            # Process collected URLs
+                            from urllib.parse import urljoin as _brj
+                            for u in (_dom_links or []) + _net_urls:
+                                if u.startswith(("http://", "https://")):
+                                    _browser_urls.add(u)
+                                    if "?" in u:
+                                        _browser_param_urls.add(u)
+
+                            for f in (_dom_forms or []):
+                                fa = f.get("action", "")
+                                if fa:
+                                    full_a = _brj(url, fa) if not fa.startswith("http") else fa
+                                    _browser_urls.add(full_a)
+                                    _browser_param_urls.add(full_a)
+                                _browser_forms.append(f)
+
+                            # Merge JS files
+                            for js in (_dom_scripts or []):
+                                context.setdefault("js_files", []).append(js)
+
+                            # Merge into context
+                            _ex_urls = set(context.get("discovered_urls", []))
+                            _ex_params = set(context.get("urls_with_params", []))
+                            _new_urls = _browser_urls - _ex_urls
+                            _new_params = _browser_param_urls - _ex_params
+                            context["discovered_urls"] = sorted(_ex_urls | _browser_urls)
+                            context["urls_with_params"] = sorted(_ex_params | _browser_param_urls)
+                            context.setdefault("forms", []).extend(_browser_forms)
+
+                            self._emit("info", message=(
+                                f"Browser fallback: {len(_new_urls)} new URLs, "
+                                f"{len(_new_params)} param URLs, {len(_browser_forms)} forms, "
+                                f"{len(_dom_scripts or [])} JS files"
+                            ))
+                    else:
+                        self._emit("info", message="Playwright not installed — browser fallback skipped")
+                except ImportError:
+                    self._emit("info", message="browser_scanner not available — browser fallback skipped")
+                except Exception as e:
+                    self._emit("scanner_error", scanner="browser_crawl_fallback", error=str(e))
+
         # ── Step 1b: robots.txt + sitemap.xml (T1594) ─────────────────────
         # Parse robots.txt for Disallow paths (admin panels, staging endpoints,
         # internal APIs) and sitemap.xml for the site's own URL map.
@@ -2556,6 +2660,56 @@ class KillChainExecutor:
                 except Exception as e:
                     self._emit("scanner_error", scanner="subdomain_probe", error=str(e))
 
+        # ── Step 11a: Per-subdomain crawling (T1595.002) ─────────────────
+        # Alive subdomains often run different tech stacks (Apache, Strapi,
+        # WordPress, ColdFusion) with their own attack surface.  Crawl each
+        # individually so their forms, param URLs, and JS files feed into
+        # the exploitation phase.
+        if run_deep_recon and not target_is_ip:
+            alive_subs = context.get("alive_subdomains", [])
+            _vpn_skip = ("vpn", "globalprotect", "sslvpn", "remote-access",
+                         "anyconnect", "pulse", "f5")
+            crawlable = [
+                s for s in alive_subs
+                if not any(v in s.get("subdomain", "").lower() for v in _vpn_skip)
+            ]
+            if crawlable and crawler:
+                self._emit("info", message=f"Crawling {len(crawlable)} alive subdomains for attack surface")
+                _sub_new_urls = 0
+                _sub_new_params = 0
+                for sub_info in crawlable[:15]:  # Cap to avoid excessive scanning
+                    sub_url = sub_info.get("url", "")
+                    sub_name = sub_info.get("subdomain", "")
+                    if not sub_url:
+                        continue
+                    try:
+                        sub_crawl = await asyncio.wait_for(
+                            crawler.crawl(sub_url, auth=context.get("auth")),
+                            timeout=60,
+                        )
+                        if sub_crawl:
+                            for u in sub_crawl.urls:
+                                if u not in discovered_urls:
+                                    discovered_urls.add(u)
+                                    _sub_new_urls += 1
+                            for u in sub_crawl.urls_with_params:
+                                if u not in urls_with_params:
+                                    urls_with_params.add(u)
+                                    _sub_new_params += 1
+                            for js in sub_crawl.js_files:
+                                context.setdefault("js_files", []).append(js)
+                            if sub_crawl.forms:
+                                context.setdefault("forms", []).extend(sub_crawl.forms)
+                    except asyncio.TimeoutError:
+                        self._emit("info", message=f"Subdomain crawl timed out: {sub_name}")
+                    except Exception:
+                        pass  # Non-critical; move to next subdomain
+                if _sub_new_urls or _sub_new_params:
+                    self._emit("info", message=(
+                        f"Subdomain crawling: {_sub_new_urls} new URLs, "
+                        f"{_sub_new_params} new param URLs from {len(crawlable)} subdomains"
+                    ))
+
         # ── Step 12: GitHub domain-wide code search (T1593.003) ──────────
         # Search GitHub for third-party repos referencing the target domain
         # (leaked API keys, internal URLs, config files).
@@ -2972,12 +3126,28 @@ class KillChainExecutor:
         results = []
         urls_with_params = context.get("urls_with_params", [])
 
+        # ── Harvest any discovered URLs with query params that aren't already
+        # in urls_with_params (e.g. alive subdomain URLs from liveness probing,
+        # sitemap URLs added after external crawlers ran, etc.)
+        discovered = context.get("discovered_urls", [])
+        _existing_params = set(urls_with_params)
+        _extra_param_urls = [u for u in discovered if "?" in u and u not in _existing_params]
+        if _extra_param_urls:
+            urls_with_params = urls_with_params + _extra_param_urls
+            self._emit("info", message=f"Recovered {len(_extra_param_urls)} parameterized URLs from discovered_urls into injection targets")
+
         # Build a combined target list: URLs with params PLUS JS-discovered API endpoints
+        # AND functional pages that accept user input (cart, checkout, search, login, etc.)
         # Many JS routes (e.g. /api/v1/users, /resource/feed) lack query params but
         # still accept POST bodies, path params, and headers — they *must* be tested.
-        discovered = context.get("discovered_urls", [])
+        _functional_patterns = (
+            "/api/", "/v1/", "/v2/", "/v3/", "/rest/", "/graphql", "/internal/", "/admin/",
+            "/cart", "/checkout", "/login", "/register", "/search", "/account",
+            "/my-account", "/order", "/payment", "/session", "/user", "/profile",
+            "/settings", "/dashboard", "/upload", "/contact", "/subscribe", "/apply",
+        )
         api_endpoints = [u for u in discovered
-                         if any(p in u for p in ("/api/", "/v1/", "/v2/", "/v3/", "/rest/", "/graphql", "/internal/", "/admin/"))]
+                         if any(p in u for p in _functional_patterns)]
 
         # Include extra HTTP ports from network scan as additional injection targets
         injection_targets = list(dict.fromkeys(urls_with_params + api_endpoints + extra_http_urls))
@@ -3230,7 +3400,8 @@ class KillChainExecutor:
                 from beatrix.core.smart_fuzzer import SmartFuzzer, VerifiedFinding as _VF
                 from beatrix.core.types import Finding as _F, Severity as _S, Confidence as _C
 
-                fuzzer = SmartFuzzer(threads=50, verify_top_n=50, verbose=False)
+                fuzzer = SmartFuzzer(threads=50, verify_top_n=50, verbose=False,
+                                     waf_profile=context.get("network", {}).get("cdn_detected"))
                 fuzz_targets = urls_with_params[:30]  # Thorough coverage
                 self._emit("info", message=f"Running SmartFuzzer on {len(fuzz_targets)} parameterized URLs")
 
