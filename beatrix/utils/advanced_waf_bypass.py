@@ -123,6 +123,56 @@ class AdvancedWAFBypass:
             encoding_weaknesses=[EncodingType.DOUBLE_URL],
             transform_weaknesses=[TransformationType.BUFFER_OVERFLOW, TransformationType.NEWLINE]
         ),
+        'perimeterx': WAFProfile(
+            name='PerimeterX',
+            vendor='HUMAN Security',
+            detection_signatures=['perimeterx', '/_px/', 'px-captcha', 'PXmvTNFT', 'human-challenge'],
+            known_bypasses=['unicode_full', 'double_url', 'case_variation'],
+            encoding_weaknesses=[EncodingType.UNICODE_FULL, EncodingType.DOUBLE_URL, EncodingType.HTML_HEX],
+            transform_weaknesses=[TransformationType.CASE_SWAP, TransformationType.WHITESPACE_SUB]
+        ),
+        'datadome': WAFProfile(
+            name='DataDome',
+            vendor='DataDome',
+            detection_signatures=['datadome', 'dd.datadome.com', 'ddjskey'],
+            known_bypasses=['utf8_overlong', 'triple_url', 'comment_inject'],
+            encoding_weaknesses=[EncodingType.UTF8_OVERLONG, EncodingType.TRIPLE_URL, EncodingType.UNICODE],
+            transform_weaknesses=[TransformationType.COMMENT_INJECT, TransformationType.NULL_BYTE]
+        ),
+        'kasada': WAFProfile(
+            name='Kasada',
+            vendor='Kasada',
+            detection_signatures=['ips.js', 'kasada', 'cd-s='],
+            known_bypasses=['html_entity', 'unicode', 'whitespace_sub'],
+            encoding_weaknesses=[EncodingType.HTML_ENTITY, EncodingType.UNICODE, EncodingType.UTF8_OVERLONG],
+            transform_weaknesses=[TransformationType.WHITESPACE_SUB, TransformationType.NEWLINE]
+        ),
+        'sucuri': WAFProfile(
+            name='Sucuri',
+            vendor='GoDaddy / Sucuri',
+            detection_signatures=['sucuri', 'cloudproxy', 'x-sucuri-id', 'block.sucuri.net'],
+            known_bypasses=['double_url', 'unicode', 'comment_inject'],
+            encoding_weaknesses=[EncodingType.DOUBLE_URL, EncodingType.UNICODE, EncodingType.HTML_ENTITY],
+            transform_weaknesses=[TransformationType.COMMENT_INJECT, TransformationType.CASE_SWAP]
+        ),
+        'fastly': WAFProfile(
+            name='Fastly Next-Gen WAF',
+            vendor='Fastly / Signal Sciences',
+            detection_signatures=['fastly', 'x-sigsci-', 'signal sciences'],
+            known_bypasses=['html_hex', 'utf8_overlong', 'null_byte'],
+            encoding_weaknesses=[EncodingType.HTML_HEX, EncodingType.UTF8_OVERLONG, EncodingType.DOUBLE_URL],
+            transform_weaknesses=[TransformationType.NULL_BYTE, TransformationType.CONCAT]
+        ),
+    }
+
+    # Map common CDN detection names to profile keys
+    _WAF_NAME_ALIASES = {
+        "incapsula": "imperva",
+        "cloudfront": "aws_waf",
+        "f5": "f5_bigip",
+        "bigip": "f5_bigip",
+        "human": "perimeterx",
+        "signal sciences": "fastly",
     }
 
     # Character substitution maps for bypasses
@@ -547,6 +597,10 @@ class AdvancedWAFBypass:
             List of mutated payloads
         """
         mutations = [payload]  # Include original
+
+        # Normalize WAF profile name via aliases
+        if waf_profile:
+            waf_profile = self._WAF_NAME_ALIASES.get(waf_profile, waf_profile)
 
         # Get WAF-specific weaknesses if profile known
         if waf_profile and waf_profile in self.WAF_PROFILES:

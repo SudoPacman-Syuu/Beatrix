@@ -280,6 +280,7 @@ class SmartFuzzer:
         self.verify_top_n = verify_top_n
         self.timeout = timeout
         self.verbose = verbose
+        self.waf_profile = waf_profile
 
         # Initialize ffuf engine
         if HAS_FFUF:
@@ -548,7 +549,7 @@ class SmartFuzzer:
         try:
             from beatrix.utils.advanced_waf_bypass import AdvancedWAFBypass
             engine = AdvancedWAFBypass()
-            bypasses = engine.mutate_payload(payload)[:3]
+            bypasses = engine.mutate_payload(payload, waf_profile=self.waf_profile)[:3]
 
             for bp in bypasses:
                 if bp == payload:

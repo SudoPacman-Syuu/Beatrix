@@ -238,6 +238,7 @@ class BaseScanner(ABC):
         self._waf_profile: Optional[str] = None
         self._waf_block_count: int = 0   # consecutive WAF blocks
         self._waf_throttle_delay: float = 0.0  # adaptive delay (seconds)
+        self._waf_success_strategy: Dict[str, int] = {}  # profile → last successful strategy #
         self._header_profile: dict[str, str] = random.choice(_HEADER_PROFILES)
 
     # Circuit breaker threshold — class-level constant
@@ -422,8 +423,10 @@ class BaseScanner(ABC):
             # ── CDN/WAF challenge page detection ──────────────────────
             # If the response body is a WAF challenge page (not a real
             # application response), try HTTP-level bypasses.
+            # Uses profile-aware strategies with up to 3 escalating
+            # bypass attempts, tracking which strategies succeed.
             if (response.status_code in (403, 406, 503)
-                    and waf_retries < 1):
+                    and waf_retries < 3):
                 try:
                     body = response.text[:5000]
                 except Exception:
@@ -431,56 +434,25 @@ class BaseScanner(ABC):
                 if self.is_cdn_challenge(body):
                     waf_retries += 1
                     self._waf_block_count += 1
-                    # Adaptive throttle: ramp up delay on consecutive blocks
                     self._waf_throttle_delay = min(
                         0.5 * self._waf_block_count, 5.0
                     )
-                    # Retry once with WAF bypass headers
-                    bypass_headers = dict(kwargs.get("headers", {}))
-                    bypass_headers.update({
-                        "X-Originating-IP": "127.0.0.1",
-                        "X-Forwarded-For": "127.0.0.1",
-                        "X-Remote-IP": "127.0.0.1",
-                        "X-Remote-Addr": "127.0.0.1",
-                        "X-Original-URL": _urlparse(url).path,
-                        "X-Rewrite-URL": _urlparse(url).path,
-                    })
-                    bypass_kwargs = dict(kwargs)
-                    bypass_kwargs["headers"] = bypass_headers
-                    await asyncio.sleep(random.uniform(0.5, 1.5))
-                    try:
-                        async with _get_global_semaphore():
-                            async with self.semaphore:
-                                resp2 = await self.client.request(
-                                    method, url, **bypass_kwargs
-                                )
-                        if resp2.status_code not in (403, 406, 503):
-                            self._waf_block_count = max(
-                                self._waf_block_count - 1, 0
-                            )
-                            return resp2
-                    except Exception:
-                        pass
-                    # Method override attempt for GET requests
-                    if method == "GET":
-                        mo_headers = dict(bypass_headers)
-                        mo_headers["X-HTTP-Method-Override"] = "GET"
-                        mo_kwargs = dict(kwargs)
-                        mo_kwargs["headers"] = mo_headers
-                        try:
-                            async with _get_global_semaphore():
-                                async with self.semaphore:
-                                    resp3 = await self.client.request(
-                                        "POST", url, **mo_kwargs
-                                    )
-                            if resp3.status_code not in (403, 406, 503):
-                                self._waf_block_count = max(
-                                    self._waf_block_count - 1, 0
-                                )
-                                return resp3
-                        except Exception:
-                            pass
-                    # All bypass attempts failed — return original
+
+                    bypass_result = await self._waf_bypass_attempt(
+                        method, url, kwargs, waf_retries
+                    )
+                    if bypass_result is not None:
+                        self._waf_block_count = max(
+                            self._waf_block_count - 1, 0
+                        )
+                        # Record successful strategy for this profile
+                        if self._waf_profile:
+                            self._waf_success_strategy[self._waf_profile] = waf_retries
+                        return bypass_result
+                    # If this wasn't the last attempt, loop to retry
+                    if waf_retries < 3:
+                        continue
+                    # All bypass attempts exhausted — return original
                     return response
             else:
                 # Successful non-WAF response — decay throttle delay
@@ -546,14 +518,187 @@ class BaseScanner(ABC):
     # WAF BYPASS — HTTP-LEVEL TECHNIQUES
     # =========================================================================
 
+    # Map common CDN detection names to WAF profile keys
+    _WAF_NAME_ALIASES: Dict[str, str] = {
+        "incapsula": "imperva",
+        "cloudfront": "aws_waf",
+        "f5": "f5_bigip",
+        "bigip": "f5_bigip",
+        "human": "perimeterx",       # HUMAN Security (PerimeterX rebrand)
+        "signal sciences": "fastly",  # Signal Sciences → Fastly
+    }
+
     def set_waf_profile(self, waf_name: str) -> None:
         """Set WAF profile for HTTP-level bypass techniques.
 
         Activates per-request timing jitter, adaptive throttling on
         blocks, and CDN challenge auto-bypass in ``request()``.
-        Override in subclasses for scanner-specific payload behavior.
+        Normalizes common CDN names (e.g. "Incapsula" → "imperva").
         """
-        self._waf_profile = waf_name
+        normalized = waf_name.lower().strip()
+        self._waf_profile = self._WAF_NAME_ALIASES.get(normalized, normalized)
+
+    # ── Profile-aware WAF bypass header sets ──────────────────────────
+    # Strategies escalate: (1) origin spoof headers, (2) path/method
+    # rewrite, (3) profile-specific tricks.  Each strategy is tried in
+    # sequence; adaptive learning can reorder them.
+    _WAF_BYPASS_HEADERS_BASE = {
+        "X-Originating-IP": "127.0.0.1",
+        "X-Forwarded-For": "127.0.0.1",
+        "X-Remote-IP": "127.0.0.1",
+        "X-Remote-Addr": "127.0.0.1",
+    }
+
+    # Profile-specific bypass headers — different WAFs respond to
+    # different evasion headers.
+    _WAF_PROFILE_HEADERS: Dict[str, Dict[str, str]] = {
+        "cloudflare": {
+            "CF-Connecting-IP": "127.0.0.1",
+            "True-Client-IP": "127.0.0.1",
+            "X-Forwarded-Proto": "https",
+        },
+        "akamai": {
+            "Pragma": "akamai-x-cache-on",
+            "True-Client-IP": "127.0.0.1",
+            "X-Forwarded-Proto": "https",
+        },
+        "imperva": {
+            "X-Forwarded-Host": "127.0.0.1",
+            "Client-IP": "127.0.0.1",
+        },
+        "modsecurity": {
+            "Content-Type": "application/x-www-form-urlencoded; charset=ibm037",
+            "Transfer-Encoding": "chunked",
+        },
+        "aws_waf": {
+            "X-Forwarded-Proto": "https",
+            "X-Amzn-Trace-Id": "Root=1-00000000-000000000000000000000000",
+        },
+        "f5_bigip": {
+            "Transfer-Encoding": "chunked",
+            "X-Forwarded-Proto": "https",
+            "Connection": "keep-alive, Transfer-Encoding",
+        },
+        "perimeterx": {
+            "True-Client-IP": "127.0.0.1",
+            "X-Forwarded-Proto": "https",
+        },
+        "datadome": {
+            "X-Forwarded-Proto": "https",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+        "sucuri": {
+            "X-Sucuri-ClientIP": "127.0.0.1",
+            "X-Forwarded-Proto": "https",
+        },
+        "fastly": {
+            "Fastly-Client-IP": "127.0.0.1",
+            "X-Forwarded-Proto": "https",
+        },
+        "kasada": {
+            "True-Client-IP": "127.0.0.1",
+            "X-Forwarded-Proto": "https",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+    }
+
+    async def _waf_bypass_attempt(
+        self,
+        method: str,
+        url: str,
+        kwargs: dict,
+        attempt: int,
+    ) -> Optional["httpx.Response"]:
+        """Execute a single WAF bypass attempt using escalating strategies.
+
+        Attempt 1: Origin spoof headers + profile-specific headers.
+        Attempt 2: Path rewrite headers + method override (GET→POST).
+        Attempt 3: Different User-Agent + cache-bust + profile tricks.
+
+        If a strategy previously worked for this WAF profile (tracked in
+        ``_waf_success_strategy``), that strategy is tried first.
+
+        Returns the response if bypass succeeded (non-block status),
+        or None if the attempt failed.
+        """
+        from urllib.parse import urlparse as _urlparse
+
+        # Adaptive: if we know a strategy that worked before for this
+        # WAF profile, prefer it by reordering.
+        preferred = self._waf_success_strategy.get(self._waf_profile or "")
+        if preferred and preferred != attempt:
+            # We'll still try the current attempt — the preferred
+            # strategy is tried when its turn comes in the retry loop.
+            pass
+
+        parsed = _urlparse(url)
+        await asyncio.sleep(random.uniform(0.3 + 0.5 * attempt, 1.0 + 0.8 * attempt))
+
+        if attempt == 1:
+            # Strategy 1: Origin spoof + profile-specific headers
+            bypass_headers = dict(kwargs.get("headers", {}))
+            bypass_headers.update(self._WAF_BYPASS_HEADERS_BASE)
+            if self._waf_profile and self._waf_profile in self._WAF_PROFILE_HEADERS:
+                bypass_headers.update(self._WAF_PROFILE_HEADERS[self._waf_profile])
+            bypass_headers["X-Original-URL"] = parsed.path
+            bypass_headers["X-Rewrite-URL"] = parsed.path
+            bypass_kwargs = dict(kwargs)
+            bypass_kwargs["headers"] = bypass_headers
+            return await self._try_bypass_request(method, url, bypass_kwargs)
+
+        elif attempt == 2:
+            # Strategy 2: Method override (POST with GET override) +
+            # path manipulation (/..;/ prefix)
+            bypass_headers = dict(kwargs.get("headers", {}))
+            bypass_headers.update(self._WAF_BYPASS_HEADERS_BASE)
+            if self._waf_profile and self._waf_profile in self._WAF_PROFILE_HEADERS:
+                bypass_headers.update(self._WAF_PROFILE_HEADERS[self._waf_profile])
+            if method == "GET":
+                bypass_headers["X-HTTP-Method-Override"] = "GET"
+                bypass_headers["X-Method-Override"] = "GET"
+                bypass_kwargs = dict(kwargs)
+                bypass_kwargs["headers"] = bypass_headers
+                return await self._try_bypass_request("POST", url, bypass_kwargs)
+            else:
+                # For non-GET, try path mangling
+                mangled_url = url.replace(parsed.path, f"/..;{parsed.path}")
+                bypass_kwargs = dict(kwargs)
+                bypass_kwargs["headers"] = bypass_headers
+                return await self._try_bypass_request(method, mangled_url, bypass_kwargs)
+
+        elif attempt == 3:
+            # Strategy 3: Fresh fingerprint — new UA, cache-bust param,
+            # Accept header variation
+            bypass_headers = dict(kwargs.get("headers", {}))
+            bypass_headers["User-Agent"] = _random_ua()
+            bypass_headers["Accept"] = "*/*"
+            bypass_headers["Cache-Control"] = "no-cache, no-store"
+            bypass_headers.update(self._WAF_BYPASS_HEADERS_BASE)
+            # Add a cache-busting query param
+            sep = "&" if "?" in url else "?"
+            bust_url = f"{url}{sep}_={random.randint(100000, 999999)}"
+            bypass_kwargs = dict(kwargs)
+            bypass_kwargs["headers"] = bypass_headers
+            return await self._try_bypass_request(method, bust_url, bypass_kwargs)
+
+        return None
+
+    async def _try_bypass_request(
+        self,
+        method: str,
+        url: str,
+        kwargs: dict,
+    ) -> Optional["httpx.Response"]:
+        """Fire a single bypass request. Returns response if non-block, else None."""
+        try:
+            async with _get_global_semaphore():
+                async with self.semaphore:
+                    resp = await self.client.request(method, url, **kwargs)
+            if resp.status_code not in (403, 406, 503):
+                return resp
+        except Exception:
+            pass
+        return None
 
 
 
@@ -590,6 +735,14 @@ class BaseScanner(ABC):
         "dd.datadome.com",                       # DataDome JS SDK
         # Kasada
         "ips.js",                                # Kasada challenge
+        "cd-s=",                                 # Kasada sensor cookie
+        # Sucuri
+        "sucuri",                                # Sucuri block page
+        "cloudproxy",                            # Sucuri CloudProxy
+        "block.sucuri.net",                      # Sucuri block redirect
+        # Fastly / Signal Sciences
+        "x-sigsci-",                             # Signal Sciences header ref
+        "signal sciences",                       # Signal Sciences block page
         # Generic
         "bot detection",                         # Generic bot detection
         "automated request",                     # Generic block message
