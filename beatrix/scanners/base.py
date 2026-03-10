@@ -295,17 +295,6 @@ class BaseScanner(ABC):
             if cookie_str:
                 self.client.headers["Cookie"] = cookie_str
 
-    def reapply_auth(self, auth_creds) -> None:
-        """Re-inject fresh auth credentials after re-authentication.
-
-        Called when the kill chain detects session expiry and performs
-        a fresh login mid-scan. Updates the scanner's HTTP client headers
-        with the new session tokens.
-        """
-        self._auth_creds = auth_creds
-        self._auth_failure_count = 0
-        self._session_dead_warned = False
-        self.apply_auth(auth_creds)
 
     # =========================================================================
     # MAIN ENTRY POINTS
@@ -332,19 +321,6 @@ class BaseScanner(ABC):
         if False:
             yield  # type: ignore
 
-    async def active_scan(
-        self,
-        context: ScanContext,
-        insertion_point: InsertionPoint,
-    ) -> AsyncIterator[Finding]:
-        """
-        Actively test an insertion point with payloads.
-
-        Override in subclasses that support active scanning.
-        """
-        # Empty generator - subclasses override
-        if False:
-            yield  # type: ignore
 
     # =========================================================================
     # HTTP HELPERS
@@ -400,7 +376,8 @@ class BaseScanner(ABC):
             jitter = random.uniform(0.05, 0.3) + self._waf_throttle_delay
             await asyncio.sleep(jitter)
 
-        retry_count = 0
+        rate_retries = 0
+        waf_retries = 0
         while True:
             try:
                 async with _get_global_semaphore():
@@ -428,14 +405,14 @@ class BaseScanner(ABC):
                 del self._cb_host_failures[host]
 
             # ── 429 backoff — exponential retry with Retry-After ──────
-            if response.status_code == 429 and retry_count < 3:
+            if response.status_code == 429 and rate_retries < 3:
                 try:
-                    retry_after = float(response.headers.get("retry-after", 2 ** retry_count))
+                    retry_after = float(response.headers.get("retry-after", 2 ** rate_retries))
                 except (ValueError, TypeError):
-                    retry_after = float(2 ** retry_count)
+                    retry_after = float(2 ** rate_retries)
 
                 await asyncio.sleep(min(retry_after, 30))
-                retry_count += 1
+                rate_retries += 1
                 # Engage adaptive throttle — WAF is rate-limiting us
                 self._waf_throttle_delay = min(
                     self._waf_throttle_delay + 0.5, 3.0
@@ -446,13 +423,13 @@ class BaseScanner(ABC):
             # If the response body is a WAF challenge page (not a real
             # application response), try HTTP-level bypasses.
             if (response.status_code in (403, 406, 503)
-                    and retry_count < 1):
+                    and waf_retries < 1):
                 try:
                     body = response.text[:5000]
                 except Exception:
                     body = ""
                 if self.is_cdn_challenge(body):
-                    retry_count += 1
+                    waf_retries += 1
                     self._waf_block_count += 1
                     # Adaptive throttle: ramp up delay on consecutive blocks
                     self._waf_throttle_delay = min(
@@ -540,11 +517,6 @@ class BaseScanner(ABC):
 
             return response
 
-    @property
-    def session_appears_dead(self) -> bool:
-        """Whether this scanner has detected likely session expiry."""
-        return (self._auth_creds is not None
-                and self._auth_failure_count >= self._auth_failure_threshold)
 
     async def get(self, url: str, **kwargs) -> httpx.Response:
         """GET request"""
@@ -583,74 +555,7 @@ class BaseScanner(ABC):
         """
         self._waf_profile = waf_name
 
-    async def request_with_waf_bypass(
-        self,
-        method: str,
-        url: str,
-        **kwargs,
-    ) -> httpx.Response:
-        """Make a request with automatic WAF bypass retry.
 
-        First tries the normal request. If the response is 403/406, retries
-        with HTTP-level bypass techniques (method override, content-type
-        swap, header padding).
-        """
-        response = await self.request(method, url, **kwargs)
-
-        # Only retry if we got a WAF block AND have a WAF profile
-        waf_profile = getattr(self, '_waf_profile', None)
-        if response.status_code not in (403, 406) or not waf_profile:
-            return response
-
-        # Try method override: send POST with X-HTTP-Method-Override
-        if method == "GET":
-            override_headers = dict(kwargs.get("headers", {}))
-            override_headers["X-HTTP-Method-Override"] = "GET"
-            override_kwargs = dict(kwargs)
-            override_kwargs["headers"] = override_headers
-            try:
-                resp2 = await self.request("POST", url, **override_kwargs)
-                if resp2.status_code not in (403, 406):
-                    return resp2
-            except Exception:
-                pass
-
-        # Try content-type swap for POST requests
-        if method == "POST" and "data" in kwargs:
-            import json as _json
-            swap_headers = dict(kwargs.get("headers", {}))
-            swap_headers["Content-Type"] = "application/json"
-            swap_kwargs = dict(kwargs)
-            swap_kwargs.pop("data", None)
-            try:
-                data = kwargs["data"]
-                if isinstance(data, dict):
-                    swap_kwargs["content"] = _json.dumps(data).encode()
-                    swap_kwargs["headers"] = swap_headers
-                    resp2 = await self.request("POST", url, **swap_kwargs)
-                    if resp2.status_code not in (403, 406):
-                        return resp2
-            except Exception:
-                pass
-
-        # Try with WAF-bypass headers (source IP spoofing)
-        bypass_headers = dict(kwargs.get("headers", {}))
-        bypass_headers.update({
-            "X-Originating-IP": "127.0.0.1",
-            "X-Forwarded-For": "127.0.0.1",
-            "X-Remote-IP": "127.0.0.1",
-            "X-Remote-Addr": "127.0.0.1",
-        })
-        bypass_kwargs = dict(kwargs)
-        bypass_kwargs["headers"] = bypass_headers
-        try:
-            resp2 = await self.request(method, url, **bypass_kwargs)
-            if resp2.status_code not in (403, 406):
-                return resp2
-        except Exception:
-            pass
-
-        return response  # All bypasses failed, return original
 
     # =========================================================================
     # CDN / WAF CHALLENGE DETECTION

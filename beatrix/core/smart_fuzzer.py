@@ -548,9 +548,6 @@ class SmartFuzzer:
         try:
             from beatrix.utils.advanced_waf_bypass import AdvancedWAFBypass
             engine = AdvancedWAFBypass()
-            attack_map = {VulnType.XSS: "xss", VulnType.SQLI: "sqli",
-                          VulnType.LFI: "lfi", VulnType.RCE: "cmdi"}
-            attack_type = attack_map.get(vuln_type, "sqli")
             bypasses = engine.mutate_payload(payload)[:3]
 
             for bp in bypasses:

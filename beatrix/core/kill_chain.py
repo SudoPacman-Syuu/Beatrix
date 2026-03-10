@@ -161,32 +161,6 @@ class KillChainPhase(Enum):
             KillChainPhase.ACTIONS_ON_OBJECTIVES: "🎯",
         }[self]
 
-    @property
-    def modules(self) -> List[str]:
-        """Default modules for this phase — maps to actual engine module keys."""
-        return {
-            KillChainPhase.RECONNAISSANCE: [
-                "crawl", "endpoint_prober", "js_analysis", "headers", "github_recon",
-                "param_miner"
-            ],
-            KillChainPhase.WEAPONIZATION: [
-                "takeover", "error_disclosure", "cache_poisoning", "prototype_pollution",
-                "sequencer"
-            ],
-            KillChainPhase.DELIVERY: [
-                "cors", "redirect", "oauth_redirect", "http_smuggling", "websocket"
-            ],
-            KillChainPhase.EXPLOITATION: [
-                "backslash", "injection", "ssrf", "idor", "bac", "auth", "ssti", "xxe",
-                "deserialization", "graphql", "mass_assignment", "business_logic",
-                "redos", "payment", "nuclei"
-            ],
-            KillChainPhase.INSTALLATION: [
-                "file_upload"
-            ],
-            KillChainPhase.COMMAND_CONTROL: [],
-            KillChainPhase.ACTIONS_ON_OBJECTIVES: [],
-        }[self]
 
 
 class PhaseStatus(Enum):
@@ -245,7 +219,7 @@ class KillChainState:
         "subdomains": [],
         "endpoints": [],
         "parameters": [],
-        "technologies": [],
+        "technologies": {},
         "findings": [],
         "credentials": [],
     })
@@ -3134,6 +3108,7 @@ class KillChainExecutor:
         _extra_param_urls = [u for u in discovered if "?" in u and u not in _existing_params]
         if _extra_param_urls:
             urls_with_params = urls_with_params + _extra_param_urls
+            context["urls_with_params"] = urls_with_params
             self._emit("info", message=f"Recovered {len(_extra_param_urls)} parameterized URLs from discovered_urls into injection targets")
 
         # Build a combined target list: URLs with params PLUS JS-discovered API endpoints

@@ -425,47 +425,30 @@ class SSRFScanner(BaseScanner):
         findings = []
         headers = headers or {}
 
-        # Use BaseScanner's rate-limited client when available (inside scan()),
-        # fall back to a standalone client for direct calls.
-        client = self.client
-        own_client = False
-        if client is None:
-            client = httpx.AsyncClient(
-                timeout=self.timeout,
-                follow_redirects=False,
-                verify=False
-            )
-            own_client = True
-
+        # Get baseline response via BaseScanner's rate-limited request()
         try:
-            # Get baseline response
-            try:
-                baseline = await client.get(candidate.url, headers=headers)
-                baseline_time = baseline.elapsed.total_seconds()
-                baseline_size = len(baseline.content)
-            except Exception:
-                baseline_time = 0
-                baseline_size = 0
+            baseline = await self.request("GET", candidate.url, headers=headers)
+            baseline_time = baseline.elapsed.total_seconds()
+            baseline_size = len(baseline.content)
+        except Exception:
+            baseline_time = 0
+            baseline_size = 0
 
-            for payload in self.payloads:
-                finding = await self._test_payload(
-                    client, candidate, payload, headers,
-                    baseline_time, baseline_size
-                )
-                if finding:
-                    findings.append(finding)
+        for payload in self.payloads:
+            finding = await self._test_payload(
+                candidate, payload, headers,
+                baseline_time, baseline_size
+            )
+            if finding:
+                findings.append(finding)
 
-                    # If we find cloud metadata access, this is CRITICAL
-                    if payload.target_type == "cloud":
-                        break  # One critical finding is enough
-        finally:
-            if own_client:
-                await client.aclose()
+                # If we find cloud metadata access, this is CRITICAL
+                if payload.target_type == "cloud":
+                    break  # One critical finding is enough
 
         return findings
 
     async def _test_payload(self,
-                           client: httpx.AsyncClient,
                            candidate: SSRFCandidate,
                            payload: SSRFPayload,
                            headers: Dict[str, str],
@@ -490,13 +473,13 @@ class SSRFScanner(BaseScanner):
             start = time.time()
 
             if candidate.param_type == "body":
-                response = await client.post(
-                    candidate.url,
+                response = await self.request(
+                    "POST", candidate.url,
                     json={candidate.param_name: payload.value},
                     headers=headers
                 )
             else:
-                response = await client.get(test_url, headers=headers)
+                response = await self.request("GET", test_url, headers=headers)
 
             elapsed = time.time() - start
 

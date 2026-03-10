@@ -18,7 +18,17 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from .kill_chain import KillChainExecutor, KillChainState
-from .types import Finding, ScanResult, Severity
+from .types import Confidence, Finding, ScanResult, Severity
+
+# Ordinal ranking for severity comparison — Severity.value is a string,
+# so alphabetical comparison would be wrong ("critical" < "high" etc.).
+_SEV_RANK = {
+    Severity.INFO: 0,
+    Severity.LOW: 1,
+    Severity.MEDIUM: 2,
+    Severity.HIGH: 3,
+    Severity.CRITICAL: 4,
+}
 
 
 @dataclass
@@ -486,7 +496,6 @@ class BeatrixEngine:
 
                         # Mark likely false positives by downgrading confidence
                         if is_fp and finding.confidence != Confidence.CERTAIN:
-                            from beatrix.core.types import Confidence
                             finding.confidence = Confidence.WEAK
                             if fp_reason:
                                 finding.description = (
@@ -505,7 +514,7 @@ class BeatrixEngine:
                                 "info": Severity.INFO,
                             }
                             new_sev = sev_map.get(sev_adj.lower())
-                            if new_sev and new_sev.value < finding.severity.value:
+                            if new_sev and _SEV_RANK[new_sev] < _SEV_RANK[finding.severity]:
                                 # AI says it's less severe — trust the downgrade
                                 finding.severity = new_sev
 

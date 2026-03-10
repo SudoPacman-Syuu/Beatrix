@@ -457,6 +457,8 @@ class FFufEngine:
 
         return results
 
+    # TODO: Wire _filter_results_by_regex into the pipeline once ffuf's
+    # -od flag is used to capture per-response bodies (needs response storage).
     def _filter_results_by_regex(
         self,
         results: List[FuzzResult],
@@ -511,7 +513,7 @@ class FFufEngine:
         for result in results:
             # Determine confidence based on match type
             if result.matched_by:
-                confidence = "high" if "regex" not in result.matched_by else "medium"
+                confidence = "high" if "regex" in result.matched_by else "medium"
             else:
                 confidence = "low"
 
