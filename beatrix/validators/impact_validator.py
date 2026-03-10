@@ -147,6 +147,10 @@ class ImpactValidator:
         checks.append(self._check_reproducible(finding))
         checks.append(self._check_auth_required(finding, ctx))
         checks.append(self._check_not_info_noise(finding))
+        checks.append(self._check_waf_detection_noise(finding))
+        checks.append(self._check_behavioral_sqli_on_waf(finding))
+        checks.append(self._check_unconfirmed_dom_xss(finding))
+        checks.append(self._check_source_map_noise(finding))
 
         # Determine overall verdict
         kill_checks = [c for c in checks if c.kill]
@@ -554,6 +558,7 @@ class ImpactValidator:
             ("directory listing", "Directory listing alone needs sensitive file proof"),
             ("cve-", "CVE references need proof of exploitability on this target"),
             ("information disclosure", "Must show WHAT was disclosed and WHY it matters"),
+            ("api routes disclosed", "API route disclosure in JS bundles is standard for SPAs"),
         ]
 
         # Only flag as noise for INFO/LOW severity — medium+ gets a pass
@@ -811,6 +816,268 @@ class ImpactValidator:
                    f"Submit the PoC page, not the nslookup output.",
             severity_modifier=-2,
             kill=True,
+        )
+
+    # ========================================================================
+    # WAF / CDN / BEHAVIORAL FALSE POSITIVE CHECKS
+    # ========================================================================
+
+    def _check_source_map_noise(self, finding: Finding) -> ImpactCheck:
+        """
+        LESSON: Source maps for public/OSS libraries are not findings.
+
+        Source maps are only impactful when they expose proprietary
+        application code — internal business logic, auth flows, API keys
+        baked into source. A source map for a known open-source library
+        (oc-client, jQuery, React, etc.) or one with very few source
+        files is noise.
+        """
+        title_lower = finding.title.lower()
+        if "source map" not in title_lower:
+            return ImpactCheck(
+                name="source_map_noise",
+                passed=True,
+                reason="Not a source map finding.",
+            )
+
+        evidence = str(finding.evidence or "")
+        desc_lower = finding.description.lower()
+        url_lower = finding.url.lower()
+        combined = f"{evidence} {desc_lower} {url_lower}"
+
+        # Known open-source libraries — source maps for these are meaningless
+        oss_patterns = [
+            r"oc-client", r"jquery", r"react", r"angular",
+            r"vue", r"bootstrap", r"lodash", r"moment",
+            r"axios", r"polyfill", r"core-js", r"webpack-runtime",
+            r"vendor\.", r"chunk-vendors",
+        ]
+        is_oss = any(re.search(p, combined, re.I) for p in oss_patterns)
+
+        # Check source count — 1-3 files is trivial
+        source_count_match = re.search(r"source_count['\"]?\s*[:=]\s*(\d+)", evidence)
+        source_count = int(source_count_match.group(1)) if source_count_match else None
+        title_count_match = re.search(r"\((\d+)\s+original", finding.title)
+        if not source_count and title_count_match:
+            source_count = int(title_count_match.group(1))
+
+        is_trivial = source_count is not None and source_count <= 3
+
+        if is_oss:
+            return ImpactCheck(
+                name="source_map_noise",
+                passed=False,
+                reason="Source map exposes open-source library code, not "
+                       "proprietary application source. Not a finding.",
+                severity_modifier=-2,
+                kill=True,
+            )
+
+        if is_trivial:
+            return ImpactCheck(
+                name="source_map_noise",
+                passed=False,
+                reason=f"Source map exposes only {source_count} source file(s). "
+                       "Trivial exposure — need significant proprietary code "
+                       "leak to be reportable.",
+                severity_modifier=-2,
+                kill=True,
+            )
+
+        return ImpactCheck(
+            name="source_map_noise",
+            passed=True,
+            reason="Source map exposes non-trivial amount of code.",
+        )
+
+    def _check_waf_detection_noise(self, finding: Finding) -> ImpactCheck:
+        """
+        LESSON: WAF/CDN detection is recon intel, not a vulnerability.
+
+        Nuclei WAF detection templates confirm that a WAF is present.
+        That's useful for the attacker's notes, not for a bug report.
+        """
+        title_lower = finding.title.lower()
+        desc_lower = finding.description.lower()
+        combined = f"{title_lower} {desc_lower}"
+
+        waf_noise_patterns = [
+            r"waf.?detect",
+            r"firewall.?detect",
+            r"cdn.?detect",
+            r"(cloudflare|akamai|fastly|incapsula|sucuri|imperva|f5|barracuda|fortinet|perimeterx|datadome|shape|distil|reblaze|wallarm|signal.?sciences).*detect",
+        ]
+
+        is_waf_detection = any(re.search(p, combined) for p in waf_noise_patterns)
+
+        if is_waf_detection:
+            return ImpactCheck(
+                name="waf_detection_noise",
+                passed=False,
+                reason="WAF/CDN detection is reconnaissance, not a vulnerability. "
+                       "Knowing a WAF exists is useful for your notes but will "
+                       "be closed informative on any bug bounty platform.",
+                severity_modifier=-2,
+                kill=True,
+            )
+
+        return ImpactCheck(
+            name="waf_detection_noise",
+            passed=True,
+            reason="Not a WAF/CDN detection finding.",
+        )
+
+    def _check_behavioral_sqli_on_waf(self, finding: Finding) -> ImpactCheck:
+        """
+        LESSON: Behavioral SQLi on WAF/bot-protection endpoints is always false.
+
+        WAFs and bot-protection systems (PerimeterX, Cloudflare Challenge,
+        Akamai Bot Manager, DataDome) are DESIGNED to respond differently
+        to malicious-looking input. That's their job. Behavioral detection
+        (response fingerprint divergence) will always trigger on these
+        endpoints because the WAF is doing exactly what it should do.
+
+        Only error-based or data-extraction SQLi on these endpoints would
+        be meaningful (and even then, extremely unlikely).
+        """
+        title_lower = finding.title.lower()
+        desc_lower = finding.description.lower()
+        evidence_lower = str(finding.evidence or "").lower()
+        url_lower = finding.url.lower()
+        combined = f"{title_lower} {desc_lower} {evidence_lower} {url_lower}"
+
+        is_sqli = any(term in title_lower for term in [
+            "sql injection", "sqli", "sql error",
+        ])
+        if not is_sqli:
+            return ImpactCheck(
+                name="behavioral_sqli_waf",
+                passed=True,
+                reason="Not a SQL injection finding.",
+            )
+
+        is_behavioral = "behavior" in combined and "fingerprint" in combined
+        if not is_behavioral:
+            return ImpactCheck(
+                name="behavioral_sqli_waf",
+                passed=True,
+                reason="SQLi finding uses non-behavioral detection.",
+            )
+
+        # Check if endpoint is a known WAF/bot-protection path
+        waf_endpoint_patterns = [
+            r"captcha", r"challenge", r"bot.?detect", r"bot.?manage",
+            r"perimeterx", r"px/", r"datadome", r"_bm/",
+            r"/cdn-cgi/", r"__cf_chl", r"turnstile",
+            r"/ff0j69t5/",  # PerimeterX path pattern
+        ]
+
+        on_waf_endpoint = any(re.search(p, url_lower) for p in waf_endpoint_patterns)
+
+        if on_waf_endpoint:
+            return ImpactCheck(
+                name="behavioral_sqli_waf",
+                passed=False,
+                reason="BEHAVIORAL SQLi ON WAF/BOT-PROTECTION ENDPOINT. "
+                       "WAFs are DESIGNED to respond differently to malicious input. "
+                       "Response fingerprint divergence on captcha/challenge endpoints "
+                       "is the WAF doing its job, not SQL execution. "
+                       "Need error-based or data-extraction proof, not behavioral.",
+                severity_modifier=-2,
+                kill=True,
+            )
+
+        return ImpactCheck(
+            name="behavioral_sqli_waf",
+            passed=True,
+            reason="SQLi finding is not on a known WAF endpoint.",
+        )
+
+    def _check_unconfirmed_dom_xss(self, finding: Finding) -> ImpactCheck:
+        """
+        LESSON: Source→sink pattern matches without confirmed execution are noise.
+
+        Passive DOM XSS checks look for patterns like:
+          location.hash → innerHTML
+          document.URL → eval()
+
+        These patterns exist in virtually every modern JS application because
+        frameworks and libraries use them safely (with sanitization). A pattern
+        match with tentative confidence and no confirmed alert() execution is
+        not a finding — it's a code review suggestion.
+
+        Only DOM XSS with CONFIRMED execution (dialog triggered, payload
+        rendered in DOM) is submittable.
+        """
+        title_lower = finding.title.lower()
+        desc_lower = finding.description.lower()
+        evidence_lower = str(finding.evidence or "").lower()
+        combined = f"{title_lower} {desc_lower} {evidence_lower}"
+
+        is_dom_xss = "dom xss" in title_lower or "dom-based xss" in title_lower
+        if not is_dom_xss:
+            return ImpactCheck(
+                name="unconfirmed_dom_xss",
+                passed=True,
+                reason="Not a DOM XSS finding.",
+            )
+
+        # Confirmed execution indicators
+        confirmed_indicators = [
+            r"alert\s*\(.*\)\s*(triggered|fired|executed|called)",
+            r"dialog\s*(triggered|fired|detected|intercepted)",
+            r"(confirmed|verified|proven).*xss",
+            r"xss.*(confirmed|verified|proven)",
+            r"javascript\s+execut",
+            r"payload.*executed",
+            r"certain",  # confidence: certain means confirmed
+        ]
+
+        from beatrix.core.types import Confidence
+        is_confirmed = (
+            finding.confidence == Confidence.CERTAIN
+            or any(re.search(p, combined) for p in confirmed_indicators)
+        )
+
+        if is_confirmed:
+            return ImpactCheck(
+                name="unconfirmed_dom_xss",
+                passed=True,
+                reason="DOM XSS has confirmed execution evidence.",
+            )
+
+        # Check for pattern-only indicators
+        pattern_only_indicators = [
+            r"source.*sink.*pattern",
+            r"pattern.*match",
+            r"manual.?verification.?required",
+            r"tentative",
+            r"dangerous.?source.*sink",
+            r"code.?pattern.?is.?risky",
+        ]
+
+        is_pattern_only = any(re.search(p, combined) for p in pattern_only_indicators)
+
+        if is_pattern_only:
+            return ImpactCheck(
+                name="unconfirmed_dom_xss",
+                passed=False,
+                reason="DOM XSS is pattern-match only — no confirmed execution. "
+                       "Source→sink patterns exist in virtually every modern JS app. "
+                       "Need confirmed alert()/payload execution to be submittable. "
+                       "This is a code review note, not a vulnerability report.",
+                severity_modifier=-2,
+                kill=True,
+            )
+
+        # If not clearly confirmed, still block
+        return ImpactCheck(
+            name="unconfirmed_dom_xss",
+            passed=False,
+            reason="DOM XSS finding lacks clear execution confirmation. "
+                   "Need confirmed payload execution (alert triggered, DOM mutation) "
+                   "to be submittable.",
+            severity_modifier=-1,
         )
 
     # ========================================================================
