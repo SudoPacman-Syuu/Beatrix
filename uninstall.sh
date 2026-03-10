@@ -50,9 +50,9 @@ if [[ -n "${_beatrix_cfg_backup:-}" ]]; then
     echo -e "  ${GREEN}✓${RESET} Config preserved"
 fi
 
-if [[ -L "/usr/local/bin/beatrix" ]]; then
+if [[ -f "/usr/local/bin/beatrix" ]] || [[ -L "/usr/local/bin/beatrix" ]]; then
     sudo rm -f /usr/local/bin/beatrix
-    echo -e "  ${GREEN}✓${RESET} Removed /usr/local/bin/beatrix symlink"
+    echo -e "  ${GREEN}✓${RESET} Removed /usr/local/bin/beatrix"
 fi
 
 echo ""

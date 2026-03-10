@@ -798,6 +798,7 @@ CORE_PYTHON_DEPS=(
     "python-nmap>=0.7.1"
     "paramiko>=3.4.0"
     "scapy>=2.5.0"
+    "playwright>=1.40.0"
     # Extended (full scanning support)
     "cloudscraper>=1.2.71"
     "networkx>=3.2.0"
@@ -818,6 +819,7 @@ declare -A IMPORT_MAP=(
     [python-nmap]="nmap"
     [paramiko]="paramiko"
     [scapy]="scapy"
+    [playwright]="playwright"
     [cloudscraper]="cloudscraper"
     [networkx]="networkx"
 )
