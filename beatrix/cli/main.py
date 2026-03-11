@@ -920,8 +920,9 @@ def arsenal(ctx):
         ("jwt_tool", "JSON Web Token manipulation and vulnerability testing"),
         ("msfconsole", "Metasploit Framework for advanced exploitation and post-exploitation"),
     ]
+    venv_bin = Path(sys.executable).parent
     for tool_name, purpose in tools:
-        found = shutil.which(tool_name)
+        found = shutil.which(tool_name) or (venv_bin / tool_name).is_file()
         status = "[green]✓ installed[/green]" if found else "[dim]○ not found[/dim]"
         ext_table.add_row(tool_name, status, purpose)
 
