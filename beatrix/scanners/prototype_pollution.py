@@ -279,8 +279,8 @@ class PrototypePollutionScanner(BaseScanner):
                             "- Denial of Service (crash via type confusion)"
                         ),
                         evidence=evidence_detail,
-                        request=json.dumps(payload["data"], indent=2),
-                        response=resp.text[:1000],
+                        request=self.format_http_request(resp),
+                        response=self.format_http_response(resp),
                         remediation=(
                             "1. Use Object.create(null) for user-controlled data objects\n"
                             "2. Use Map instead of plain objects for key-value stores\n"

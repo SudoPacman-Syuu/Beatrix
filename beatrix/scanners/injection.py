@@ -1181,8 +1181,8 @@ class InjectionScanner(BaseScanner):
             url=url,
             description=f"{category_desc[payload.category]}\n\nVulnerable parameter: {ip.name}\nPayload: {payload.value}\nDetection method: {payload.detection}",
             evidence=evidence,
-            request=f"{request.method} {url}\n\nPayload: {payload.value}\nInjection point: {ip.name} ({ip.type.value})",
-            response=f"HTTP {response.status_code}\n\n{response.text[:1000]}...",
+            request=self.format_http_request(response),
+            response=self.format_http_response(response),
             remediation=remediation_map.get(payload.category, "Implement proper input validation and output encoding."),
             references=[
                 f"https://owasp.org/www-community/attacks/{payload.category.upper()}_Attacks" if payload.category != "path" else "https://owasp.org/www-community/attacks/Path_Traversal",

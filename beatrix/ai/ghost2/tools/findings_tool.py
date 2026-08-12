@@ -26,6 +26,30 @@ _SEVERITY = {s.value: s for s in Severity}
 _CONFIDENCE = {c.value: c for c in Confidence}
 
 
+def _capture_http(session: GhostSession, request: str, response: str,
+                  response_id: int) -> tuple:
+    """Backfill request/response from a real cached transaction.
+
+    The agent tends to omit the request/response args even though it just
+    observed them via http_request/inject. Rather than leave a finding with no
+    evidence (which the Suite would then have to reconstruct from metadata), pull
+    the actual bytes from the session's response store: the one the agent cited
+    by ``response_id``, else the most recent. Anything the agent DID pass wins —
+    we only fill the blanks.
+    """
+    if request.strip() and response.strip():
+        return request, response
+    stored = (session.get_response(response_id) if response_id
+              else session.latest_response())
+    if stored is None:
+        return request, response
+    if not request.strip():
+        request = stored.to_raw_request()
+    if not response.strip():
+        response = stored.to_raw_response()
+    return request, response
+
+
 @function_tool
 async def record_finding(
     ctx: RunContextWrapper[GhostSession],
@@ -42,6 +66,7 @@ async def record_finding(
     validated: bool = False,
     request: str = "",
     response: str = "",
+    response_id: int = 0,
     poc_curl: str = "",
     reproduction_steps: str = "",
 ) -> str:
@@ -77,12 +102,21 @@ async def record_finding(
         confidence: One of certain, firm, tentative, weak.
         validated: True only if exploitability is proven.
         request: The exact request that triggered the vulnerability (method,
-            URL, relevant headers/body) — quote it, don't paraphrase.
-        response: The exact response snippet demonstrating impact.
+            URL, relevant headers/body) — quote it, don't paraphrase. If you
+            omit it, the exact request from your most recent http_request/inject
+            is attached automatically.
+        response: The exact response snippet demonstrating impact. Omit to
+            auto-attach the response from your most recent http_request/inject.
+        response_id: The "Response #N" id from an earlier http_request/inject
+            whose transaction proves this finding. Pass it to attach that exact
+            request/response instead of the most recent one.
         poc_curl: A literal curl command a triager could paste and run.
         reproduction_steps: Numbered steps to reproduce, one per line.
     """
     session = ctx.context
+    # Attach the real transaction the agent observed when it didn't quote one,
+    # so the finding carries genuine request/response bytes.
+    request, response = _capture_http(session, request, response, response_id)
     finding = Finding(
         title=title.strip() or "Untitled finding",
         severity=_SEVERITY.get(severity.lower().strip(), Severity.INFO),

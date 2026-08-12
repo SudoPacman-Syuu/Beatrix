@@ -793,8 +793,8 @@ class PaymentScanner(BaseScanner):
                         f"or cart state corruption."
                     ),
                     evidence=f"Status: {resp.status_code}\nBody: {resp.text[:500]}",
-                    request=f"PUT {resp.url}\n{json.dumps(body, indent=2)}",
-                    response=f"{resp.status_code}\n{resp.text[:500]}",
+                    request=self.format_http_request(resp),
+                    response=self.format_http_response(resp),
                 )
             elif resp.status_code not in (400, 422, 404):
                 self.log(f"[QUANTITY] Unexpected: {desc} → {resp.status_code}")
@@ -860,8 +860,8 @@ class PaymentScanner(BaseScanner):
                         f"was actually affected by checking the cart state."
                     ),
                     evidence=f"Request accepted with fields: {extra_fields}",
-                    request=f"PUT {resp.url}\n{json.dumps(body, indent=2)}",
-                    response=f"{resp.status_code}\n{resp_text[:500]}",
+                    request=self.format_http_request(resp),
+                    response=self.format_http_response(resp),
                 )
 
     async def test_coupon_abuse(self) -> AsyncIterator[Finding]:
@@ -924,8 +924,8 @@ class PaymentScanner(BaseScanner):
                         f"weak coupon generation."
                     ),
                     evidence=f"Coupon '{code}' → 200 OK",
-                    request=f"PATCH {resp.url}\n{json.dumps(body)}",
-                    response=f"{resp.status_code}\n{resp.text[:300]}",
+                    request=self.format_http_request(resp),
+                    response=self.format_http_response(resp),
                 )
 
         # Test coupon stacking (if we found working coupons)
@@ -1176,7 +1176,8 @@ class PaymentScanner(BaseScanner):
                         f"for free."
                     ),
                     evidence=f"Status: {resp.status_code}\n{resp.text[:300]}",
-                    request=f"PUT {resp.url}\n{json.dumps(body)}",
+                    request=self.format_http_request(resp),
+                    response=self.format_http_response(resp),
                 )
 
     async def test_subscription_manipulation(self) -> AsyncIterator[Finding]:
@@ -1325,7 +1326,8 @@ class PaymentScanner(BaseScanner):
                         f"payment bypass."
                     ),
                     evidence=f"Status: {resp.status_code}\n{resp.text[:300]}",
-                    request=f"PATCH {resp.url}\n{json.dumps(method_body)}",
+                    request=self.format_http_request(resp),
+                    response=self.format_http_response(resp),
                 )
 
     async def test_delete_auth_cookies_unauth(self) -> AsyncIterator[Finding]:

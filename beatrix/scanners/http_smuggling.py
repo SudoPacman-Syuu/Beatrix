@@ -40,6 +40,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import AsyncIterator, Dict, List, Optional
+from urllib.parse import urlparse
 
 try:
     import httpx
@@ -212,6 +213,32 @@ class HTTPSmugglingScanner(BaseScanner):
             "timeout_threshold", self.TIMEOUT_THRESHOLD)
         self.baseline_tolerance: float = self.config.get(
             "baseline_tolerance", self.BASELINE_TOLERANCE)
+
+    @staticmethod
+    def _build_raw_request(method: str, url: str, headers: Dict[str, str], body: str = "") -> str:
+        """
+        Render the crafted smuggling request as a valid raw HTTP request.
+
+        Smuggling deliberately relies on byte-exact, deliberately-malformed
+        requests (obfuscated Transfer-Encoding, embedded CRLF, conflicting
+        Content-Length) that httpx would normalize or reject, so the evidence
+        must show the crafted bytes rather than what httpx actually sent.
+        This produces a sendable request that starts with a real request line
+        (method + real path/query + Host) followed by the crafted headers/body.
+        """
+        parsed = urlparse(url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        lines = [f"{method} {path} HTTP/1.1", f"Host: {parsed.netloc}"]
+        for k, v in headers.items():
+            lines.append(f"{k}: {v}")
+        raw = "\n".join(lines)
+        if body:
+            raw += f"\n\n{body}"
+        else:
+            raw += "\n"
+        return raw
 
     # =========================================================================
     # PAYLOAD BUILDERS
@@ -706,10 +733,8 @@ class HTTPSmugglingScanner(BaseScanner):
                         f"- Accessing internal endpoints"
                     ),
                     evidence=result.evidence,
-                    request=(
-                        f"POST {context.url} HTTP/1.1\n"
-                        + "\n".join(f"{k}: {v}" for k, v in payload.headers.items())
-                        + f"\n\n{payload.body}"
+                    request=self._build_raw_request(
+                        "POST", context.url, payload.headers, payload.body
                     ),
                     remediation=(
                         "1. Normalize request parsing between front-end and back-end\n"
@@ -863,7 +888,7 @@ class HTTPSmugglingScanner(BaseScanner):
                         f"- XSS via injected response body"
                     ),
                     evidence=f"Injected header reflected in response via {payload.name}",
-                    request=f"GET {context.url}\n{payload.headers}",
+                    request=self._build_raw_request("GET", context.url, payload.headers),
                     remediation=(
                         "1. Strip CR (\\r) and LF (\\n) from all header values\n"
                         "2. Use allowlist validation for header values\n"

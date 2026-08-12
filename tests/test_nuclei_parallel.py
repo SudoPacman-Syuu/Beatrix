@@ -164,3 +164,32 @@ def test_early_break_cancels_outstanding_workers():
     assert len(collected) == 2
     # All workers wound down after the generator closed — none left running.
     assert state["running"] == 0
+
+
+# ── recon URL sampling (issue: nuclei_recon stalling Phase 1 on big crawls) ──
+def test_sample_urls_recon_caps_per_host():
+    """Recon templates are host-level, so a huge single-host crawl must be
+    capped to a few URLs per host — otherwise Phase 1 never finishes and the
+    exploitation scanners never run."""
+    n = NucleiScanner()
+    cap = n._RECON_URLS_PER_HOST
+    # 254 genuinely-distinct same-host paths (Firing-Range shaped)
+    urls = [f"https://public-firing-range.appspot.com/reflected/case{i}/body" for i in range(254)]
+    urls.append("https://public-firing-range.appspot.com/")
+
+    recon = n._sample_urls(urls, mode="recon")
+    assert len(recon) == cap                                    # capped per host
+    assert "https://public-firing-range.appspot.com/" in recon  # root (top-scored) kept
+
+    # Exploitation must NOT be capped — it needs every distinct endpoint.
+    assert len(n._sample_urls(urls, mode="exploit")) > cap * 5
+
+    # The cap is per host, so two hosts get up to 2×cap.
+    multi = [f"https://a.com/p{i}" for i in range(40)] + [f"https://b.com/p{i}" for i in range(40)]
+    rm = n._sample_urls(multi, mode="recon")
+    assert len(rm) <= 2 * cap
+    assert {u.split("/")[2] for u in rm} == {"a.com", "b.com"}
+
+    # A small list is left alone.
+    small = ["https://x.com/", "https://x.com/a", "https://x.com/b"]
+    assert len(n._sample_urls(small, mode="recon")) == 3

@@ -648,6 +648,13 @@ class NucleiScanner(BaseScanner):
         "intrusive",    # Destructive operations (DELETE, DROP, etc.)
     }
 
+    # Recon-phase templates (tech/TLS/WAF/panel detection) are host-level, so a
+    # handful of high-priority URLs per host covers them. Running them against
+    # every crawled path (hundreds on a large site) is what stalls the whole
+    # scan in Phase 1 before it ever reaches the exploitation scanners — and
+    # floods the feed with the same host-level finding once per path.
+    _RECON_URLS_PER_HOST = 8
+
     # Param names that carry high injection/redirect/IDOR risk.
     # URLs with these params are kept preferentially when deduplicating.
     _HIGH_RISK_PARAMS: Set[str] = {
@@ -845,6 +852,24 @@ class NucleiScanner(BaseScanner):
                 f"[sample] {orig} → {sampled} URLs after dedup "
                 f"(saved {orig - sampled} redundant targets, mode={mode})"
             )
+
+        # Recon is host-level: keep only the top-scored few URLs per host so a
+        # big crawl can't stall Phase 1. `result` is already best-first.
+        if mode == "recon" and len(result) > self._RECON_URLS_PER_HOST:
+            per_host: Dict[str, int] = {}
+            capped: List[str] = []
+            for u in result:
+                h = urlparse(u).netloc
+                if per_host.get(h, 0) >= self._RECON_URLS_PER_HOST:
+                    continue
+                per_host[h] = per_host.get(h, 0) + 1
+                capped.append(u)
+            if len(capped) < len(result):
+                self.log(
+                    f"[sample] recon capped {len(result)} → {len(capped)} URLs "
+                    f"({self._RECON_URLS_PER_HOST}/host — recon templates are host-level)"
+                )
+            result = capped
 
         return result
 

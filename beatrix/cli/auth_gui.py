@@ -34,97 +34,102 @@ _PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Beatrix Auth</title>
+<title>Beatrix — Auth</title>
 <style>
-  :root {
-    --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #e6edf3;
-    --muted: #8b949e; --accent: #2f81f7; --accent-fg: #fff;
-    --ok: #3fb950; --err: #f85149; --drop: #1f6feb22;
-  }
+  /* Phosphor terminal theme — matches beatrix-suite (suite.py). */
+  :root { --bg:#0a0f0c; --panel:#0e150f; --border:#1e2b22; --fg:#d3ddd2; --muted:#6f8175;
+    --accent:#35d07e; --red:#ff6b6b; --green:#57d98a; --yellow:#f5c451; --violet:#b98cff; --blue:#5aa9ff;
+    --ok:#57d98a; --err:#ff6b6b; --accent-fg:#04140b; }
   @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f6f8fa; --panel: #fff; --border: #d0d7de; --fg: #1f2328;
-      --muted: #656d76; --accent: #0969da; --accent-fg: #fff;
-      --ok: #1a7f37; --err: #cf222e; --drop: #0969da11;
-    }
-  }
+    :root { --bg:#f5f8f4; --panel:#ffffff; --border:#d7e0d5; --fg:#1c2620; --muted:#5f7167;
+      --accent:#12864e; --red:#c0392b; --green:#1a7f47; --yellow:#9a7b12; --violet:#7a3ff2; --blue:#0969da;
+      --ok:#1a7f47; --err:#c0392b; --accent-fg:#ffffff; } }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--fg);
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    padding: 32px 16px;
-  }
-  .wrap { max-width: 720px; margin: 0 auto; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0 0 24px; }
-  .card {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 12px; padding: 20px; margin-bottom: 18px;
-  }
+  html, body { min-height: 100%; }
+  /* Body is transparent so that, embedded in the Suite's Auth <iframe>, the
+     Suite's single matrix-rain layer shows through and its one hamburger toggle
+     governs this tab too. Standalone, a tiny script paints the root background. */
+  body { margin: 0; background: transparent; color: var(--fg);
+    font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .topbar { display: flex; align-items: center; gap: 14px; padding: 11px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 22%, transparent);
+    position: sticky; top: 0; z-index: 5; }
+  .brand { display: flex; align-items: center; gap: 3px; user-select: none; }
+  .brand-name { font-weight: 800; font-size: 15px; letter-spacing: .22em; color: var(--yellow);
+    text-shadow: 0 0 14px color-mix(in srgb, var(--yellow) 42%, transparent); }
+  .tagline { color: var(--muted); font-size: 12px; letter-spacing: .18em; text-transform: uppercase; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 26px 16px 64px; }
+  .lead { color: var(--muted); margin: 0 0 22px; font-size: 13px; }
+  .sec { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--fg);
+    margin: 34px 0 4px; display: flex; align-items: center; gap: 8px; font-weight: 700; }
+  .sec::before { content: "\25B8"; color: var(--accent); font-size: 12px; }
+  .sec.first { margin-top: 6px; }
+  .sub { color: var(--muted); margin: 0 0 14px; font-size: 12.5px; }
+  .card { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 14px; }
   label { display: block; font-weight: 600; margin-bottom: 6px; }
-  .hint { color: var(--muted); font-weight: 400; font-size: 13px; }
-  input[type=text], textarea {
+  .hint { color: var(--muted); font-weight: 400; font-size: 12px; }
+  input[type=text], textarea, select {
     width: 100%; background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
-    font: inherit; font-size: 14px;
-  }
-  textarea { resize: vertical; min-height: 84px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
-  .row { margin-bottom: 16px; }
+    border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px;
+    font: inherit; font-size: 13px; }
+  textarea { resize: vertical; min-height: 82px; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  .row { margin-bottom: 15px; }
   .row:last-child { margin-bottom: 0; }
-  #drop {
-    border: 2px dashed var(--border); border-radius: 10px; padding: 28px 16px;
-    text-align: center; color: var(--muted); cursor: pointer; transition: .15s;
-  }
-  #drop.over { border-color: var(--accent); background: var(--drop); color: var(--fg); }
-  #drop b { color: var(--fg); }
-  #harName { margin-top: 10px; font-size: 13px; color: var(--ok); font-weight: 600; }
-  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .seg button {
-    background: var(--panel); color: var(--fg); border: 0; padding: 8px 16px;
-    cursor: pointer; font: inherit; border-right: 1px solid var(--border);
-  }
+  #drop { border: 2px dashed var(--border); border-radius: 9px; padding: 26px 16px;
+    text-align: center; color: var(--muted); cursor: pointer; transition: .15s; }
+  #drop.over { border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--fg); }
+  #drop b { color: var(--accent); }
+  #harName { margin-top: 10px; font-size: 12px; color: var(--ok); font-weight: 600; }
+  .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border);
+    border-radius: 7px; overflow: hidden; }
+  .seg button { background: var(--panel); color: var(--fg); border: 0; padding: 8px 15px;
+    cursor: pointer; font: inherit; font-size: 12px; border-right: 1px solid var(--border); }
   .seg button:last-child { border-right: 0; }
-  .seg button.on { background: var(--accent); color: var(--accent-fg); }
-  .save {
-    background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 8px;
-    padding: 12px 24px; font: inherit; font-weight: 600; cursor: pointer; width: 100%;
-  }
-  .save:disabled { opacity: .5; cursor: not-allowed; }
-  #msg { margin-top: 14px; padding: 12px 14px; border-radius: 8px; display: none; font-size: 14px; }
-  #msg.ok, #keyMsg.ok { display: block; background: var(--ok)22; border: 1px solid var(--ok); }
-  #msg.err, #keyMsg.err { display: block; background: var(--err)22; border: 1px solid var(--err); }
-  #msg pre { margin: 8px 0 0; white-space: pre-wrap; font-size: 13px; color: var(--muted); }
-  #keyMsg, #modelMsg { margin-top: 12px; padding: 10px 12px; border-radius: 8px; display: none; font-size: 14px; }
-  #modelMsg.ok { display:block; background: var(--ok)22; border:1px solid var(--ok); }
-  #modelMsg.err { display:block; background: var(--err)22; border:1px solid var(--err); }
-  select { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border);
-    border-radius:8px; padding:10px 12px; font:inherit; font-size:14px; }
-  select:focus { outline:2px solid var(--accent); border-color:var(--accent); }
-  #curModel.set { color: var(--ok); font-weight:600; }
+  .seg button.on { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  .save { background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 7px;
+    padding: 12px 22px; font: inherit; font-weight: 700; letter-spacing: .04em; cursor: pointer; width: 100%;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 26%, transparent); }
+  .save:hover { background: color-mix(in srgb, var(--accent) 88%, #ffffff); }
+  .save:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
+  #msg, #keyMsg, #modelMsg { margin-top: 13px; padding: 11px 13px; border-radius: 7px;
+    display: none; font-size: 13px; }
+  #msg.ok, #keyMsg.ok, #modelMsg.ok { display: block; color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ok) 55%, transparent); }
+  #msg.err, #keyMsg.err, #modelMsg.err { display: block; color: var(--err);
+    background: color-mix(in srgb, var(--err) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--err) 55%, transparent); }
+  #msg pre { margin: 8px 0 0; white-space: pre-wrap; font-size: 12px; color: var(--muted); }
+  #curModel.set { color: var(--ok); font-weight: 600; }
   .keyrow { margin-bottom: 14px; }
-  .keyrow .cur { font-size: 12px; color: var(--muted); margin-left: 8px; font-family: ui-monospace, monospace; }
+  .keyrow .cur { font-size: 11px; color: var(--muted); margin-left: 8px; }
   .keyrow .cur.set { color: var(--ok); }
-  .item {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 12px 0; border-bottom: 1px solid var(--border);
-  }
+  .item { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 0; border-bottom: 1px solid var(--border); }
   .item:last-child { border-bottom: 0; }
-  .item .meta { font-size: 13px; color: var(--muted); }
-  .item .name { color: var(--fg); font-weight: 600; font-size: 15px; }
-  .clr {
-    background: transparent; color: var(--err); border: 1px solid var(--err);
-    border-radius: 7px; padding: 6px 14px; cursor: pointer; font: inherit; font-size: 13px; white-space: nowrap;
-  }
-  .clr:hover { background: var(--err); color: #fff; }
-  .empty { color: var(--muted); font-size: 14px; }
+  .item .meta { font-size: 12px; color: var(--muted); }
+  .item .name { color: var(--fg); font-weight: 600; font-size: 14px; }
+  .clr { background: transparent; color: var(--err);
+    border: 1px solid color-mix(in srgb, var(--err) 60%, transparent);
+    border-radius: 6px; padding: 6px 13px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
+  .clr:hover { background: var(--err); color: #ffffff; border-color: var(--err); }
+  .empty { color: var(--muted); font-size: 13px; }
+  code { color: var(--yellow); font-size: .92em; }
 </style>
 </head>
 <body>
+<header class="topbar">
+  <span class="brand"><span class="brand-name">BEATRIX</span></span>
+  <span class="tagline">auth</span>
+</header>
 <div class="wrap">
-  <h1>🔐 Beatrix Auth</h1>
-  <p class="sub">Set up scan credentials without touching a YAML file. Saved to <code>~/.beatrix</code>.</p>
+  <p class="lead">Set up scan credentials without touching a YAML file. Saved to <code>~/.beatrix</code>.</p>
 
+  <h2 class="sec first">Scan credentials</h2>
   <div class="card">
     <div class="row">
       <label for="target">Target <span class="hint">— domain or URL you'll scan</span></label>
@@ -168,7 +173,7 @@ _PAGE = r"""<!doctype html>
   <button class="save" id="save">Save credentials</button>
   <div id="msg"></div>
 
-  <h1 style="margin-top:36px">🤖 AI provider keys</h1>
+  <h2 class="sec">AI provider keys</h2>
   <p class="sub">Stored in <code>~/.beatrix/.env</code> (chmod 600) and loaded automatically. Leave a field blank to keep its current value.</p>
   <div class="card">
     <div id="keyFields"></div>
@@ -176,7 +181,7 @@ _PAGE = r"""<!doctype html>
     <div id="keyMsg"></div>
   </div>
 
-  <h1 style="margin-top:36px">🧠 AI model</h1>
+  <h2 class="sec">AI model</h2>
   <p class="sub">Which model <code>ghost2</code> uses. The dropdown lists only <b>free, tool-capable</b> OpenRouter models — ghost2 needs tool-calling, so models without it are hidden.</p>
   <div class="card">
     <div class="row">
@@ -201,7 +206,7 @@ _PAGE = r"""<!doctype html>
     <div id="modelMsg"></div>
   </div>
 
-  <h1 style="margin-top:36px">🗂️ Currently saved auth</h1>
+  <h2 class="sec">Saved auth</h2>
   <p class="sub">Sessions and IDOR slots already on disk. Clear anything stale.</p>
   <div class="card">
     <div id="existing"><span class="hint">Loading…</span></div>
@@ -366,6 +371,18 @@ loadKeys();
 loadModel();
 loadModels();
 loadExisting();
+
+// Matrix rain is owned by the Suite (one canvas, one hamburger toggle). Inside
+// the Suite's Auth <iframe> we stay transparent so that single layer shows
+// through. Standalone (opened directly), paint our own opaque background.
+if (window.self === window.top) {
+  document.documentElement.style.background = "var(--bg)";
+  document.body.style.background = "var(--bg)";
+} else {
+  // Embedded in the Suite's Auth tab — the Suite header already shows the
+  // BEATRIX brand, so drop this page's redundant topbar.
+  const tb = document.querySelector(".topbar"); if (tb) tb.remove();
+}
 </script>
 </body>
 </html>"""

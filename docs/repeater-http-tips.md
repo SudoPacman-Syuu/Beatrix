@@ -1,0 +1,140 @@
+# Repeater "HTTP Tips" — coverage & roadmap
+
+An opt-in learning aid in the Repeater tab. When **HTTP Tips** is toggled **on**
+(button at the top-right of the Repeater toolbar), hovering a token in the
+request or response pops a small bubble explaining what it is — and, where
+relevant, what to look at when hunting for bugs.
+
+The goal: help a human quickly understand what they're looking at and manually
+spot issues. We start with the common, high-value stuff and grow the knowledge
+base over time. **This file is the running ledger of what's covered and what's
+next — update it whenever tips are added.**
+
+---
+
+## How it works (architecture)
+
+- The syntax highlighter already wraps meaningful tokens in `<span>`s. For the
+  tip-bearing ones it also stamps a `data-tip="<prefix>:<key>"` attribute:
+  - `h:<header-name>` — request/response header names
+  - `m:<method>` — request methods
+  - `s:<status-code>` — response status codes (falls back to the class, e.g. `4xx`)
+  - `t:<tag>` — HTML/XML tag names in a body
+  - `cookie:<attr>` / `cookie:samesite-<val>` — Set-Cookie / Cookie attributes
+  - `csp:<directive>` / `csp:kw-<source>` / `csp:star` — CSP value tokens
+  - `cc:<directive>` — Cache-Control directives
+  - `hsts:<token>` — Strict-Transport-Security tokens
+  - `ct:<mime>` — Content-Type media types
+  - `auth:<scheme>` — Authorization schemes
+  - `attr:<name>` / `attr:on` — security-relevant HTML attributes
+  - `jwt:<token>` — a detected JWT; decoded **live** (see below), not a static entry
+- Header **values** are tokenized by `hlHeaderValue()` → `hlTokens()`, which wraps
+  matched sub-tokens in tip spans while emitting the gaps verbatim, so every
+  character is preserved and the request overlay stays aligned.
+- The knowledge base is `HTTP_TIPS` in the embedded page JS (`beatrix/cli/suite.py`),
+  keyed by those prefixes. Each entry is `{ title, desc, sec? }` where `sec` is an
+  optional security note.
+- `lookupTip(key)` resolves a `data-tip` value to an entry. **JWTs are dynamic**:
+  `jwt:<token>` is decoded on hover by `decodeJwtTip()` (base64url header + payload)
+  and flags `alg=none`, HMAC secret-guessing, and RS↔HS alg-confusion.
+- Hover detection uses `document.elementsFromPoint()` so it works even in the
+  request pane, where an editable textarea sits on top of the highlighted layer.
+- The toggle state persists in `localStorage` (`beatrix.rep.tips`). When on,
+  hoverable tokens get a faint dotted underline as an affordance.
+
+**To add a tip:** add an entry to the right `HTTP_TIPS` sub-object, make sure the
+highlighter stamps a matching `data-tip` key for that token type (a new header
+value type usually means a new `case` in `hlHeaderValue`), then tick it off below.
+
+---
+
+## Covered
+
+**~174 static tips across 12 categories, plus live JWT decoding.**
+
+### Request methods (`m:`)
+GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE, CONNECT
+
+### Status codes (`s:`)
+200, 201, 204, 206, 301, 302, 303, 304, 307, 308,
+400, 401, 403, 404, 405, 406, 409, 415, 418, 422, 429,
+500, 501, 502, 503, 504 — plus class fallbacks (`1xx`/`2xx`/`3xx`/`4xx`/`5xx`)
+
+### Header names (`h:`)
+host, user-agent, accept, accept-encoding, accept-language, referer, origin,
+authorization, cookie, set-cookie, content-type, content-length,
+content-encoding, transfer-encoding, connection, cache-control, pragma, date,
+expires, etag, last-modified, location, server, x-powered-by, vary,
+www-authenticate, content-disposition,
+x-frame-options, content-security-policy, strict-transport-security,
+x-content-type-options, x-xss-protection, referrer-policy,
+access-control-allow-origin, access-control-allow-credentials
+
+### HTML/XML tags (`t:`)
+html, head, title, meta, link, script, style, iframe, form, input, button,
+textarea, a, img, svg, object, embed, base, `<!DOCTYPE>`
+
+### Cookie attributes (`cookie:`) — on the Set-Cookie / Cookie **value**
+HttpOnly, Secure, SameSite (+ Strict/Lax/None values), Domain, Path, Max-Age, Expires
+
+### CSP tokens (`csp:`) — on the Content-Security-Policy **value**
+default-src, script-src, style-src, img-src, connect-src, font-src, object-src,
+frame-src, frame-ancestors, base-uri, form-action, report-uri, report-to,
+upgrade-insecure-requests, block-all-mixed-content, sandbox;
+sources `'unsafe-inline'`, `'unsafe-eval'`, `'self'`, `'none'`, `'strict-dynamic'`, `*`
+
+### Cache-Control directives (`cc:`)
+no-store, no-cache, private, public, max-age, s-maxage, must-revalidate,
+immutable, stale-while-revalidate, no-transform
+
+### HSTS tokens (`hsts:`)
+max-age, includeSubDomains, preload
+
+### Content-Type media types (`ct:`)
+application/json, x-www-form-urlencoded, multipart/form-data, application/xml,
+text/xml, text/html, text/plain, octet-stream, application/javascript,
+application/graphql, text/csv
+
+### Authorization schemes (`auth:`)
+Basic, Bearer, Digest, Negotiate, NTLM
+
+### HTML attributes (`attr:`)
+on* (event handlers), src, href, action, formaction, srcdoc, sandbox, rel,
+target, type, http-equiv, content, integrity, nonce, style, autocomplete, name,
+method, value
+
+### JWT (`jwt:`) — dynamic
+Any `eyJ….eyJ….` token (in Authorization, Cookie, or a body) is decoded live:
+alg + typ, the first claims, and warnings for `alg=none`, HMAC secret-guessing,
+and RS↔HS algorithm confusion.
+
+---
+
+## TODO / roadmap (not yet covered)
+
+Ordered roughly by value for manual hunting.
+
+- [ ] **Request smuggling / desync** — an explicit callout when both
+      Content-Length *and* Transfer-Encoding are present on the same message.
+- [ ] **CORS correlation** — flag ACAO reflecting the request Origin, or ACAO
+      `*`/`null` combined with Allow-Credentials `true` (needs cross-line logic).
+- [ ] **More response headers** — Retry-After, Allow, Age, Via, X-Cache,
+      Permissions-Policy, Cross-Origin-* (COOP/COEP/CORP), Timing-Allow-Origin,
+      X-Request-Id, Server-Timing, Report-To/Reporting-Endpoints.
+- [ ] **JSON structure tips** — hovering a key path; flag likely secrets/IDs and
+      IDOR-ish fields (id, uuid, role, isAdmin, token).
+- [ ] **URL / query params** — hover a query key; note commonly injectable params.
+- [ ] **GraphQL / API shapes** — `query`/`mutation`, `__schema`, introspection.
+- [ ] **Encodings** — recognize base64 / URL-encoding / hex blobs and offer a
+      decode hint (same dynamic pattern as JWT).
+- [ ] **Basic-auth decode** — like JWT, decode `Basic <base64>` inline to `user:pass`.
+- [ ] **Server/version → CVE hint** — when Server/X-Powered-By carries a version.
+- [ ] **Per-value depth for more headers** — Vary tokens, Content-Disposition
+      filename, WWW-Authenticate params, Referrer-Policy values.
+
+## Ideas for later (beyond hover)
+
+- A "why is this interesting?" severity dot on tokens that commonly indicate
+  misconfig (e.g. `Server: Apache/2.2.3`, `ACAO: *`).
+- Click-through: hover shows the gist, click opens a fuller reference panel.
+- Per-token "send this to a scanner" action.

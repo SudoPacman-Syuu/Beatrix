@@ -290,6 +290,17 @@ class EndpointProber(BaseScanner):
                     p in path for p in ['/.git', '/.env', '/actuator/env', '/debug', '/console']
                 ) else Severity.MEDIUM
 
+                # No httpx.Response is retained at the finding site (EndpointResult
+                # is a custom dataclass). Build a valid, sendable raw HTTP request
+                # from the real URL and a raw response from the real status/headers/body
+                # that were actually captured during probing.
+                _parsed = urlparse(result.url)
+                _req_target = _parsed.path + (f"?{_parsed.query}" if _parsed.query else "")
+                raw_request = f"GET {_req_target or '/'} HTTP/1.1\nHost: {_parsed.netloc}\n"
+                _status_line = f"HTTP/1.1 {result.status}\n"
+                _resp_headers = "".join(f"{k}: {v}\n" for k, v in result.headers.items())
+                raw_response = f"{_status_line}{_resp_headers}\n{result.body_preview[:500]}"
+
                 yield self.create_finding(
                     title=f"Sensitive Infrastructure Endpoint Exposed: {path}",
                     severity=severity,
@@ -301,8 +312,8 @@ class EndpointProber(BaseScanner):
                         f"Body size: {result.body_length} bytes."
                     ),
                     evidence=result.body_preview[:500],
-                    request=f"GET {result.url}",
-                    response=f"HTTP {result.status}\n{result.body_preview[:300]}",
+                    request=raw_request,
+                    response=raw_response,
                     remediation="Restrict access to infrastructure endpoints via firewall rules or authentication.",
                     references=["https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/"],
                 )

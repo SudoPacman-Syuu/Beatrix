@@ -23,11 +23,19 @@ from beatrix.core.types import Finding
 _MAX_RESPONSES = 50
 _MAX_NOTES = 30
 _MAX_DONE_TODOS = 10
+# Cap the body when rendering a stored transaction to raw HTTP: it gets attached
+# to a Finding and persisted, and agent responses can be large.
+_RAW_BODY_CAP = 50_000
 
 
 @dataclass
 class StoredResponse:
-    """A cached HTTP response the agent can refer back to by id."""
+    """A cached HTTP transaction the agent can refer back to by id.
+
+    Holds both sides of the exchange — the request actually sent (method, url,
+    headers, body) and the response received — so a finding can be backed by the
+    real bytes, not a reconstruction.
+    """
 
     id: int
     status_code: int
@@ -36,6 +44,37 @@ class StoredResponse:
     response_time_ms: int
     url: str
     method: str
+    request_headers: Dict[str, str] = field(default_factory=dict)
+    request_body: Optional[str] = None
+
+    def to_raw_request(self) -> str:
+        """Render the sent request as raw HTTP (for a Finding's request field)."""
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(self.url)
+        target = parts.path or "/"
+        if parts.query:
+            target += "?" + parts.query
+        lines = ["%s %s HTTP/1.1" % (self.method, target)]
+        hdrs = dict(self.request_headers or {})
+        if not any(k.lower() == "host" for k in hdrs) and parts.netloc:
+            lines.append("Host: " + parts.netloc)
+        lines.extend("%s: %s" % (k, v) for k, v in hdrs.items())
+        lines.append("")
+        lines.append(self.request_body or "")
+        return "\n".join(lines).rstrip("\n") + "\n"
+
+    def to_raw_response(self) -> str:
+        """Render the received response as raw HTTP (status line + headers + body)."""
+        body = self.body or ""
+        if len(body) > _RAW_BODY_CAP:
+            body = body[:_RAW_BODY_CAP] + "\n\n[... truncated %d bytes ...]" % (
+                len(self.body) - _RAW_BODY_CAP)
+        lines = ["HTTP/1.1 %d" % self.status_code]
+        lines.extend("%s: %s" % (k, v) for k, v in (self.headers or {}).items())
+        lines.append("")
+        lines.append(body)
+        return "\n".join(lines)
 
 
 @dataclass
@@ -131,6 +170,8 @@ class GhostSession:
         response_time_ms: int,
         url: str,
         method: str,
+        request_headers: Optional[Dict[str, str]] = None,
+        request_body: Optional[str] = None,
     ) -> StoredResponse:
         async with self._lock:
             self._response_counter += 1
@@ -143,6 +184,8 @@ class GhostSession:
                 response_time_ms=response_time_ms,
                 url=url,
                 method=method,
+                request_headers=dict(request_headers or {}),
+                request_body=request_body,
             )
             self._responses[rid] = resp
             if len(self._responses) > _MAX_RESPONSES:

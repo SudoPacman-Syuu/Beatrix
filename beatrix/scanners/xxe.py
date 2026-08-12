@@ -104,6 +104,10 @@ class XXEResult:
     response_time: float
     matched: bool = False
     extracted_data: Optional[str] = None
+    # The actual httpx.Response of the payloaded transaction, kept so findings
+    # can carry the REAL request/response bytes (via BaseScanner.format_http_*)
+    # instead of a hand-built fragment.
+    http_response: Optional[Any] = None
 
 
 # =============================================================================
@@ -699,8 +703,20 @@ class XXEScanner(BaseScanner):
                             + (f"Extracted data: {result.extracted_data[:500]}\n" if result.extracted_data else "")
                         ),
                         evidence=result.extracted_data or result.response_body[:1000],
-                        request=payload.xml,
-                        response=result.response_body[:2000],
+                        request=(
+                            self.format_http_request(result.http_response)
+                            if result.http_response is not None
+                            else (
+                                f"POST {context.url} HTTP/1.1\n"
+                                f"Content-Type: {payload.content_type}\n\n"
+                                f"{payload.xml}"
+                            )
+                        ),
+                        response=(
+                            self.format_http_response(result.http_response)
+                            if result.http_response is not None
+                            else result.response_body[:2000]
+                        ),
                         remediation=(
                             "1. Disable DTD processing entirely in XML parser configuration\n"
                             "2. Disable external entity loading (FEATURE_SECURE_PROCESSING)\n"
@@ -767,6 +783,7 @@ class XXEScanner(BaseScanner):
                     response_time=elapsed,
                     matched=False,
                     extracted_data=None,
+                    http_response=resp,
                 )
 
             if payload.expected_pattern:
@@ -809,6 +826,7 @@ class XXEScanner(BaseScanner):
                 response_time=elapsed,
                 matched=matched,
                 extracted_data=extracted,
+                http_response=resp,
             )
         except Exception:
             return None

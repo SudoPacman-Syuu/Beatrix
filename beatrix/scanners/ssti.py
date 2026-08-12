@@ -727,7 +727,10 @@ class SSTIScanner(BaseScanner):
                             f"**Next Steps:** Engine identification and RCE exploitation."
                         ),
                         evidence=f"Payload: {payload.template} → Output: {payload.expected_output}",
-                        request=f"GET {context.url}?{param_name}={payload.template}",
+                        request=(
+                            f"GET {urlparse(context.url).path}?{param_name}={payload.template} HTTP/1.1\n"
+                            f"Host: {urlparse(context.url).netloc}\n"
+                        ),
                         references=[
                             "https://portswigger.net/web-security/server-side-template-injection",
                             "OWASP WSTG-INPV-18",
@@ -1081,10 +1084,8 @@ class SSTIScanner(BaseScanner):
                             f"- Install backdoors"
                         ),
                         evidence=f"RCE output: {rce_output}",
-                        request=(
-                            f"GET {context.url}?{param_name}="
-                            f"{payload.template[:100]}..."
-                        ),
+                        request=self.format_http_request(response),
+                        response=self.format_http_response(response),
                         remediation=(
                             "1. NEVER pass user input directly to template rendering\n"
                             "2. Use the template engine in sandbox/safe mode\n"

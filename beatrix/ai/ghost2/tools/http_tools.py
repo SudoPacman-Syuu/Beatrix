@@ -112,6 +112,8 @@ async def _send(
         response_time_ms=elapsed,
         url=url,
         method=method.upper(),
+        request_headers=merged,
+        request_body=body,
     )
 
 
