@@ -669,8 +669,8 @@ class FileUploadScanner(BaseScanner):
                         + (f"Uploaded to: {uploaded_url}\n" if uploaded_url else "")
                     ),
                     evidence=resp.text[:1000],
-                    request=f"Filename: {test.filename}\nContent-Type: {test.content_type}",
-                    response=resp.text[:500],
+                    request=self.format_http_request(resp),
+                    response=self.format_http_response(resp),
                     remediation=(
                         "1. Validate file extension against a strict allowlist (not blocklist)\n"
                         "2. Validate Content-Type AND file magic bytes (not just one)\n"

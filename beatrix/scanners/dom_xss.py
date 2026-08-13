@@ -104,6 +104,27 @@ class DOMXSSScanner(BaseScanner):
         self._playwright = None
         self._browser_context = None
 
+    @staticmethod
+    def _build_raw_request(url: str, extra_headers: Optional[Dict[str, str]] = None) -> str:
+        """
+        Build a valid raw HTTP GET request line from the real navigated URL.
+
+        DOM XSS runs in a headless browser, so there is no captured httpx
+        response; this reconstructs the sendable request the browser issued
+        (method + real path/query + Host, plus any real extra headers such as
+        Cookie or Referer). The URL fragment is intentionally omitted because
+        fragments are never transmitted over HTTP.
+        """
+        parsed = urlparse(url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        lines = [f"GET {path} HTTP/1.1", f"Host: {parsed.netloc}"]
+        if extra_headers:
+            for k, v in extra_headers.items():
+                lines.append(f"{k}: {v}")
+        return "\n".join(lines) + "\n"
+
     async def _ensure_browser(self) -> bool:
         """Launch browser if not already running. Returns False if unavailable."""
         if not PLAYWRIGHT_AVAILABLE:
@@ -257,8 +278,8 @@ class DOMXSSScanner(BaseScanner):
                         f"never reaches the server, making it invisible to server-side WAFs."
                     ),
                     evidence=f"JavaScript alert() triggered with content: {dialog_message}",
-                    request=f"GET {test_url}",
-                    response="(browser-rendered — no raw HTTP response)",
+                    request=self._build_raw_request(test_url),
+                    response="(browser-rendered — no raw HTTP response captured)",
                     remediation=(
                         "1. Sanitize all client-side inputs before inserting into the DOM\n"
                         "2. Use textContent instead of innerHTML for untrusted data\n"
@@ -344,8 +365,11 @@ class DOMXSSScanner(BaseScanner):
                             f"a dangerous sink (e.g., eval, innerHTML, document.write)."
                         ),
                         evidence=f"JavaScript alert() triggered with content: {dialog_message}",
-                        request=f"GET {url} (with cookie payload)",
-                        response="(browser-rendered — no raw HTTP response)",
+                        request=self._build_raw_request(
+                            url,
+                            {"Cookie": "; ".join(f"{n}={payload}" for n in cookie_names)},
+                        ),
+                        response="(browser-rendered — no raw HTTP response captured)",
                         remediation=(
                             "1. Never pass cookie values directly to eval(), innerHTML, or document.write()\n"
                             "2. Sanitize cookie data before using it in the DOM\n"
@@ -422,8 +446,8 @@ class DOMXSSScanner(BaseScanner):
                             f"the value to a dangerous sink."
                         ),
                         evidence=f"JavaScript alert() triggered with content: {dialog_message}",
-                        request=f"GET {url} (with storage payload)",
-                        response="(browser-rendered — no raw HTTP response)",
+                        request=self._build_raw_request(url),
+                        response="(browser-rendered — no raw HTTP response captured; payload delivered via web storage, not the HTTP request)",
                         remediation=(
                             "1. Never pass storage values directly to eval(), innerHTML, or document.write()\n"
                             "2. Sanitize storage data before DOM insertion\n"
@@ -486,8 +510,8 @@ class DOMXSSScanner(BaseScanner):
                             f"The page reads document.referrer and passes it to a dangerous sink."
                         ),
                         evidence=f"JavaScript alert() triggered with content: {dialog_message}",
-                        request=f"GET {url} (Referer: {payload})",
-                        response="(browser-rendered — no raw HTTP response)",
+                        request=self._build_raw_request(url, {"Referer": payload}),
+                        response="(browser-rendered — no raw HTTP response captured)",
                         remediation=(
                             "1. Never pass document.referrer directly to eval(), innerHTML, or document.write()\n"
                             "2. Sanitize referrer data before DOM insertion\n"

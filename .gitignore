@@ -55,6 +55,10 @@ BURP_INSPIRATION_NOTES.md
 BURP_DEFERRED_TODO.md
 notes for improvement/
 
+# ── Local test sites / scratch targets — never commit ─────────────────────────
+mysite/
+**/mysite/
+
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

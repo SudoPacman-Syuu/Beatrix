@@ -38,6 +38,9 @@ class EngineConfig:
     threads: int = 50
     rate_limit: int = 10  # requests per second
     timeout: int = 10
+    # Max subdomains nuclei scans in parallel (per-host processes). None =>
+    # derived from CPU count. Higher = faster on big scopes, more RAM/CPU.
+    nuclei_max_parallel_hosts: Optional[int] = None
 
     # AI
     ai_enabled: bool = False
@@ -66,6 +69,9 @@ class EngineConfig:
             threads=data.get("scanning", {}).get("threads", 50),
             rate_limit=data.get("scanning", {}).get("rate_limit", 10),
             timeout=data.get("scanning", {}).get("timeout", 10),
+            nuclei_max_parallel_hosts=data.get("scanning", {}).get(
+                "nuclei_max_parallel_hosts", None
+            ),
             ai_enabled=data.get("ai", {}).get("enabled", False),
             ai_provider=data.get("ai", {}).get("provider", "bedrock"),
             ai_model=data.get("ai", {}).get("model", "us.anthropic.claude-3-5-haiku-20241022-v1:0"),
@@ -150,6 +156,7 @@ class BeatrixEngine:
         scanner_config = {
             "rate_limit": self.config.rate_limit,
             "nuclei_rate_limit": self.config.rate_limit,  # nuclei inherits global rate
+            "nuclei_max_parallel_hosts": self.config.nuclei_max_parallel_hosts,
             "timeout": self.config.timeout,
         }
 
@@ -300,6 +307,7 @@ class BeatrixEngine:
         modules: Optional[List[str]] = None,
         auth: Optional[Any] = None,
         browser_auth: bool = False,
+        scope: Optional[List[str]] = None,
     ) -> KillChainState:
         """
         Execute a hunt against a target.
@@ -318,6 +326,10 @@ class BeatrixEngine:
                 samples a fixed list of common auth-check paths, so it can
                 miss path-specific fingerprint blocking that a broader
                 scan would still hit.
+            scope: Hostname patterns (``example.com``, ``*.example.com``) the
+                crawler is allowed to follow links into, beyond the target's
+                own origin (see kill_chain's crawl phase). Leave unset to keep
+                the built-in default of the target domain and its subdomains.
 
         Returns:
             KillChainState with all findings
@@ -342,6 +354,8 @@ class BeatrixEngine:
             context["auth"] = auth
         if browser_auth:
             context["needs_browser_transport"] = True
+        if scope:
+            context["scope"] = scope
             context["force_browser_transport"] = True  # skip calibration override
 
         # Execute kill chain

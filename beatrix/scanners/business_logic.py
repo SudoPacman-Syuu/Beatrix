@@ -464,9 +464,8 @@ class BusinessLogicScanner(BaseScanner):
                                 f"affected business logic (e.g., check calculated total)."
                             ),
                             evidence=f"{param_name}={test_value} → HTTP {response.status_code}",
-                            request=(
-                                f"GET {context.url}?{param_name}={test_value}"
-                            ),
+                            request=self.format_http_request(response),
+                            response=self.format_http_response(response),
                             references=[
                                 "OWASP WSTG-BUSL-01",
                                 "CWE-20: Improper Input Validation",

@@ -444,7 +444,8 @@ class JSBundleAnalyzer(BaseScanner):
         if unique_hosts:
             yield self.create_finding(
                 title=f"Internal Hostnames Disclosed in JS Bundles ({len(unique_hosts)} hosts)",
-                severity=Severity.LOW,
+                # Pure information disclosure — INFO, not a low-severity vuln.
+                severity=Severity.INFO,
                 confidence=Confidence.CERTAIN,
                 url=base_url,
                 description=(
@@ -525,7 +526,7 @@ class JSBundleAnalyzer(BaseScanner):
             if auth_keys:
                 yield self.create_finding(
                     title=f"Auth-Related Storage Keys in JS ({len(auth_keys)} keys)",
-                    severity=Severity.LOW,
+                    severity=Severity.INFO,      # discloses key *names*, not values
                     confidence=Confidence.FIRM,
                     url=base_url,
                     description=(
@@ -543,7 +544,7 @@ class JSBundleAnalyzer(BaseScanner):
         if unique_ws:
             yield self.create_finding(
                 title=f"WebSocket Endpoints Disclosed ({len(unique_ws)} URLs)",
-                severity=Severity.LOW,
+                severity=Severity.INFO,          # endpoint disclosure — informational
                 confidence=Confidence.CERTAIN,
                 url=base_url,
                 description=(

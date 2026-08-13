@@ -89,6 +89,10 @@ class UnkeyedInput:
     reflected_in: str  # body, header, redirect
     reflection_context: str  # Where in response it appears
     sample_value: str
+    # The actual httpx.Response of the poisoning (payloaded) request that
+    # demonstrated this reflection — carried so findings can emit the REAL
+    # raw HTTP request/response bytes.
+    response: Optional[Any] = None
 
 
 # =============================================================================
@@ -315,6 +319,7 @@ class CachePoisoningScanner(BaseScanner):
                             reflected_in="body",
                             reflection_context=context_str,
                             sample_value=probe_value,
+                            response=resp,
                         ))
                         continue
 
@@ -327,6 +332,7 @@ class CachePoisoningScanner(BaseScanner):
                             reflected_in="header",
                             reflection_context=f"{rh_name}: {rh_val}",
                             sample_value=probe_value,
+                            response=resp,
                         ))
                         break
 
@@ -340,6 +346,7 @@ class CachePoisoningScanner(BaseScanner):
                             reflected_in="redirect",
                             reflection_context=f"Location: {location}",
                             sample_value=probe_value,
+                            response=resp,
                         ))
 
             except Exception:
@@ -603,7 +610,16 @@ class CachePoisoningScanner(BaseScanner):
                     f"Reflection context:\n{uki.reflection_context}"
                 ),
                 evidence=uki.reflection_context,
-                request=f"{uki.name}: {uki.sample_value}",
+                request=(
+                    self.format_http_request(uki.response)
+                    if uki.response is not None
+                    else f"{uki.name}: {uki.sample_value}"
+                ),
+                response=(
+                    self.format_http_response(uki.response)
+                    if uki.response is not None
+                    else None
+                ),
                 remediation=(
                     f"1. Add '{uki.name}' to the Vary header (makes it part of cache key)\n"
                     f"2. Stop reflecting the '{uki.name}' header in responses\n"

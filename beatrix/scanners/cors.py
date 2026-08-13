@@ -549,8 +549,8 @@ Proof-of-Concept HTML:
 
 This can be exploited by an attacker to steal sensitive data from authenticated users by hosting a malicious page that makes cross-origin requests to this endpoint.""",
             evidence=evidence,
-            request=f"GET {url}\nOrigin: {origin}",
-            response=f"HTTP/1.1 {response.status_code}\nAccess-Control-Allow-Origin: {acao}\nAccess-Control-Allow-Credentials: {acac}",
+            request=self.format_http_request(response),
+            response=self.format_http_response(response),
             remediation=remediation,
             references=[
                 "https://portswigger.net/web-security/cors",

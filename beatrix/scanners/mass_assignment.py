@@ -707,11 +707,8 @@ class MassAssignmentScanner(BaseScanner):
                                 f"Injected: {field_name}={payload.field_value}\n"
                                 f"Response: {key}={value}"
                             ),
-                            request=(
-                                f"{context.request.method} {context.url}\n"
-                                f"Content-Type: application/json\n\n"
-                                f'{{\n  ...original fields...,\n  "{field_name}": {json.dumps(payload.field_value)}\n}}'
-                            ),
+                            request=self.format_http_request(response),
+                            response=self.format_http_response(response),
                             remediation=(
                                 "1. Use an allowlist of fields that can be mass-assigned\n"
                                 "2. Never bind request data directly to model attributes\n"

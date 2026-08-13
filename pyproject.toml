@@ -1,6 +1,6 @@
 [project]
 name = "beatrix-cli"
-version = "1.0.0"
+version = "2.0.0"
 description = "The Black Mamba — Bug Bounty Hunting CLI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -49,9 +49,18 @@ extended = [
     "networkx>=3.2.0",
     "matplotlib>=3.8.0",
 ]
+# GHOST v2 — Strix-style autonomous agent (openai-agents + LiteLLM).
+# Kept optional so the base install stays lean; `docker` is imported
+# defensively (host-runtime fallback when absent).
+agent = [
+    "openai-agents[litellm]>=0.14.0,<1.0",
+    "docker>=7.1.0",
+    "rank-bm25>=0.2.2",
+]
 
 [project.scripts]
 beatrix = "beatrix.cli.main:cli"
+beatrix-suite = "beatrix.cli.suite:main"
 
 [build-system]
 requires = ["hatchling"]

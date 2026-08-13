@@ -356,30 +356,6 @@ on its own using 10 built-in tools.
   • Error-based probing
   • Attack chain reasoning
 """,
-    "bounty-hunt": """
-[bright_yellow]💰 BOUNTY-HUNT — Full Bug Bounty Pipeline[/bright_yellow]
-
-[bold]The whole enchilada.[/bold] OWASP Top 10 scanning with validation.
-Runs IDOR, auth, injection, redirect, SSRF, and takeover scanners,
-then validates all findings through ImpactValidator + ReadinessGate.
-
-[bold cyan]USAGE:[/bold cyan]
-  beatrix bounty-hunt TARGET [OPTIONS]
-
-[bold cyan]OPTIONS:[/bold cyan]
-  -H, --header TEXT    Add header (format: "Name: Value"), repeatable
-  -u, --urls TEXT      Additional URL paths to scan (repeatable)
-  --jwt TEXT           JWT tokens to analyze (repeatable)
-  -o, --output PATH    Output report filename
-  -v, --verbose        Verbose output
-
-[bold cyan]EXAMPLES:[/bold cyan]
-  [dim]# Basic hunt[/dim]
-  beatrix bounty-hunt https://api.example.com
-
-  [dim]# With auth and extra endpoints[/dim]
-  beatrix bounty-hunt https://api.example.com -H "Authorization: Bearer TOKEN" -u /users/123 -u /orders/456
-""",
     "rapid": """
 [bright_yellow]⚡ RAPID — Multi-Target Quick Sweep[/bright_yellow]
 
@@ -759,6 +735,13 @@ def cli(ctx, quiet):
     ctx.ensure_object(dict)
     ctx.obj["quiet"] = quiet
 
+    # Load GUI-saved AI keys from ~/.beatrix/.env (real env vars still win).
+    try:
+        from beatrix.cli.auth_gui import load_beatrix_env
+        load_beatrix_env()
+    except Exception:
+        pass
+
     if not quiet and ctx.invoked_subcommand is None:
         print_banner()
         _show_quick_reference()
@@ -787,7 +770,6 @@ def _show_quick_reference():
     table.add_row("probe TARGET", "Quick alive check", "beatrix probe example.com")
     table.add_row("recon DOMAIN", "Reconnaissance", "beatrix recon example.com --deep")
     table.add_row("batch FILE -m MOD", "Mass scanning", "beatrix batch targets.txt -m cors")
-    table.add_row("bounty-hunt TARGET", "OWASP Top 10 pipeline", "beatrix bounty-hunt https://api.com")
     table.add_row("rapid", "Multi-target quick sweep", "beatrix rapid -d target.com")
     table.add_row("haiku-hunt TARGET", "AI-assisted hunting", "beatrix haiku-hunt example.com")
     table.add_row("ghost TARGET", "AI autonomous pentester", "beatrix ghost https://api.com")
@@ -1149,6 +1131,73 @@ def setup_cmd(ctx, check):
 # HUNT — Main scanning command
 # =============================================================================
 
+def _run_ghost_hunt(target, *, cli_headers=(), cli_cookies=(), cli_token=None, verbose=False):
+    """Run a single-target hunt through the GHOST v2 agent (`beatrix hunt --ghost`).
+
+    Thin wrapper over ``beatrix.ai.ghost2.run_investigation`` that reuses the
+    hunt command's auth options and prints a compact result.
+    """
+    try:
+        from beatrix.ai.ghost2 import GhostV2Config, run_investigation
+    except ImportError:
+        console.print("[red]--ghost requires the 'agent' extra:[/red]")
+        console.print("  [bold]pip install 'beatrix-cli[agent]'[/bold]")
+        sys.exit(1)
+
+    base_headers = {}
+    for h in cli_headers:
+        if ":" in h:
+            name, value = h.split(":", 1)
+            base_headers[name.strip()] = value.strip()
+    if cli_token:
+        base_headers.setdefault("Authorization", f"Bearer {cli_token}")
+    base_cookies = {}
+    for c in cli_cookies:
+        if "=" in c:
+            name, value = c.split("=", 1)
+            base_cookies[name.strip()] = value.strip()
+
+    cfg = GhostV2Config.load()
+    key_hint = cfg.missing_key_message()
+    if key_hint:
+        console.print(f"[red]{key_hint}[/red]")
+        sys.exit(1)
+
+    console.print(Panel.fit(
+        f"[bold]Target:[/bold] {target}\n[bold]Model:[/bold]  {cfg.model}\n"
+        f"[bold]Mode:[/bold]   ghost-driven (GHOST v2)",
+        title="[bold bright_red]👻 GHOST v2[/bold bright_red]", border_style="red",
+    ))
+
+    try:
+        result = asyncio.run(run_investigation(
+            target, cfg=cfg, base_headers=base_headers, base_cookies=base_cookies,
+            console=console, verbose=verbose,
+        ))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Investigation interrupted.[/yellow]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+    verdict_color = "red" if result["verdict"] == "VULNERABLE" else "green"
+    console.print(f"\n[bold {verdict_color}]Verdict: {result['verdict']}[/bold {verdict_color}]")
+    if result["findings"]:
+        console.print(f"\n[bold]Findings ({result['num_findings']}):[/bold]")
+        for finding in result["findings"]:
+            console.print(f"  {finding.severity.icon} [{finding.severity.color}]{finding.title}[/{finding.severity.color}]")
+    if result.get("hunt_id"):
+        console.print(f"\n[dim]Saved to findings DB as hunt #{result['hunt_id']} (beatrix findings).[/dim]")
+    if result.get("scan_dir"):
+        console.print(f"[dim]Scan output: {result['scan_dir']}[/dim]")
+    if result.get("final_output"):
+        console.print(Panel(str(result["final_output"]), title="Summary", border_style="dim"))
+
+
 @cli.command()
 @click.argument("target", required=False, default=None)
 @click.option(
@@ -1158,6 +1207,9 @@ def setup_cmd(ctx, check):
     help="Scan preset (run 'beatrix help hunt' for details)"
 )
 @click.option("--ai", is_flag=True, help="Enable AI analysis (Claude Haiku)")
+@click.option("--ghost", is_flag=True,
+              help="Drive the hunt with the GHOST v2 autonomous agent instead of the "
+                   "deterministic pipeline (requires the 'agent' extra). Single target only.")
 @click.option("--modules", "-m", multiple=True, help="Specific modules to run (repeatable)")
 @click.option("--output", "-o", type=click.Path(), help="Output directory")
 @click.option("--file", "-f", "targets_file", type=click.Path(exists=True),
@@ -1191,7 +1243,7 @@ def setup_cmd(ctx, check):
 @click.option("--verbose", "-v", count=True,
               help="Verbosity: -v show all info, -vv show finding details, -vvv enable debug logging")
 @click.pass_context
-def hunt(ctx, target, preset, ai, modules, output, targets_file,
+def hunt(ctx, target, preset, ai, ghost, modules, output, targets_file,
          auth_config, cli_cookies, cli_headers, cli_token, auth_user, auth_pass,
          login_user, login_pass, login_url, manual_login, fresh_login, browser_auth, rate_limit, verbose):
     """
@@ -1201,6 +1253,7 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
     Examples:
         beatrix hunt example.com
         beatrix hunt example.com --preset full --ai
+        beatrix hunt example.com --ghost          # autonomous GHOST v2 agent
         beatrix hunt api.example.com -m cors -m idor
         beatrix hunt -f targets.txt
         beatrix hunt -f targets.txt --preset full -o ./reports
@@ -1227,6 +1280,21 @@ def hunt(ctx, target, preset, ai, modules, output, targets_file,
         console.print("[dim]  beatrix hunt example.com[/dim]")
         console.print("[dim]  beatrix hunt -f targets.txt[/dim]")
         sys.exit(1)
+
+    # ── GHOST-driven mode ─────────────────────────────────────────────────
+    # Hand the target to GHOST v2 instead of the deterministic pipeline. The
+    # agent persists findings to the same FindingsDB / scan dir, so `beatrix
+    # findings` and every reporter work identically.
+    if ghost:
+        if len(target_list) > 1:
+            console.print("[red]✗ --ghost runs one target at a time; drop --file or pass a single target.[/red]")
+            sys.exit(1)
+        _run_ghost_hunt(
+            target_list[0],
+            cli_headers=cli_headers, cli_cookies=cli_cookies, cli_token=cli_token,
+            verbose=bool(verbose),
+        )
+        return
 
     # ── Multi-target mode ─────────────────────────────────────────────────
     if len(target_list) > 1:
@@ -3266,12 +3334,34 @@ def auth_group(ctx):
     IDOR gets user sessions, crawler gets cookies for authenticated crawling.
 
     Examples:
-        beatrix auth login         # Interactive credential setup wizard
-        beatrix auth show          # Show current auth state
-        beatrix auth init          # Generate sample auth config file
+        beatrix auth              # Open the drag-and-drop auth GUI in your browser
+        beatrix auth login        # Interactive credential setup wizard
+        beatrix auth show         # Show current auth state
+        beatrix auth init         # Generate sample auth config file
     """
+    # Bare `beatrix auth` launches the browser GUI — no YAML editing required.
     if ctx.invoked_subcommand is None:
-        click.echo(ctx.get_help())
+        ctx.invoke(auth_gui)
+
+
+@auth_group.command("gui")
+@click.option("--port", type=int, default=8765, help="Port to serve the GUI on (default: 8765)")
+@click.option("--host", default="127.0.0.1", help="Interface to bind (default: 127.0.0.1)")
+@click.option("--no-browser", is_flag=True, help="Don't try to open a browser automatically")
+def auth_gui(port, host, no_browser):
+    """Open a browser GUI to set up auth — drag-drop a HAR or paste cookies.
+
+    \b
+    Works in Codespaces / remote containers: starts a localhost web server that
+    VS Code port-forwards to a browser tab. No YAML editing, no native window.
+    Saves through the same path as `beatrix auth import`.
+    """
+    from beatrix.cli.auth_gui import serve_auth_gui
+    try:
+        serve_auth_gui(host=host, port=port, open_browser=not no_browser)
+    except OSError as e:
+        console.print(f"[red]Could not start GUI on {host}:{port} — {e}[/red]")
+        console.print(f"[dim]Try a different port: beatrix auth gui --port 8899[/dim]")
 
 
 @auth_group.command("init")
@@ -4597,30 +4687,6 @@ def polyglot_clobber(ctx, limit):
 
 
 # =============================================================================
-# BOUNTY-HUNT — Full bounty pipeline
-# =============================================================================
-
-@cli.command("bounty-hunt")
-@click.argument("target")
-@click.option("--header", "-H", multiple=True, help='Add header (format: "Name: Value")')
-@click.option("--urls", "-u", multiple=True, help="Additional URL paths to scan")
-@click.option("--jwt", multiple=True, help="JWT tokens to analyze")
-@click.option("--output", "-o", type=click.Path(), help="Output report filename")
-@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-@click.pass_context
-def bounty_hunt(ctx, target, header, urls, jwt, output, verbose):
-    """
-    Full OWASP Top 10 bug bounty hunt with validation.
-
-    \b
-    Run 'beatrix help bounty-hunt' for details.
-    """
-    console.print("[yellow]bounty-hunt is deprecated. Use 'beatrix hunt' instead:[/yellow]")
-    console.print(f"  beatrix hunt {target} --preset full")
-    sys.exit(1)
-
-
-# =============================================================================
 # VALIDATE
 # =============================================================================
 
@@ -4740,11 +4806,22 @@ def validate_findings(ctx, findings_file):
 @click.pass_context
 def ghost(ctx, target, objective, method, header, data, max_turns, model, api_key, bedrock):
     """
-    Launch GHOST autonomous penetration testing agent.
+    Launch GHOST autonomous penetration testing agent (legacy).
+
+    \b
+    DEPRECATED: superseded by `beatrix ghost2` (or `beatrix hunt --ghost`),
+    which runs on openai-agents + LiteLLM with native tool-calling, the full
+    scanner arsenal, a Docker sandbox, subagents, and a grounding knowledge
+    base. This command is kept for now and will be aliased to ghost2 later.
 
     \b
     Run 'beatrix help ghost' for details.
     """
+    console.print(
+        "[yellow]⚠ `beatrix ghost` is deprecated — use `beatrix ghost2` "
+        "(or `beatrix hunt --ghost`) for the rebuilt agent.[/yellow]"
+    )
+
     from beatrix.ai.assistant import AIConfig, AIProvider
     from beatrix.ai.ghost import GhostAgent, PrintCallback
 
@@ -4805,6 +4882,220 @@ def ghost(ctx, target, objective, method, header, data, max_turns, model, api_ke
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+@cli.command("suite")
+@click.option("--port", type=int, default=8790, help="Port to serve the dashboard on (default: 8790)")
+@click.option("--host", default="0.0.0.0", help="Interface to bind (default: 0.0.0.0)")
+@click.option("--no-browser", is_flag=True, help="Don't try to open a browser automatically")
+def suite(port, host, no_browser):
+    """Open the Beatrix Suite central dashboard (also: `beatrix-suite`).
+
+    \b
+    One local server, one browser tab. A top tab bar switches between tools
+    (Auth, Ghost, ...) inside the page — no new tabs or ports per tool. Works in
+    Codespaces / remote containers via port-forwarding.
+    """
+    from beatrix.cli.suite import main as suite_main
+    try:
+        suite_main(host=host, port=port, open_browser=not no_browser)
+    except OSError as e:
+        console.print(f"[red]Could not start Suite on {host}:{port} — {e}[/red]")
+        console.print("[dim]Try a different port: beatrix suite --port 8899[/dim]")
+
+
+@cli.command("ghost2")
+@click.argument("target")
+@click.option("--objective", "-o", default="Find and validate security vulnerabilities.",
+              help="Investigation objective")
+@click.option("--header", "-H", multiple=True, help='Add base header (format: "Name: Value")')
+@click.option("--model", default=None,
+              help="LiteLLM model string (e.g. openai/gpt-4o, openrouter/anthropic/claude-3.7-sonnet). "
+                   "Defaults to ai.model from config.yaml / BEATRIX_LLM.")
+@click.option("--api-base", default=None, help="Provider API base URL (OpenRouter/Ollama/self-hosted)")
+@click.option("--reasoning", type=click.Choice(["minimal", "low", "medium", "high"]), default=None,
+              help="Reasoning effort (provider-dependent)")
+@click.option("--sandbox", type=click.Choice(["docker", "host", "auto"]), default=None,
+              help="Tool execution runtime: docker sandbox, host, or auto (Docker if available)")
+@click.option("--allow-host-exec", is_flag=True, default=False,
+              help="Permit shell/python_exec on the HOST runtime (unsafe; sandbox is preferred)")
+@click.option("--max-turns", "-t", type=int, default=None,
+              help="Max root-agent turns (default: unlimited — runs until finish_scan)")
+@click.option("--no-persist", is_flag=True, help="Do not save findings to the findings database")
+@click.option("--no-auth", is_flag=True, help="Do not auto-load saved auth (auth.yaml / sessions)")
+@click.option("--no-web", is_flag=True, help="Disable the live browser dashboard (on by default)")
+@click.option("--web-port", type=int, default=8799, help="Port for the live dashboard (default: 8799)")
+@click.option("--verbose", "-v", is_flag=True, help="Show tool results and reasoning")
+@click.pass_context
+def ghost2(ctx, target, objective, header, model, api_base, reasoning, sandbox, allow_host_exec, max_turns, no_persist, no_auth, no_web, web_port, verbose):
+    """
+    Launch GHOST v2 — the Strix-style autonomous agent (openai-agents + LiteLLM).
+
+    \b
+    Works with any LLM provider via LiteLLM. Set the model with --model or
+    ai.model in ~/.beatrix/config.yaml, and the key via LLM_API_KEY (or the
+    provider-native env var, e.g. OPENAI_API_KEY / OPENROUTER_API_KEY).
+
+    \b
+    Examples:
+        beatrix ghost2 http://testphp.vulnweb.com/
+        beatrix ghost2 https://api.example.com --model openrouter/anthropic/claude-3.7-sonnet
+    """
+    try:
+        from beatrix.ai.ghost2 import GhostV2Config, run_investigation
+    except ImportError:
+        console.print("[red]GHOST v2 requires the 'agent' extra:[/red]")
+        console.print("  [bold]pip install 'beatrix-cli[agent]'[/bold]")
+        sys.exit(1)
+
+    base_headers = {}
+    for h in header:
+        if ':' in h:
+            name, value = h.split(':', 1)
+            base_headers[name.strip()] = value.strip()
+
+    # ── Auto-load saved auth so the agent runs authenticated ──────────────
+    # Only credentials that belong to THIS target's domain are attached — never
+    # cross-domain (IDOR slots carry no domain and are deliberately NOT used as
+    # base auth, so airbnb cookies can't leak to another host). Sources: the
+    # per-target/global block of ~/.beatrix/auth.yaml plus a domain-matched
+    # saved session (HAR/cookie import or the `beatrix auth` GUI). -H wins.
+    base_cookies: dict = {}
+    auth_status = "none"
+    if not no_auth:
+        try:
+            from beatrix.core.auth_config import AuthConfigLoader
+            from urllib.parse import urlparse as _up
+            import json as _json
+            from pathlib import Path as _P
+
+            creds = AuthConfigLoader.load(target=target)
+            if creds.cookies or creds.merged_headers():
+                base_cookies.update(creds.cookies or {})
+                for k, v in creds.merged_headers().items():
+                    base_headers.setdefault(k, v)
+                auth_status = "auth.yaml"
+
+            # Domain-scoped saved session, matching apex/www variants only.
+            host = (_up(target if "://" in target else f"https://{target}").netloc
+                    or target).split(":")[0]
+            variants = [host, host[4:] if host.startswith("www.") else "www." + host]
+            sess_dir = _P.home() / ".beatrix" / "sessions"
+            for cand in variants:
+                sf = sess_dir / (cand.replace(":", "_").replace("/", "_") + ".json")
+                if sf.exists():
+                    data = _json.loads(sf.read_text())
+                    base_cookies.update(data.get("cookies") or {})
+                    for k, v in (data.get("headers") or {}).items():
+                        base_headers.setdefault(k, v)
+                    if data.get("token"):
+                        base_headers.setdefault("Authorization", f"Bearer {data['token']}")
+                    auth_status = f"session:{cand}"
+                    break
+        except Exception as e:  # noqa: BLE001 — auth is best-effort, never fatal
+            console.print(f"[yellow]auth: could not load saved credentials ({e})[/yellow]")
+
+    cfg = GhostV2Config.load(
+        model=model, api_base=api_base, reasoning_effort=reasoning,
+        sandbox=sandbox, allow_host_exec=(allow_host_exec or None), max_turns=max_turns,
+    )
+
+    console.print(Panel.fit(
+        f"[bold]Target:[/bold]    {target}\n"
+        f"[bold]Objective:[/bold] {objective}\n"
+        f"[bold]Model:[/bold]     {cfg.model}\n"
+        f"[bold]Reasoning:[/bold] {cfg.reasoning_effort or 'default'}\n"
+        f"[bold]Sandbox:[/bold]   {cfg.sandbox}"
+        + (" [dim](host exec enabled)[/dim]" if cfg.allow_host_exec else "") + "\n"
+        f"[bold]Auth:[/bold]      "
+        + (f"{auth_status} ({len(base_cookies)} cookies, {len(base_headers)} headers)"
+           if auth_status != "none" else "none") + "\n"
+        f"[bold]Max Turns:[/bold] {cfg.max_turns if cfg.max_turns else 'unlimited'}",
+        title="[bold bright_red]👻 GHOST v2[/bold bright_red]",
+        border_style="red",
+    ))
+
+    key_hint = cfg.missing_key_message()
+    if key_hint:
+        console.print(f"[red]{key_hint}[/red]")
+        sys.exit(1)
+
+    # ── Live web dashboard (on by default; --no-web to disable) ───────────
+    web_server = None
+    on_event = None
+    if not no_web:
+        try:
+            from beatrix.cli.ghost_web import GhostWebServer
+            web_server = GhostWebServer(
+                meta={"target": target, "model": cfg.model,
+                      "auth": auth_status, "objective": objective},
+                port=web_port,
+            )
+            web_server.start(open_browser=True)
+            on_event = web_server.emit
+            console.print(f"[green]📺 Live dashboard:[/green] {web_server.url}")
+            if web_server.public_url:
+                console.print(f"[green]   Codespaces:[/green] {web_server.public_url}")
+        except Exception as e:  # noqa: BLE001 — dashboard is optional, never fatal
+            console.print(f"[yellow]Could not start --web dashboard: {e}[/yellow]")
+
+    try:
+        result = asyncio.run(run_investigation(
+            target, cfg=cfg, objective=objective, base_headers=base_headers,
+            base_cookies=base_cookies, console=console, verbose=verbose,
+            persist=not no_persist, on_event=on_event,
+        ))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Investigation interrupted.[/yellow]")
+        if web_server:
+            web_server.stop()
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        if web_server:
+            web_server.stop()
+        sys.exit(1)
+
+    if result.get("hit_turn_limit"):
+        console.print(
+            f"\n[yellow]Reached the {cfg.max_turns}-turn budget before the agent "
+            "called finish_scan; results below are what it gathered. "
+            "Raise --max-turns for a longer run.[/yellow]"
+        )
+
+    verdict_color = "red" if result["verdict"] == "VULNERABLE" else "green"
+    console.print(f"\n[bold {verdict_color}]Verdict: {result['verdict']}[/bold {verdict_color}]")
+    console.print(
+        f"[dim]Turns budget: {cfg.max_turns if cfg.max_turns else 'unlimited'} | modules used: "
+        f"{', '.join(result['modules_run']) or 'none'} | {result['duration_secs']}s[/dim]"
+    )
+    if result["findings"]:
+        console.print(f"\n[bold]Findings ({result['num_findings']}):[/bold]")
+        for finding in result["findings"]:
+            console.print(f"  {finding.severity.icon} [{finding.severity.color}]{finding.title}[/{finding.severity.color}]")
+    if result.get("hunt_id"):
+        console.print(f"\n[dim]Saved to findings DB as hunt #{result['hunt_id']} (beatrix findings).[/dim]")
+    if result.get("final_output"):
+        console.print(Panel(str(result["final_output"]), title="Summary", border_style="dim"))
+
+    # Keep the live dashboard up after the run so the user can scroll back — but
+    # only when attached to a real terminal. If output is redirected or piped
+    # (e.g. `ghost2 ... > out.txt`, CI), don't block: stop and let the command
+    # return so scripts complete.
+    if web_server:
+        web_server.finish(result)
+        interactive = sys.stdout.isatty() or sys.stderr.isatty()
+        if interactive:
+            console.print(
+                f"\n[green]📺 Dashboard still live at {web_server.url}[/green] "
+                "[dim](Ctrl-C to close)[/dim]"
+            )
+            web_server.wait()
+        else:
+            web_server.stop()
 
 
 # =============================================================================

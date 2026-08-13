@@ -514,8 +514,8 @@ This can be used for:
 - OAuth token theft (steal authorization codes)
 - Bypassing URL allowlists""",
             evidence=evidence,
-            request=f"GET {test_url}\nHost: {urlparse(base_url).netloc}",
-            response=f"HTTP/1.1 {response.status_code}\nLocation: {location}",
+            request=self.format_http_request(response),
+            response=self.format_http_response(response),
             remediation="""1. Use an allowlist of permitted redirect destinations
 2. Don't pass the full URL - use path-only or identifier-based redirects
 3. Validate redirect URLs on the server side
@@ -685,8 +685,8 @@ This allows an attacker to:
 3. Steal the OAuth authorization code/token
 4. Access victim's account on the connected service""",
             evidence=f"OAuth endpoint accepted redirect_uri: {payload}",
-            request=f"GET {test_url}",
-            response=f"HTTP/1.1 {response.status_code}",
+            request=self.format_http_request(response),
+            response=self.format_http_response(response),
             remediation="""1. Strictly validate redirect_uri against pre-registered values
 2. Use exact string matching, not substring or regex
 3. Don't allow wildcards in registered redirect_uris

@@ -269,8 +269,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                 f"Match: `{match.group(0)}`"
                             ),
                             evidence=self._truncate_body(body, 500),
-                            request=f"GET {url}",
-                            response=f"HTTP {status}\n{body[:300]}",
+                            request=self.format_http_request(response),
+                            response=self.format_http_response(response),
                             remediation=(
                                 "Catch database exceptions server-side and return "
                                 "generic error messages. Log detailed errors internally "
@@ -302,8 +302,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                 f"Detected: {name}. Match: `{match.group(0)[:200]}`"
                             ),
                             evidence=self._truncate_body(body, 500),
-                            request=f"GET {url}",
-                            response=f"HTTP {status}\n{body[:300]}",
+                            request=self.format_http_request(response),
+                            response=self.format_http_response(response),
                             remediation=(
                                 "Strip framework-specific error details from production "
                                 "responses. Return generic error messages only."
@@ -329,8 +329,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                 f"stack traces. Leaked path: `{match.group(0)[:200]}`"
                             ),
                             evidence=self._truncate_body(body, 500),
-                            request=f"GET {url}",
-                            response=f"HTTP {status}",
+                            request=self.format_http_request(response),
+                            response=self.format_http_response(response),
                             remediation=(
                                 "Disable stack traces in production. Set NODE_ENV=production, "
                                 "DEBUG=false, or equivalent for your framework."
@@ -358,8 +358,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                     f"Attackers can look up known CVEs for this version."
                                 ),
                                 evidence=f"server: {server}",
-                                request=f"GET {url}",
-                                response=f"HTTP {status}\nserver: {server}",
+                                request=self.format_http_request(response),
+                                response=self.format_http_response(response),
                                 remediation="server_tokens off; in nginx config, or equivalent.",
                                 cwe_id="CWE-200",
                                 poc_curl=f"curl -sSk -I {url} | grep -i server",
@@ -382,8 +382,8 @@ class ErrorDisclosureScanner(BaseScanner):
                             "enabling cross-origin information gathering."
                         ),
                         evidence=f"access-control-allow-origin: {acao}",
-                        request=f"GET {url}",
-                        response=f"HTTP {status}\naccess-control-allow-origin: {acao}",
+                        request=self.format_http_request(response),
+                        response=self.format_http_response(response),
                         remediation="Restrict CORS to trusted origins, especially on error responses.",
                         cwe_id="CWE-942",
                         poc_curl=f"curl -sSk -H 'Origin: https://evil.com' {url}",
@@ -427,8 +427,8 @@ class ErrorDisclosureScanner(BaseScanner):
                                     f"a stepping stone for XSS if the response is HTML."
                                 ),
                                 evidence=f"Input: {fuzz}\nReflected in: {body[:300]}",
-                                request=f"GET {fuzz_url}",
-                                response=f"HTTP {response.status_code}",
+                                request=self.format_http_request(response),
+                                response=self.format_http_response(response),
                                 remediation="Never echo raw user input in error messages.",
                                 cwe_id="CWE-116",
                                 poc_curl=f"curl -sSk {fuzz_url}",
