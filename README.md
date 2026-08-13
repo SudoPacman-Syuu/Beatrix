@@ -2,19 +2,76 @@
 
 > *"Revenge is a dish best served with a working PoC."*
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python) ![License](https://img.shields.io/badge/License-Source%20Available-lightgrey?style=flat-square) ![Platform](https://img.shields.io/badge/Platform-Linux-orange?style=flat-square&logo=linux) ![GitHub Stars](https://img.shields.io/github/stars/SudoPacman-Syuu/Beatrix-cli?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python) ![License](https://img.shields.io/badge/License-Source%20Available-lightgrey?style=flat-square) ![Platform](https://img.shields.io/badge/Platform-Linux-orange?style=flat-square&logo=linux) ![GitHub Stars](https://img.shields.io/github/stars/SudoPacman-Syuu/Beatrix-suite?style=flat-square) ![Version](https://img.shields.io/badge/Version-2.0-brightgreen?style=flat-square)
 
 **License:** Source Available — Free for non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE).
 
-A command-line bug bounty hunting framework. 32 scanner modules, 22 external tool integrations, 57K+ payloads, a 7-phase Kill Chain methodology, and AI-assisted analysis. Targets can be domains, URLs, or raw IP addresses.
+A bug-bounty hunting framework with two faces. New in **v2.0**, **the Suite** is a local web workbench — scanning, a Burp-style Repeater and Intruder, a triageable Issues board, one-drop authenticated scanning, and an autonomous AI pentester — all behind a single command. The original **CLI** is still the whole toolkit from your terminal, perfect for Codespaces, servers, and CI.
+
+Under the hood: 32 scanner modules, 22 external tool integrations, 57K+ payloads, a 7-phase Kill Chain methodology, and AI-assisted analysis. Targets can be domains, URLs, or raw IP addresses.
 
 ---
 
-<img src="beatrix.gif" width="1920" alt="Demo">
+## The Suite (GUI)
+
+**Your whole workflow in the browser — new in v2.0.** One command spins up a local web workbench. No Burp license, no cloud, nothing leaves your machine — it all runs on `127.0.0.1`:
+
+```bash
+beatrix-suite
+```
+
+<p align="center"><img src="screenshots/b1.png" alt="Beatrix Suite — Dashboard" width="100%"></p>
+
+<p align="center"><sub><b>Dashboard</b> — pick a preset, tick the scanner modules you want (grouped by OWASP category), hit <b>Begin Scan</b>, and watch events and findings stream into a live terminal in real time.</sub></p>
+
+It's one app with per-project sessions and seven workspaces:
+
+- **Dashboard** — a hunt control panel: presets, module selection, a live event/finding terminal, a Stop button, and one-click **Save HTML**.
+- **Issues** — every finding in a sortable, re-triageable table with full **Advisory / Request / Response / PoC** detail — real captured HTTP, not reconstructed guesses.
+- **Repeater** — a Burp-Repeater-style raw HTTP editor: byte-faithful send, syntax-highlighted request/response, tabs, and response timing.
+- **AutoRepeater** — a Burp-Intruder-style fuzzer: Sniper / Battering-ram / Pitchfork / Cluster-bomb, payload sets and processing rules, grep-match/extract, and a live results table.
+- **Auth** — set up authenticated scans from a HAR drop, a cookie/token paste, or IDOR user slots — and manage your AI provider keys.
+- **Ghost** — hand findings to the autonomous AI pentester for validation, one at a time or in bulk by severity/module, to save tokens.
+- **Scope** — Burp-style target scope, enforced end-to-end across the suite.
+
+### Issues — triage like Burp, with real requests
+
+<p align="center"><img src="screenshots/b2.png" alt="Beatrix Suite — Issues tab" width="820"></p>
+
+Sort by severity, module, or confidence. Click any finding for a full advisory — description, impact, remediation, CWE/OWASP classifications and references — alongside the exact **request and response** that produced it. Send one finding, or a whole severity bucket, straight to **Ghost** for validation.
+
+### Repeater — hand-craft and replay any request
+
+<p align="center"><img src="screenshots/b4.png" alt="Beatrix Suite — Repeater tab" width="820"></p>
+
+A faithful raw-HTTP editor. It preserves header order and duplicates, dechunks, and decodes gzip/deflate, so what you see is what actually went over the wire. Syntax-highlighted request and response, multiple tabs, response size and timing, and a one-click hop to AutoRepeater.
+
+### AutoRepeater — automate the attack
+
+<p align="center"><img src="screenshots/b5.png" alt="Beatrix Suite — AutoRepeater tab" width="820"></p>
+
+Mark positions with `§`, choose an attack type (Sniper, Battering-ram, Pitchfork, Cluster-bomb), pick a payload set (list, numbers, or a brute-force charset), and layer processing rules — prefix/suffix, URL-encode, base64, case, hash. Status, length, and timing land in a live results table with grep-match and grep-extract.
+
+### Auth — authenticated scanning in seconds
+
+<p align="center"><img src="screenshots/b3.png" alt="Beatrix Suite — Auth tab" width="820"></p>
+
+No YAML wrangling. Drop a HAR file, paste a Cookie header or Bearer token, or set two IDOR user slots for access-control testing — then save. The same panel manages your AI provider keys (Anthropic, OpenAI, OpenRouter, Gemini, Groq, Mistral…), stored locally in `~/.beatrix/.env`.
+
+---
+
+## The CLI
+
+Prefer the terminal? The original CLI is the whole toolkit, unchanged — headless, scriptable, and at home in Codespaces, servers, and pipelines:
+
+<img src="beatrix.gif" width="1920" alt="Beatrix CLI demo">
 
 ---
 
 ## Table of Contents
+
+- [The Suite (GUI)](#the-suite-gui)
+- [The CLI](#the-cli)
 
 - [Why Beatrix?](#why-beatrix)
 - [The Manual](#the-manual)
@@ -48,12 +105,13 @@ Most bug bounty tools solve one problem. Beatrix solves the whole workflow.
 
 **Nuclei** is excellent at template-based scanning — known CVEs and patterns against a target. It doesn't crawl, doesn't manage auth sessions, doesn't chain tools together, and doesn't tell you what to do next. You still have to run subfinder, then amass, then nmap, then nuclei, then sqlmap, then dalfox, then manually correlate the output.
 
-**Burp Suite Pro** is the industry standard for manual web testing. It requires a GUI, costs $449/year, isn't scriptable, and doesn't run in headless environments like Codespaces or CI pipelines.
+**Burp Suite Pro** is the industry standard for manual web testing, but it costs $449/year and needs its desktop app running. Beatrix v2.0 brings the same point-and-click workflow — **Repeater, Intruder, and an Issues board** — to a free, local web UI, and it *also* runs fully headless from the CLI in Codespaces or CI.
 
-Beatrix is the orchestration layer that was missing.
+Beatrix is the orchestration layer that was missing — now with the manual-testing bench, too.
 
 | Feature | Beatrix | Nuclei | Burp Suite Pro |
 |---------|:-------:|:------:|:--------------:|
+| Full web GUI (Repeater · Intruder · Issues) | ✅ | ❌ | ✅ |
 | 7-phase Kill Chain methodology | ✅ | ❌ | ❌ |
 | Auto-login & session management | ✅ | ❌ | Manual |
 | Autonomous AI pentester (GHOST) | ✅ | ❌ | ❌ |
@@ -87,7 +145,7 @@ Opens in your default browser — no internet required. Also available at [`docs
 ## Installation
 
 ```bash
-git clone https://github.com/SudoPacman-Syuu/Beatrix-cli.git && cd Beatrix-cli && ./install.sh
+git clone https://github.com/SudoPacman-Syuu/Beatrix-suite.git && cd Beatrix-suite && ./install.sh
 ```
 
 The installer auto-detects your Python, selects the best install method, puts `beatrix` on your PATH, and installs all 21 external security tools (nuclei, nmap, sqlmap, subfinder, ffuf, and others).
@@ -122,6 +180,7 @@ Custom venv location: `BEATRIX_VENV=~/my-venv ./install.sh`
 ## Quick Start
 
 ```bash
+beatrix-suite                        # launch the web dashboard (GUI)
 beatrix                              # show all commands
 beatrix hunt example.com             # scan a domain
 beatrix hunt 192.168.1.1             # scan an IP address
