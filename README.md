@@ -796,14 +796,46 @@ beatrix config --set output.dir ./my_results
 
 ### Environment Variables
 
+**AI / LLM providers** — GHOST v2 (`ghost2`) runs on LiteLLM, so any one of these works. The suite's **Auth** tab writes them to `~/.beatrix/.env` (chmod 600), or export them yourself.
+
 | Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | Anthropic API key (for GHOST) |
-| `AWS_REGION` | AWS region for Bedrock |
-| `GITHUB_TOKEN` | GitHub token for recon |
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) |
+| `OPENAI_API_KEY` | OpenAI |
+| `OPENROUTER_API_KEY` | OpenRouter (free, tool-capable models) |
+| `GEMINI_API_KEY` | Google Gemini |
+| `GROQ_API_KEY` | Groq |
+| `MISTRAL_API_KEY` | Mistral |
+| `LLM_API_KEY` / `LLM_API_BASE` | Generic LiteLLM key / custom base URL |
+| `AWS_ACCESS_KEY_ID` · `AWS_SECRET_ACCESS_KEY` · `AWS_REGION` | AWS Bedrock (legacy GHOST) |
+| `BEDROCK_API_KEY` | Bedrock API key (alternative to AWS keys) |
+
+**GHOST v2 tuning**
+
+| Variable | Purpose |
+|----------|---------|
+| `BEATRIX_LLM` | Model string (overrides config) |
+| `BEATRIX_REASONING_EFFORT` | Reasoning effort — `minimal` / `low` / `medium` / `high` |
+| `BEATRIX_MAX_TURNS` | Max agent turns |
+| `BEATRIX_MAX_LLM_CALLS` | Hard cap on LLM calls |
+| `BEATRIX_MAX_BUDGET_USD` | Spend breaker — stops the agent at this cost |
+| `BEATRIX_SANDBOX` · `BEATRIX_SANDBOX_NETWORK` | Sandbox runtime + egress policy |
+
+**Authentication** (see [Authenticated Scanning](#authenticated-scanning))
+
+| Variable | Purpose |
+|----------|---------|
+| `BEATRIX_LOGIN_USER` · `BEATRIX_LOGIN_PASS` · `BEATRIX_LOGIN_URL` | Auto-login credentials + endpoint |
+| `BEATRIX_AUTH_USER` · `BEATRIX_AUTH_PASS` | Static basic-auth credentials |
+| `BEATRIX_AUTH_TOKEN` · `BEATRIX_AUTH_HEADER` · `BEATRIX_AUTH_COOKIE` | Static bearer token / header / cookie |
+
+**Recon / CDN bypass**
+
+| Variable | Purpose |
+|----------|---------|
+| `GITHUB_TOKEN` | GitHub token for `github-recon` |
 | `SECURITYTRAILS_API_KEY` | SecurityTrails DNS history (CDN bypass) |
-| `CENSYS_API_ID` | Censys certificate search (CDN bypass) |
-| `CENSYS_API_SECRET` | Censys API secret (CDN bypass) |
+| `CENSYS_API_ID` · `CENSYS_API_SECRET` | Censys certificate search (CDN bypass) |
 | `SHODAN_API_KEY` | Shodan host search (CDN bypass) |
 
 ---
@@ -827,9 +859,10 @@ beatrix list --presets
 
 ```
 beatrix/
-├── cli/main.py               # CLI entry point — 26 commands via Click + Rich
-├── cli/suite.py              # beatrix-suite — the web dashboard (Dashboard, Issues, Repeater, AutoRepeater, Ghost, Scope)
-├── cli/auth_gui.py           # browser-based auth + AI-key setup (served in the suite's Auth tab)
+├── cli/
+│   ├── main.py               # CLI entry point — 26 commands via Click + Rich
+│   ├── suite.py              # beatrix-suite — the web dashboard (Dashboard, Issues, Repeater, AutoRepeater, Ghost, Scope)
+│   └── auth_gui.py           # browser-based auth + AI-key setup (served in the suite's Auth tab)
 ├── core/
 │   ├── engine.py             # BeatrixEngine — orchestrates all modules
 │   ├── kill_chain.py         # 7-phase kill chain executor + 3-phase network pipeline
@@ -837,8 +870,14 @@ beatrix/
 │   ├── packet_crafter.py     # Scapy firewall fingerprint, source-port/fragment bypass
 │   ├── ssh_auditor.py        # SSH fingerprint, weak crypto, default credential brute-force
 │   ├── external_tools.py     # 19 async subprocess tool runners with streaming support
+│   ├── subfinder.py          # Subdomain enumeration runner
+│   ├── smart_fuzzer.py       # SmartFuzzer — ffuf-verified, WAF-encoded fuzzing
+│   ├── ffuf_engine.py        # ffuf regex / response-body filter pipeline
+│   ├── response_analyzer.py  # Behavioral injection detection
+│   ├── reflection_analyzer.py # Reflection / XSS-context analysis
 │   ├── browser_transport.py  # Chromium-backed HTTP transport for bot-fingerprinting targets
 │   ├── auth_config.py        # Auth credentials + SessionValidator (session liveness, browser fallback)
+│   ├── auto_login.py         # Login-macro auto-authentication + session store
 │   ├── types.py              # Finding, Severity, Confidence, ScanContext
 │   ├── seclists_manager.py   # Dynamic wordlist engine (SecLists + PayloadsAllTheThings)
 │   ├── oob_detector.py       # OOB callback manager (LocalPoCClient + interactsh)
@@ -846,6 +885,7 @@ beatrix/
 │   ├── correlation_engine.py # MITRE ATT&CK correlation
 │   ├── findings_db.py        # SQLite findings storage (WAL mode)
 │   ├── issue_consolidator.py # Finding deduplication
+│   ├── finding_enricher.py   # CWE / OWASP / remediation enrichment
 │   ├── poc_chain_engine.py   # PoC generation + Metasploit integration
 │   └── scan_output.py        # Per-scan organized output directory
 ├── scanners/
@@ -859,12 +899,21 @@ beatrix/
 │   ├── idor.py               # IDOR and BAC scanners
 │   ├── nuclei.py             # Nuclei v3 — multi-phase, authenticated, WAF bypass
 │   └── ...                   # 33 scanner modules total
+├── ai/
+│   ├── ghost.py              # GHOST (legacy) autonomous agent
+│   ├── assistant.py          # Haiku-based AI analysis helper
+│   └── ghost2/               # GHOST v2 — Strix-style agent (openai-agents + LiteLLM)
+│       ├── config.py / provider.py  # model + budget config, LiteLLM provider
+│       ├── core/             # runner, session, hooks, stop
+│       ├── agents/           # root + sub-agent factory
+│       ├── tools/            # http, scanner, exec, oob, findings, knowledge, graph, impact-gate
+│       ├── knowledge/        # HackerOne knowledge base (index + ingest)
+│       ├── runtime/          # host + sandbox execution runtimes
+│       └── report/           # SARIF export + findings bridge
+├── hunters/                  # haiku-hunt + rapid multi-target hunt modes
 ├── validators/               # ImpactValidator, ReadinessGate
-├── reporters/                # Markdown, JSON, HTML chain reports
-├── recon/                    # ReconRunner — subfinder/amass/nmap integration
-├── ai/                       # GHOST (legacy) + GHOST v2 (ghost2, openai-agents + LiteLLM) agents, Haiku integration
-├── integrations/             # External service clients
-└── utils/                    # WAF bypass, VRT classifier, response_analyzer
+├── reporters/                # Markdown / JSON / HTML chain reports
+└── utils/                    # advanced WAF bypass, VRT classifier, response validator, helpers
 ```
 
 ---
