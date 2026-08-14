@@ -6,6 +6,7 @@ Inspired by Sweet Scanner's IScannerCheck interface.
 """
 
 import asyncio
+import contextvars
 import logging
 import random
 import time
@@ -27,6 +28,16 @@ except ImportError:
         pass
 
 logger = logging.getLogger("beatrix.scanners.base")
+
+# The most recent real HTTP transaction (an ``httpx.Response``, which also carries
+# its ``.request``) sent by *the current asyncio task*. Kept in a ContextVar so it
+# is per-task: concurrent probe coroutines each see their own last transaction,
+# never a sibling's. ``create_finding()`` reads it to attach the exact bytes on the
+# wire to any finding whose emitter didn't pass ``request=``/``response=`` — so the
+# Suite shows the real transaction instead of reconstructing one from metadata.
+_LAST_TXN: "contextvars.ContextVar[Optional[httpx.Response]]" = contextvars.ContextVar(
+    "beatrix_last_txn", default=None
+)
 
 # ── User-Agent rotation pool ────────────────────────────────────────
 # Realistic, modern browser UAs.  Rotated per-request to avoid
@@ -640,12 +651,12 @@ class BaseScanner(ABC):
                         # Record successful strategy for this profile
                         if self._waf_profile:
                             self._waf_success_strategy[self._waf_profile] = waf_retries
-                        return bypass_result
+                        return self._remember_txn(bypass_result)
                     # If this wasn't the last attempt, loop to retry
                     if waf_retries < 3:
                         continue
                     # All bypass attempts exhausted — return original
-                    return response
+                    return self._remember_txn(response)
             else:
                 # Successful non-WAF response — decay throttle delay
                 if response.status_code < 400:
@@ -679,7 +690,19 @@ class BaseScanner(ABC):
                 # Successful response resets the failure counter
                 self._auth_failure_count = 0
 
-            return response
+            return self._remember_txn(response)
+
+    def _remember_txn(self, resp: Any) -> Any:
+        """Record the most recent real HTTP transaction for the current task so
+        ``create_finding()`` can attach the exact request/response bytes on the
+        wire. Purely best-effort bookkeeping — never let it interfere with
+        returning ``resp`` to the caller."""
+        try:
+            if isinstance(resp, httpx.Response):
+                _LAST_TXN.set(resp)
+        except Exception:
+            pass
+        return resp
 
 
     async def get(self, url: str, **kwargs) -> httpx.Response:
@@ -1057,6 +1080,26 @@ class BaseScanner(ABC):
         cwe_id: Optional[str] = None,
     ) -> Finding:
         """Helper to create a Finding with scanner metadata and all fields"""
+        # Central capture net: if the scanner didn't pass the actual request/
+        # response, attach the real transaction this task last sent (recorded in
+        # request()). These are the exact bytes on the wire — not a metadata
+        # reconstruction — so the Suite shows them verbatim and never falls back
+        # to its "reconstructed from metadata" note. Only fills the side(s) the
+        # caller left empty; caller-supplied values stay authoritative. Fully
+        # best-effort: if nothing was captured, the Suite reconstructs as before.
+        if not request or not response:
+            txn = _LAST_TXN.get()
+            if txn is not None:
+                if not request:
+                    try:
+                        request = self.format_http_request(txn)
+                    except Exception:
+                        pass
+                if not response:
+                    try:
+                        response = self.format_http_response(txn)
+                    except Exception:
+                        pass
         return Finding(
             title=title,
             severity=severity,
