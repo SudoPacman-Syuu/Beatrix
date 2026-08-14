@@ -464,6 +464,11 @@ def test_hunt_event_translator_covers_kill_chain_event_types():
     assert line["type"] == "finding" and "XSS" in line["text"]
     assert _hunt_event_to_line("info", {"message": "hi"})["type"] == "info"
     assert _hunt_event_to_line("unknown_event_type", {}) is None
+    # http events are hidden unless debug is on; zero-finding scanner_done too.
+    assert _hunt_event_to_line("http", {"method": "GET", "url": "https://x", "status": 200}) is None
+    assert _hunt_event_to_line("scanner_done", {"scanner": "cors", "findings": 0}, debug=True)["type"] == "scanner_done"
+    dbg = _hunt_event_to_line("http", {"method": "GET", "url": "https://x", "status": 200, "elapsed_ms": 12}, debug=True)
+    assert dbg["type"] == "debug" and "GET" in dbg["text"] and "200" in dbg["text"]
 
 
 # ── Scope: parsing/matching helpers ──────────────────────────────────────
@@ -641,7 +646,7 @@ def test_start_hunt_run_filters_out_of_scope_findings(server, monkeypatch):
 
     from beatrix.core.types import Finding, Severity
 
-    async def fake_hunt(self, target, preset, ai, modules, scope=None):
+    async def fake_hunt(self, target, preset, ai, modules, scope=None, **kwargs):
         in_scope_finding = Finding(
             title="SQLi", url="https://example.com/x", severity=Severity.HIGH,
             scanner_module="injection",
@@ -734,7 +739,7 @@ def test_hunt_stop_cancels_in_flight_run(server, monkeypatch):
 
     from beatrix.core.types import Finding, Severity
 
-    async def fake_hunt(self, target, preset, ai, modules, scope=None):
+    async def fake_hunt(self, target, preset, ai, modules, scope=None, **kwargs):
         self.findings = [Finding(title="partial", url=target, severity=Severity.LOW)]
         await asyncio.Event().wait()  # blocks forever unless the task is cancelled
 
@@ -924,6 +929,147 @@ def test_issue_false_positive_toggle_and_badge_count(tmp_path):
     assert store.get(1, 2)["false_positive"] is True
 
 
+# ── Resumable scans: checkpoint store ────────────────────────────────────
+def test_scan_checkpoint_records_completed_and_resumes(tmp_path):
+    from beatrix.cli.suite import _ScanCheckpoint
+    cp = _ScanCheckpoint(_ProjectStore(tmp_path / "suite"))
+
+    cp.start(1, "example.com", ["cors", "xss", "sqli"], "custom", ai=False, debug=True)
+    got = cp.get(1)
+    assert got["status"] == "running" and got["completed_modules"] == []
+    assert got["debug"] is True and got["target"] == "example.com"
+    assert got["modules"] == ["cors", "xss", "sqli"]
+
+    cp.mark_module_done(1, "cors")
+    cp.mark_module_done(1, "cors")          # idempotent — no duplicates
+    cp.mark_module_done(1, "xss")
+    assert cp.get(1)["completed_modules"] == ["cors", "xss"]
+
+    # A stop/crash marks it interrupted; resume() flips it back to running and
+    # returns the surviving completed set so the run can skip those scanners.
+    cp.set_status(1, "interrupted")
+    resumed = cp.resume(1)
+    assert resumed["status"] == "running"
+    assert resumed["completed_modules"] == ["cors", "xss"]
+    assert cp.get(1)["status"] == "running"
+
+    # A completed checkpoint is not resumable; clear removes it entirely.
+    cp.set_status(1, "complete")
+    assert cp.resume(1) == {}
+    cp.clear(1)
+    assert cp.get(1) == {}
+    assert cp.resume(1) == {}
+
+
+def test_scan_checkpoint_isolated_per_project(tmp_path):
+    from beatrix.cli.suite import _ScanCheckpoint
+    cp = _ScanCheckpoint(_ProjectStore(tmp_path / "suite"))
+    cp.start(1, "a.com", ["cors"], "custom", ai=False, debug=False)
+    cp.start(2, "b.com", ["xss"], "custom", ai=False, debug=False)
+    cp.mark_module_done(1, "cors")
+    assert cp.get(1)["completed_modules"] == ["cors"]
+    assert cp.get(2)["completed_modules"] == []
+    assert cp.get(2)["target"] == "b.com"
+
+
+# ── Persistent event log: disk-backed _Broker ────────────────────────────
+def test_broker_persists_and_reloads(tmp_path):
+    from beatrix.cli.ghost_web import _Broker
+    path = str(tmp_path / "hunt_events.jsonl")
+
+    b = _Broker(meta={"target": "x"}, persist_path=path)
+    b.emit({"type": "phase", "text": "one"})
+    b.emit({"type": "info", "text": "two"})
+    assert len(b.since(0)["events"]) == 2
+
+    # A fresh process (no in-memory broker) rebuilds the transcript from disk,
+    # finished, with contiguous seq numbering.
+    b2 = _Broker.load(path, meta={"target": "x"})
+    evs = b2.since(0)["events"]
+    assert [e["text"] for e in evs] == ["one", "two"]
+    assert [e["seq"] for e in evs] == [1, 2]
+    assert b2.since(0)["done"] is True
+
+    # A new run seeds history then continues the seq counter (no duplicate
+    # rewrite of the seeded events to disk).
+    b3 = _Broker(meta={"target": "x"}, persist_path=path)
+    b3.seed(_Broker.read_events(path))
+    b3.emit({"type": "phase", "text": "three"})
+    texts = [e["text"] for e in b3.since(0)["events"]]
+    assert texts == ["one", "two", "three"]
+    # Disk now has exactly the three lines (seed didn't re-append the first two).
+    assert len(_Broker.read_events(path)) == 3
+
+
+def test_crawler_debug_hook_emits_one_http_line_per_request():
+    # Debug mode routes every crawl request through the httpx response hook so
+    # the terminal shows a line per fetch; silent when debug is off.
+    import asyncio
+
+    import httpx
+
+    from beatrix.scanners.crawler import TargetCrawler
+    got = []
+    c = TargetCrawler(max_pages=1, timeout=5)
+    c._debug_emit = lambda ev, data: got.append((ev, data))
+
+    async def run():
+        def handler(req):
+            return httpx.Response(200)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler),
+                                     event_hooks={"response": [c._debug_response_hook]}) as client:
+            await client.get("https://example.com/a")
+            await client.get("https://example.com/b?q=1")
+
+    c._debug = True
+    asyncio.run(run())
+    assert len(got) == 2
+    assert got[0][0] == "http" and got[0][1]["scanner"] == "crawl"
+    assert got[1][1]["url"].endswith("/b?q=1") and got[1][1]["status"] == 200
+
+    got.clear()
+    c._debug = False
+    asyncio.run(run())
+    assert got == []
+
+
+def test_broker_without_persist_is_memory_only(tmp_path):
+    # Ghost's path: no persist_path → nothing written, original behavior intact.
+    from beatrix.cli.ghost_web import _Broker
+    b = _Broker(meta={"target": "x"})
+    b.emit({"type": "info", "text": "hi"})
+    assert not (tmp_path / "hunt_events.jsonl").exists()
+    assert b.since(0)["events"][0]["text"] == "hi"
+
+
+def test_hunt_checkpoint_and_clear_endpoints(server):
+    # Seed a checkpoint + persisted log directly, then drive the HTTP surface the
+    # Hunt view uses.
+    server.scan_checkpoints.start(1, "example.com", ["cors", "xss"], "custom",
+                                  ai=False, debug=False)
+    server.scan_checkpoints.mark_module_done(1, "cors")
+    server.scan_checkpoints.set_status(1, "interrupted")
+
+    code, raw = _get(server, "/hunt/checkpoint?project=1")
+    cp = json.loads(raw)
+    assert code == 200
+    assert cp["status"] == "interrupted" and cp["completed_count"] == 1 and cp["total"] == 2
+    assert cp["running"] is False
+
+    # Persisted event log survives with no live broker (post-restart behavior).
+    path = server._hunt_persist_path(1)
+    from beatrix.cli.ghost_web import _Broker
+    _Broker(meta={}, persist_path=path).emit({"type": "info", "text": "persisted"})
+    evs = json.loads(_get(server, "/hunt/events?since=0&project=1")[1])
+    assert any(e["text"] == "persisted" for e in evs["events"])
+
+    # Clear log wipes the transcript; clear checkpoint removes the resume offer.
+    assert _post(server, "/hunt/clear", {"project": 1})[1]["ok"] is True
+    assert json.loads(_get(server, "/hunt/events?since=0&project=1")[1])["events"] == []
+    assert _post(server, "/hunt/checkpoint/clear", {"project": 1})[1]["ok"] is True
+    assert json.loads(_get(server, "/hunt/checkpoint?project=1")[1]) == {}
+
+
 def test_dedup_refreshes_stale_severity_but_not_user_retriage(tmp_path):
     import json
 
@@ -1025,7 +1171,7 @@ def test_hunt_run_captures_findings_as_issues(server, monkeypatch):
 
     from beatrix.core.types import Finding, Severity
 
-    async def fake_hunt(self, target, preset, ai, modules, scope=None):
+    async def fake_hunt(self, target, preset, ai, modules, scope=None, **kwargs):
         f = Finding(title="Missing CSP", url="https://example.com/", severity=Severity.LOW,
                     scanner_module="headers")
         self.findings = [f]
@@ -1597,6 +1743,20 @@ def test_sessions_are_isolated_from_each_other(sessionless, tmp_path):
     assert len(json.loads(_get(sessionless, "/projects")[1])["projects"]) == 2
     _post(sessionless, "/session/new", {"parent": str(tmp_path), "name": "B"})
     assert len(json.loads(_get(sessionless, "/projects")[1])["projects"]) == 1  # fresh
+
+
+def test_fs_mkdir_creates_folder_in_browser(sessionless, tmp_path):
+    # The file explorer's "+ Folder" button — works with NO session mounted
+    # (that's exactly when you're setting up a folder to hold a new session).
+    r = _post(sessionless, "/fs/mkdir", {"parent": str(tmp_path), "name": "engagement-1"})
+    assert r[1]["ok"] is True and (tmp_path / "engagement-1").is_dir()
+    assert r[1]["path"] == str(tmp_path / "engagement-1")
+    # It then shows up in the listing, so the UI can step into it.
+    names = [e["name"] for e in json.loads(_get(sessionless, "/fs/list?path=" + str(tmp_path))[1])["entries"]]
+    assert "engagement-1" in names
+    # Duplicate and path-traversal names are rejected.
+    assert _post(sessionless, "/fs/mkdir", {"parent": str(tmp_path), "name": "engagement-1"})[1]["ok"] is False
+    assert _post(sessionless, "/fs/mkdir", {"parent": str(tmp_path), "name": "../evil"})[1]["ok"] is False
 
 
 def test_fs_list_browses_directories(sessionless, tmp_path):

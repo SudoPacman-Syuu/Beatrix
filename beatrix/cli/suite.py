@@ -149,12 +149,17 @@ def _build_hunt_catalog() -> Dict[str, Any]:
     return _catalog_cache
 
 
-def _hunt_event_to_line(event: str, data: dict) -> Optional[Dict[str, str]]:
+def _hunt_event_to_line(event: str, data: dict, debug: bool = False) -> Optional[Dict[str, str]]:
     """Convert one kill-chain progress event into a terminal line for the Hunt
     broker. Mirrors the CLI hunt command's own event renderer (``main.py``'s
     ``_on_event``) so the browser terminal reads like the real CLI output —
     just without Rich markup, since the frontend colors lines by ``type``
     instead (same pattern as the Ghost pane's event tags).
+
+    When ``debug`` is set the transcript stops hiding things: zero-finding
+    scanner completions are shown, and per-request ``http`` events (emitted by
+    ``BaseScanner.request`` only in debug mode) are surfaced — so the user can
+    watch every action the scanner takes.
     """
     if event == "phase_start":
         return {"type": "phase",
@@ -182,6 +187,9 @@ def _hunt_event_to_line(event: str, data: dict) -> Optional[Dict[str, str]]:
         if n > 0:
             return {"type": "scanner_done",
                     "text": f"{data.get('scanner', '')} found {n} issue{'s' if n != 1 else ''}"}
+        if debug:
+            return {"type": "scanner_done",
+                    "text": f"{data.get('scanner', '')} — done, 0 findings"}
         return None
     if event == "scanner_error":
         return {"type": "scanner_error", "text": f"✗ {data.get('scanner', '')}: {data.get('error', '')}"}
@@ -202,6 +210,14 @@ def _hunt_event_to_line(event: str, data: dict) -> Optional[Dict[str, str]]:
         return {"type": "finding", "text": f"[{sev.upper()}] {title}", "detail": "\n".join(parts)}
     if event == "info":
         return {"type": "info", "text": f"ℹ {data.get('message', '')}"}
+    if event == "http":
+        # Per-request line; only surfaced in debug mode (already gated at the
+        # source in BaseScanner.request, guarded here too for safety).
+        if not debug:
+            return None
+        return {"type": "debug",
+                "text": (f"{data.get('method', '')} {data.get('url', '')} "
+                         f"→ {data.get('status', '')} ({data.get('elapsed_ms', 0)} ms)")}
     return None
 
 
@@ -971,6 +987,97 @@ class _IssueStore:
         return {"ok": True}
 
 
+class _ScanCheckpoint:
+    """Per-project Hunt checkpoint, persisted to ``<project>/scan_checkpoint.json``.
+
+    Lets an interrupted scan (Codespace timeout, manual stop, or an ungraceful
+    crash) be resumed: it records which scanner modules already finished so the
+    resumed run skips them (their findings were persisted live to the Issues
+    tab, so nothing is lost). Writes are atomic (temp file + ``os.replace``) and
+    best-effort — a process killed mid-scan just leaves the last valid file with
+    ``status="running"``, which the UI treats as resumable.
+    """
+
+    def __init__(self, projects: "_ProjectStore"):
+        self._projects = projects
+        self._lock = threading.Lock()
+
+    def _file(self, pid: Any) -> Path:
+        return self._projects.workspace_dir(pid) / "scan_checkpoint.json"
+
+    def _read(self, pid: Any) -> Dict[str, Any]:
+        try:
+            return json.loads(self._file(pid).read_text())
+        except Exception:
+            return {}
+
+    def _write(self, pid: Any, data: Dict[str, Any]) -> None:
+        try:
+            p = self._file(pid)
+            tmp = p.with_name(p.name + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2, default=str))
+            os.replace(tmp, p)
+        except Exception:
+            pass
+
+    def start(self, pid: Any, target: str, modules: List[str], preset: str,
+              ai: bool, debug: bool) -> None:
+        """Begin a fresh checkpoint (clears any prior completed set)."""
+        with self._lock:
+            now = time.time()
+            self._write(pid, {
+                "target": target, "modules": list(modules), "preset": preset,
+                "ai": bool(ai), "debug": bool(debug), "completed_modules": [],
+                "status": "running", "started": now, "updated": now,
+            })
+
+    def resume(self, pid: Any) -> Dict[str, Any]:
+        """Flip an interrupted checkpoint back to running (keeping its completed
+        set) and return it, or ``{}`` if there's nothing resumable."""
+        with self._lock:
+            data = self._read(pid)
+            if not data or data.get("status") not in ("running", "interrupted"):
+                return {}
+            data["status"] = "running"
+            data["updated"] = time.time()
+            self._write(pid, data)
+            return dict(data)
+
+    def mark_module_done(self, pid: Any, module: Optional[str]) -> None:
+        if not module:
+            return
+        with self._lock:
+            data = self._read(pid)
+            if not data or data.get("status") != "running":
+                return
+            done = data.setdefault("completed_modules", [])
+            if module not in done:
+                done.append(module)
+                data["updated"] = time.time()
+                self._write(pid, data)
+
+    def set_status(self, pid: Any, status: str) -> None:
+        with self._lock:
+            data = self._read(pid)
+            if not data:
+                return
+            data["status"] = status
+            data["updated"] = time.time()
+            self._write(pid, data)
+
+    def get(self, pid: Any) -> Dict[str, Any]:
+        with self._lock:
+            return self._read(pid)
+
+    def clear(self, pid: Any) -> Dict[str, Any]:
+        with self._lock:
+            try:
+                self._file(pid).unlink()
+            except Exception:
+                pass
+        return {"ok": True}
+
+
 # ── Shell page ───────────────────────────────────────────────────────────────
 # Left project rail + top tab bar (Dashboard | Auth | Ghost); panes swap
 # client-side. Theme-aware, inline CSS/JS, no external requests.
@@ -1146,6 +1253,17 @@ _PAGE = r"""<!doctype html>
   .ev.phase .tag { color:var(--accent); } .ev.phase_done .tag { color:var(--green); }
   .ev.scanner_start .tag { color:var(--yellow); } .ev.scanner_done .tag { color:var(--blue); }
   .ev.scanner_error .tag { color:var(--red); } .ev.info .tag { color:var(--muted); }
+  .ev.debug { color:var(--muted); opacity:.85; } .ev.debug .tag { color:var(--violet); }
+  /* Debug toggle "on" state + interrupted-scan resume banner */
+  #h-debug.on { background:var(--accent); color:#08131a; border-color:var(--accent); font-weight:600; }
+  .h-resume { margin:8px 0 0; padding:8px 12px; border:1px solid var(--yellow); border-radius:8px;
+    background:color-mix(in srgb, var(--yellow) 12%, transparent); color:var(--fg); font-size:12.5px;
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .h-resume b { color:var(--yellow); }
+  .h-resume button { font:inherit; font-size:12px; padding:4px 11px; border-radius:6px; cursor:pointer;
+    border:1px solid var(--border); background:var(--panel); color:var(--fg); }
+  .h-resume button:hover { border-color:var(--accent); }
+  .h-resume button.primary { border-color:var(--accent); color:var(--accent); font-weight:600; }
   .ev .detail { display:block; color:var(--muted); margin:2px 0 2px 84px; padding:6px 9px;
     background:var(--panel); border:1px solid var(--border); border-radius:6px; max-height:220px; overflow:auto; }
   .card { border:1px solid var(--border); border-radius:8px; background:var(--panel); padding:16px 18px; max-width:640px; }
@@ -1583,8 +1701,11 @@ _PAGE = r"""<!doctype html>
             <span>findings <b id="h-findings">0</b></span>
             <span>elapsed <b id="h-elapsed">0s</b></span>
             <span id="h-autoscroll" class="autoscroll-toggle" title="click to toggle">⤓ autoscroll: on</span>
+            <button id="h-debug" class="btn" title="Log every request/response and every internal step of the next run — verbose, opt-in">Debug: off</button>
             <button id="h-save" class="btn" title="Save this run as a standalone HTML file">Save HTML</button>
+            <button id="h-clearlog" class="btn" title="Clear the saved event log for this project">Clear log</button>
           </div>
+          <div id="h-resume" class="h-resume" style="display:none;"></div>
           <div class="term-chrome">
             <div class="term-titlebar">
               <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
@@ -1822,6 +1943,7 @@ _PAGE = r"""<!doctype html>
         <input id="fs-path" class="fs-path-input" spellcheck="false"
           title="Type or paste any absolute path, then press Enter" placeholder="/type/any/path…">
         <button id="fs-go" class="fs-btn" title="Go to the typed path">Go</button>
+        <button id="fs-mkdir" class="fs-btn" title="Create a new folder in the current directory">+ Folder</button>
       </div>
       <div id="fs-list" class="fs-list"></div>
       <div class="fs-actions">
@@ -2092,8 +2214,8 @@ $("g-save").onclick = saveGhostHtml;
 // avoids risking a regression there for the sake of DRY-ing working code.
 const HUNT_TAGS = { phase:"phase", phase_done:"✓ phase", scanner_start:"▸ scanner",
   scanner_done:"result", scanner_error:"✗ error", finding:"finding",
-  verdict:"verdict", info:"ℹ info" };
-let hSince = 0, hPollProject = null, hFindings = 0, hAutoscroll = true, hStarted = null;
+  verdict:"verdict", info:"ℹ info", debug:"http" };
+let hSince = 0, hPollProject = null, hFindings = 0, hAutoscroll = true, hStarted = null, hDebug = false;
 let hCatalog = { modules: [], presets: [] };
 let hSelected = new Set();
 
@@ -2117,8 +2239,14 @@ async function hPoll(id) {
   $("h-count").textContent = hSince;
   if (hAutoscroll) $("hunt-log").scrollTop = $("hunt-log").scrollHeight;
   if (hStarted) $("h-elapsed").textContent = Math.round(Date.now()/1000 - hStarted) + "s";
-  if (r.done) { $("h-run").disabled = false; $("h-stop").disabled = true;
-    $("h-msg").textContent = "Run finished."; return; }
+  if (r.done) {
+    $("h-run").disabled = false; $("h-stop").disabled = true;
+    if (hSince > 0) $("h-msg").textContent = "Run finished.";
+    // A finished run may be resumable (stopped/crashed) — refresh the banner.
+    fetch("/hunt/checkpoint?project=" + id).then(res => res.json())
+      .then(cp => { if (id === hPollProject) renderResumeBanner(cp); }).catch(() => {});
+    return;
+  }
   $("h-run").disabled = true; $("h-stop").disabled = false;
   setTimeout(() => hPoll(id), 600);
 }
@@ -2127,17 +2255,59 @@ async function loadHuntViewFor(id) {
   $("h-count").textContent = "0"; $("h-findings").textContent = "0"; $("h-elapsed").textContent = "0s";
   hPollProject = id;
   $("h-run").disabled = false; $("h-stop").disabled = true; $("h-msg").textContent = "";
+  $("h-resume").style.display = "none";
   let st = {};
   try { st = await (await fetch("/hunt/state?project=" + id)).json(); } catch (e) {}
   if (id !== hPollProject) return;
-  const ap = projects.find(p => p.id === id);
   $("h-term-title").textContent = "beatrix@hunt — " + projectName(id);
+  const running = !!(st && st.running);
   if (st && st.target) {
     hStarted = st.started || null;
-    $("h-run").disabled = !!st.running; $("h-stop").disabled = !st.running;
-    $("h-msg").textContent = st.running ? "Running: " + st.target : "Run finished.";
-    hPoll(id);
+    $("h-run").disabled = running; $("h-stop").disabled = !running;
+    $("h-msg").textContent = running ? "Running: " + st.target : "";
   }
+  // Always replay the persisted/live transcript — it survives restarts now.
+  hPoll(id);
+  // Offer resume only when there's an interrupted scan and nothing is live.
+  if (!running) {
+    let cp = {};
+    try { cp = await (await fetch("/hunt/checkpoint?project=" + id)).json(); } catch (e) {}
+    if (id === hPollProject) renderResumeBanner(cp);
+  }
+}
+// Show the interrupted-scan banner when a checkpoint is resumable (stopped, or
+// left "running" by a crash) and no scan is currently live.
+function renderResumeBanner(cp) {
+  const box = $("h-resume");
+  if (!cp || cp.running || !cp.target ||
+      (cp.status !== "interrupted" && cp.status !== "running")) {
+    box.style.display = "none"; return;
+  }
+  const done = cp.completed_count || 0, total = cp.total || 0;
+  box.innerHTML =
+    `<span>Interrupted scan of <b>${esc(cp.target)}</b> — ${done} of ${total} module${total === 1 ? "" : "s"} done.</span>` +
+    `<button class="primary" id="h-resume-go">Resume</button>` +
+    `<button id="h-resume-fresh">Start fresh</button>`;
+  box.style.display = "flex";
+  $("h-resume-go").onclick = resumeHunt;
+  $("h-resume-fresh").onclick = async () => {
+    await fetch("/hunt/checkpoint/clear", { method:"POST", body: JSON.stringify({ project: activeProject }) });
+    box.style.display = "none";
+  };
+}
+// Continue an interrupted scan: the server pulls target/modules/debug and the
+// already-completed modules from the checkpoint, so we just kick it off.
+async function resumeHunt() {
+  $("h-resume").style.display = "none";
+  $("h-run").disabled = true; $("h-msg").textContent = "Resuming…";
+  hStarted = Date.now() / 1000; hPollProject = activeProject;
+  try {
+    const r = await (await fetch("/hunt/run", { method:"POST",
+      body: JSON.stringify({ project: activeProject, resume: true }) })).json();
+    if (!r.ok) { $("h-msg").textContent = "Error: " + (r.error || "could not resume"); $("h-run").disabled = false; return; }
+    $("h-stop").disabled = false; $("h-msg").textContent = "Running: " + (r.target || "");
+    hPoll(activeProject);
+  } catch (e) { $("h-msg").textContent = "Error: " + e; $("h-run").disabled = false; }
 }
 
 // ── Module/preset control panel ──
@@ -2224,20 +2394,44 @@ $("h-autoscroll").onclick = () => {
   $("h-autoscroll").textContent = "⤓ autoscroll: " + (hAutoscroll ? "on" : "off");
 };
 
+// Debug/verbosity toggle — applies to the NEXT run (per-request events can't be
+// emitted retroactively), state persisted across reloads.
+function setHuntDebug(on) {
+  hDebug = on;
+  const b = $("h-debug");
+  b.classList.toggle("on", on); b.textContent = "Debug: " + (on ? "on" : "off");
+  try { localStorage.setItem("beatrix.hunt.debug", on ? "1" : "0"); } catch (e) {}
+}
+$("h-debug").onclick = () => setHuntDebug(!hDebug);
+try { setHuntDebug(localStorage.getItem("beatrix.hunt.debug") === "1"); } catch (e) {}
+
+// Clear log — the explicit reset for the persisted event transcript.
+$("h-clearlog").onclick = async () => {
+  if (!confirm("Clear the saved event log for this project?")) return;
+  let r = {};
+  try { r = await (await fetch("/hunt/clear", { method:"POST",
+    body: JSON.stringify({ project: activeProject }) })).json(); } catch (e) {}
+  if (r && r.ok === false) { $("h-msg").textContent = r.error || "could not clear"; return; }
+  $("hunt-log").innerHTML = ""; hSince = 0; hFindings = 0;
+  $("h-count").textContent = "0"; $("h-findings").textContent = "0";
+};
+
 $("h-run").onclick = async () => {
   const target = $("h-target").value.trim();
   if (!target) { $("h-msg").textContent = "Enter a target first."; return; }
   if (hSelected.size === 0) { $("h-msg").textContent = "Select at least one module."; return; }
   $("h-run").disabled = true; $("h-msg").textContent = "Starting…";
-  $("hunt-log").innerHTML = ""; hSince = 0; hFindings = 0; hStarted = Date.now() / 1000;
-  $("h-count").textContent = "0"; $("h-findings").textContent = "0"; $("h-elapsed").textContent = "0s";
+  // Keep the prior transcript (a "── New scan ──" separator is emitted server-
+  // side); only reset the elapsed timer. Use "Clear log" for a true reset.
+  $("h-resume").style.display = "none";
+  hStarted = Date.now() / 1000; $("h-elapsed").textContent = "0s";
   hPollProject = activeProject;
   const matchedPreset = hCatalog.presets.find(p =>
     p.modules.length === hSelected.size && p.modules.every(k => hSelected.has(k)));
   try {
     const r = await (await fetch("/hunt/run", { method:"POST", body: JSON.stringify({
       target, modules: Array.from(hSelected), preset: matchedPreset ? matchedPreset.key : "custom",
-      project: activeProject,
+      project: activeProject, debug: hDebug,
     }) })).json();
     if (!r.ok) { $("h-msg").textContent = "Error: " + (r.error || "could not start"); $("h-run").disabled = false; return; }
     $("h-stop").disabled = false;
@@ -4155,8 +4349,22 @@ $("fs-root").onclick = () => fsBrowse("/");
 $("fs-go").onclick = () => fsBrowse($("fs-path").value);
 $("fs-path").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); fsBrowse($("fs-path").value); } });
 $("fs-up").onclick = () => { const p = $("fs-up").dataset.parent; if (p) fsBrowse(p); };
+$("fs-mkdir").onclick = doMakeFolder;
 $("fs-create").onclick = () => doCreateSession(fsCurrentPath, $("fs-newname").value);
 $("fs-open").onclick = () => doOpenSession(fsCurrentPath);
+
+// Create a folder in the directory currently shown, then step into it so the
+// user can immediately create/open a session there — no leaving the app.
+async function doMakeFolder() {
+  const name = (prompt("New folder name:") || "").trim();
+  if (!name) return;
+  $("sess-msg").textContent = "";
+  let r;
+  try { r = await (await fetch("/fs/mkdir", { method: "POST",
+    body: JSON.stringify({ parent: fsCurrentPath || "", name }) })).json(); }
+  catch (e) { $("sess-msg").textContent = "Could not create folder."; return; }
+  if (r.ok) fsBrowse(r.path); else $("sess-msg").textContent = r.error || "Could not create folder.";
+}
 
 async function doCreateSession(parent, name) {
   $("sess-msg").textContent = "";
@@ -5128,6 +5336,7 @@ class SuiteServer:
             self.session_dir = d
             self.projects = _ProjectStore(d)
             self.issues = _IssueStore(self.projects)
+            self.scan_checkpoints = _ScanCheckpoint(self.projects)
             self.repeater = _RepeaterStore(self.projects)
             self.ghost_brokers.clear()
             self.hunt_brokers.clear()
@@ -5299,7 +5508,8 @@ class SuiteServer:
 
     # ── Hunt run lifecycle ───────────────────────────────────────────────
     def start_hunt_run(self, target: str, modules: List[str], preset_label: str,
-                        ai: bool, project_id: Any) -> Dict[str, Any]:
+                        ai: bool, project_id: Any, resume: bool = False,
+                        debug: bool = False) -> Dict[str, Any]:
         """Launch a deterministic Hunt scan in a background thread, scoped to
         ``project_id`` exactly like Ghost — its own broker, its own
         concurrent-run guard, and its scan output rooted in the project's own
@@ -5311,7 +5521,25 @@ class SuiteServer:
         skip`` — empty is falsy, so nothing gets filtered out). Silently running
         the entire arsenal on a selection the user meant to leave blank would
         be a nasty surprise, so this is rejected instead.
+
+        When ``resume`` is set, the run's parameters (target/modules/preset/ai/
+        debug) come from the project's saved checkpoint and the scanners it
+        already completed are skipped — so an interrupted scan (Codespace
+        timeout, manual stop, or crash) picks up where it left off instead of
+        restarting from Phase 1.
         """
+        completed_modules: List[str] = []
+        if resume:
+            cp = self.scan_checkpoints.resume(project_id)
+            if not cp:
+                return {"ok": False, "error": "No interrupted scan to resume for this project."}
+            target = cp.get("target") or target
+            modules = cp.get("modules") or modules
+            preset_label = cp.get("preset") or preset_label
+            ai = bool(cp.get("ai"))
+            debug = bool(cp.get("debug"))
+            completed_modules = list(cp.get("completed_modules") or [])
+
         target = (target or "").strip()
         if not target:
             return {"ok": False, "error": "target required"}
@@ -5329,8 +5557,36 @@ class SuiteServer:
         # the suite): scan/report on whatever the target and its crawl turn up.
         scope_hosts = self.projects.get_scope(project_id)
 
+        # Fresh runs reset the checkpoint; a resumed run keeps its completed set
+        # (scan_checkpoints.resume already flipped its status back to running).
+        if not resume:
+            self.scan_checkpoints.start(project_id, target, modules, preset_label, ai, debug)
+
+        # Disk-backed event log: survives a new run AND an ungraceful Codespace
+        # timeout. Seed the new broker with the prior transcript so history isn't
+        # lost, and mark the boundary between runs.
+        persist_path = self._hunt_persist_path(project_id)
         broker = _Broker(meta={"target": target, "preset": preset_label,
-                               "modules": modules, "ai": bool(ai), "scope": scope_hosts})
+                               "modules": modules, "ai": bool(ai), "debug": bool(debug),
+                               "scope": scope_hosts},
+                         persist_path=persist_path)
+        if persist_path:
+            try:
+                broker.seed(_Broker.read_events(persist_path))
+            except Exception:
+                pass
+        broker.emit({"type": "phase",
+                     "text": ("── Resumed scan ── " if resume else "── New scan ── ") + target})
+        if resume:
+            remaining = [m for m in modules if m not in completed_modules]
+            broker.emit({
+                "type": "info",
+                "text": (f"Resuming — {len(completed_modules)} of {len(modules)} module(s) already "
+                         f"complete; running the remaining {len(remaining)}."),
+                "detail": ("Recon/crawl re-runs to rebuild context; already-finished scanners are skipped.\n"
+                           + ("Skipping: " + ", ".join(completed_modules) + "\n" if completed_modules else "")
+                           + ("Remaining: " + ", ".join(remaining) if remaining else "")),
+            })
         with self._lock:
             self.hunt_brokers[key] = broker
 
@@ -5354,7 +5610,14 @@ class SuiteServer:
                         self.issues.add_finding(project_id, f, data.get("scanner", "") or "", "hunt")
                     except Exception:
                         pass
-            line = _hunt_event_to_line(event, data)
+            # Resume checkpoint: mark each scanner done as it finishes, so an
+            # interruption can skip it on the next run.
+            if event == "scanner_done":
+                try:
+                    self.scan_checkpoints.mark_module_done(project_id, data.get("scanner"))
+                except Exception:
+                    pass
+            line = _hunt_event_to_line(event, data, debug=debug)
             if line is not None:
                 broker.emit(line)
 
@@ -5384,7 +5647,9 @@ class SuiteServer:
             # is what actually restricts which scanners run (see kill_chain's
             # per-scanner filter above).
             task = loop.create_task(engine.hunt(target=target, preset="full", ai=ai,
-                                                modules=modules, scope=crawler_scope))
+                                                modules=modules, scope=crawler_scope,
+                                                completed_modules=completed_modules,
+                                                debug=debug))
             with self._lock:
                 self.hunt_tasks[key] = (loop, task)
 
@@ -5428,14 +5693,17 @@ class SuiteServer:
                 broker.emit({"type": "verdict",
                              "text": f"Hunt complete — {n} finding{'s' if n != 1 else ''}",
                              "detail": detail})
+                self.scan_checkpoints.set_status(project_id, "complete")
             except asyncio.CancelledError:
                 n = len(engine.findings)
                 broker.emit({"type": "verdict", "text": "stopped",
                              "detail": f"Scan stopped by user — {n} finding{'s' if n != 1 else ''} "
-                                       "recorded before stop."})
+                                       "recorded before stop. Resume to continue where it left off."})
+                self.scan_checkpoints.set_status(project_id, "interrupted")
             except Exception as e:  # noqa: BLE001 — surface any failure to the pane
                 broker.emit({"type": "verdict", "text": "error",
                              "detail": f"{type(e).__name__}: {e}"})
+                self.scan_checkpoints.set_status(project_id, "interrupted")
             finally:
                 _shutdown_loop(loop)
                 with self._lock:
@@ -5457,17 +5725,76 @@ class SuiteServer:
         loop.call_soon_threadsafe(task.cancel)
         return {"ok": True}
 
+    def _hunt_persist_path(self, project_id: Any) -> Optional[str]:
+        try:
+            return str(self.projects.workspace_dir(project_id) / "hunt_events.jsonl")
+        except Exception:
+            return None
+
+    def _hunt_broker(self, project_id: Any) -> Optional["_Broker"]:
+        """The live broker, or — after a restart, when none is in memory — a
+        finished broker rebuilt from the persisted log so the viewer and its
+        counters repopulate. Meta comes from the checkpoint so the target/started
+        fields are populated for the state endpoint."""
+        key = str(project_id)
+        b = self.hunt_brokers.get(key)
+        if b is not None:
+            return b
+        path = self._hunt_persist_path(project_id)
+        if not path or not os.path.exists(path):
+            return None
+        cp = self.scan_checkpoints.get(project_id)
+        meta = {"target": cp.get("target", ""), "started": cp.get("started"),
+                "preset": cp.get("preset", "")}
+        try:
+            b = _Broker.load(path, meta=meta)
+        except Exception:
+            return None
+        with self._lock:
+            self.hunt_brokers[key] = b
+        return b
+
     def hunt_events(self, since: int, project_id: Any) -> Dict[str, Any]:
-        b = self.hunt_brokers.get(str(project_id))
+        b = self._hunt_broker(project_id)
         return b.since(since) if b is not None else {"events": [], "done": True}
 
     def hunt_state(self, project_id: Any) -> Dict[str, Any]:
-        b = self.hunt_brokers.get(str(project_id))
+        b = self._hunt_broker(project_id)
         if b is None:
             return {}
         state = dict(b.meta)
         state["running"] = not b.since(10**9)["done"]
         return state
+
+    def hunt_checkpoint(self, project_id: Any) -> Dict[str, Any]:
+        """Resume info for the Hunt view: the saved checkpoint plus whether a
+        scan is currently live (so the UI only offers Resume when nothing runs)."""
+        cp = self.scan_checkpoints.get(project_id)
+        if not cp:
+            return {}
+        b = self.hunt_brokers.get(str(project_id))
+        cp = dict(cp)
+        cp["running"] = bool(b is not None and not b.since(10**9)["done"])
+        cp["completed_count"] = len(cp.get("completed_modules") or [])
+        cp["total"] = len(cp.get("modules") or [])
+        return cp
+
+    def clear_hunt_log(self, project_id: Any) -> Dict[str, Any]:
+        """Wipe the persisted event log (the explicit Clear the user controls).
+        Refuses while a scan is live so a running run can't fight the delete."""
+        key = str(project_id)
+        b = self.hunt_brokers.get(key)
+        if b is not None and not b.since(10**9)["done"]:
+            return {"ok": False, "error": "Stop the scan before clearing the log."}
+        with self._lock:
+            self.hunt_brokers.pop(key, None)
+        path = self._hunt_persist_path(project_id)
+        if path:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+        return {"ok": True}
 
     # ── AutoRepeater run lifecycle ───────────────────────────────────────
     def start_autorepeater_run(self, project_id: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -5673,6 +6000,12 @@ class SuiteServer:
                     if proj is None:
                         proj = suite.projects.state().get("active")
                     self._json(suite.hunt_state(proj))
+                elif path == "/hunt/checkpoint":
+                    q = parse_qs(urlparse(self.path).query)
+                    proj = (q.get("project") or [None])[0]
+                    if proj is None:
+                        proj = suite.projects.state().get("active")
+                    self._json(suite.hunt_checkpoint(proj))
                 elif path == "/scope":
                     q = parse_qs(urlparse(self.path).query)
                     proj = (q.get("project") or [None])[0]
@@ -5782,12 +6115,23 @@ class SuiteServer:
                         proj = suite.projects.state().get("active")
                     self._json(suite.start_hunt_run(
                         payload.get("target", ""), payload.get("modules") or [],
-                        payload.get("preset", "custom"), bool(payload.get("ai")), proj))
+                        payload.get("preset", "custom"), bool(payload.get("ai")), proj,
+                        resume=bool(payload.get("resume")), debug=bool(payload.get("debug"))))
                 elif path == "/hunt/stop":
                     proj = payload.get("project")
                     if proj is None:
                         proj = suite.projects.state().get("active")
                     self._json(suite.stop_hunt_run(proj))
+                elif path == "/hunt/checkpoint/clear":
+                    proj = payload.get("project")
+                    if proj is None:
+                        proj = suite.projects.state().get("active")
+                    self._json(suite.scan_checkpoints.clear(proj))
+                elif path == "/hunt/clear":
+                    proj = payload.get("project")
+                    if proj is None:
+                        proj = suite.projects.state().get("active")
+                    self._json(suite.clear_hunt_log(proj))
                 elif path == "/scope/add":
                     proj = payload.get("project")
                     if proj is None:
