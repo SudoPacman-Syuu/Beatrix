@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import httpx
 
@@ -399,6 +399,13 @@ class BaseScanner(ABC):
         # sends through a real Chromium network stack instead of httpx.
         self._browser_client = None
 
+        # Debug/verbosity sink — when the engine runs in debug mode it sets these
+        # (see engine._load_modules / hunt(debug=True)) so every real request()
+        # emits an ``http`` event to the live terminal. Off by default and fully
+        # guarded, so a scanner used outside the engine pays nothing.
+        self._debug: bool = False
+        self._debug_emit: Optional[Callable[[str, Dict[str, Any]], None]] = None
+
     # Circuit breaker threshold — class-level constant
     _CB_THRESHOLD: int = 5
 
@@ -696,10 +703,29 @@ class BaseScanner(ABC):
         """Record the most recent real HTTP transaction for the current task so
         ``create_finding()`` can attach the exact request/response bytes on the
         wire. Purely best-effort bookkeeping — never let it interfere with
-        returning ``resp`` to the caller."""
+        returning ``resp`` to the caller.
+
+        Also the single choke point where debug mode surfaces every request:
+        every successful ``request()`` return flows through here, so one emit
+        gives the live terminal near-complete visibility of scanner traffic."""
         try:
             if isinstance(resp, httpx.Response):
                 _LAST_TXN.set(resp)
+                if self._debug and self._debug_emit is not None:
+                    try:
+                        elapsed_ms = int(resp.elapsed.total_seconds() * 1000)
+                    except Exception:
+                        elapsed_ms = 0
+                    try:
+                        self._debug_emit("http", {
+                            "scanner": type(self).__name__,
+                            "method": resp.request.method if resp.request else "",
+                            "url": str(resp.url),
+                            "status": resp.status_code,
+                            "elapsed_ms": elapsed_ms,
+                        })
+                    except Exception:
+                        pass
         except Exception:
             pass
         return resp

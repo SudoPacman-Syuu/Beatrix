@@ -377,6 +377,12 @@ class KillChainExecutor:
         if requested_modules and scanner_name not in requested_modules:
             return result
 
+        # Resume: skip scanners already completed in the interrupted run. Their
+        # findings were persisted live, so nothing is lost.
+        if scanner_name in (context.get("completed_modules") or ()):
+            self._emit("info", message=f"⏭ {scanner_name} — already completed (resume)")
+            return result
+
         scanner = self.engine.modules.get(scanner_name)
         if scanner is None:
             return result
@@ -544,6 +550,11 @@ class KillChainExecutor:
         # Module filtering: skip if not in requested modules (empty = run all)
         requested_modules = context.get("modules", [])
         if requested_modules and scanner_name not in requested_modules:
+            return result
+
+        # Resume: skip scanners already completed in the interrupted run.
+        if scanner_name in (context.get("completed_modules") or ()):
+            self._emit("info", message=f"⏭ {scanner_name} — already completed (resume)")
             return result
 
         scanner = self.engine.modules.get(scanner_name)

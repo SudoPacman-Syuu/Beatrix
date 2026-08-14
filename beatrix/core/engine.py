@@ -308,6 +308,8 @@ class BeatrixEngine:
         auth: Optional[Any] = None,
         browser_auth: bool = False,
         scope: Optional[List[str]] = None,
+        completed_modules: Optional[List[str]] = None,
+        debug: bool = False,
     ) -> KillChainState:
         """
         Execute a hunt against a target.
@@ -348,8 +350,23 @@ class BeatrixEngine:
         # Enable AI if requested
         self.config.ai_enabled = ai
 
+        # Debug/verbosity: wire the on_event sink into every scanner so each real
+        # request() emits an ``http`` event. Set per-run (off resets it) so a
+        # normal scan pays nothing.
+        for _m in self.modules.values():
+            try:
+                _m._debug = bool(debug)
+                _m._debug_emit = self._on_event if debug else None
+            except Exception:
+                pass
+
         # Build context with auth credentials
         context = {"modules": modules}
+        if completed_modules:
+            # Resume: the kill chain skips these already-finished scanners.
+            context["completed_modules"] = list(completed_modules)
+        if debug:
+            context["debug"] = True
         if auth is not None:
             context["auth"] = auth
         if browser_auth:

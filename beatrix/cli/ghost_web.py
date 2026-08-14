@@ -178,16 +178,35 @@ loadMeta().then(poll);
 
 
 class _Broker:
-    """Thread-safe event ring buffer shared between the run and HTTP handlers."""
+    """Thread-safe event ring buffer shared between the run and HTTP handlers.
 
-    def __init__(self, meta: Dict[str, Any], maxlen: int = 5000):
+    When ``persist_path`` is given, every emitted event is also appended to that
+    file (one JSON object per line), so the transcript survives a new run and an
+    ungraceful process death (e.g. a Codespace timeout). Use :meth:`load` to
+    rebuild a broker seeded from such a file. Ghost passes no path and keeps the
+    original in-memory-only behavior.
+    """
+
+    def __init__(self, meta: Dict[str, Any], maxlen: int = 5000,
+                 persist_path: Optional[str] = None):
         self._lock = threading.Lock()
         self._events: List[Dict[str, Any]] = []
         self._seq = 0
         self._maxlen = maxlen
         self._done = False
+        self._persist_path = persist_path
         self.meta = dict(meta)
         self.meta.setdefault("started", time.time())
+
+    def _append_to_disk(self, rec: Dict[str, Any]) -> None:
+        # Best-effort: a logging failure must never break the scan thread.
+        if not self._persist_path:
+            return
+        try:
+            with open(self._persist_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec, default=str) + "\n")
+        except Exception:
+            pass
 
     def emit(self, event: Dict[str, Any]) -> None:
         with self._lock:
@@ -202,6 +221,18 @@ class _Broker:
             self._events.append(rec)
             if len(self._events) > self._maxlen:
                 self._events = self._events[-self._maxlen:]
+            self._append_to_disk(rec)
+
+    def seed(self, events: List[Dict[str, Any]]) -> None:
+        """Preload historical events (e.g. from a prior run) WITHOUT rewriting
+        them to disk, continuing the seq counter from the highest seen. Keeps the
+        live viewer's transcript intact across a new run."""
+        with self._lock:
+            for e in events:
+                self._events.append(e)
+                self._seq = max(self._seq, int(e.get("seq", 0)))
+            if len(self._events) > self._maxlen:
+                self._events = self._events[-self._maxlen:]
 
     def since(self, seq: int) -> Dict[str, Any]:
         with self._lock:
@@ -211,6 +242,37 @@ class _Broker:
     def finish(self) -> None:
         with self._lock:
             self._done = True
+
+    @staticmethod
+    def read_events(persist_path: str, tail: int = 5000) -> List[Dict[str, Any]]:
+        """Read persisted events from ``persist_path`` (last ``tail`` lines),
+        renumbering ``seq`` contiguously so the client can page through them."""
+        try:
+            with open(persist_path, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except Exception:
+            return []
+        events: List[Dict[str, Any]] = []
+        for ln in lines[-tail:]:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                events.append(json.loads(ln))
+            except Exception:
+                continue
+        for i, e in enumerate(events, start=1):
+            e["seq"] = i
+        return events
+
+    @classmethod
+    def load(cls, persist_path: str, meta: Dict[str, Any], maxlen: int = 5000) -> "_Broker":
+        """Rebuild a finished broker seeded from a persisted event file, so
+        ``/hunt/events`` and the viewer repopulate after a restart."""
+        b = cls(meta, maxlen=maxlen, persist_path=persist_path)
+        b.seed(cls.read_events(persist_path, tail=maxlen))
+        b.finish()
+        return b
 
 
 class GhostWebServer:
