@@ -6,7 +6,7 @@
 
 **License:** Source Available — Free for non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE).
 
-A bug-bounty hunting framework with two faces. New in **v2.0**, **the Suite** is a local web workbench — scanning, a Burp-style Repeater and Intruder, a triageable Issues board, one-drop authenticated scanning, and an autonomous AI pentester — all behind a single command. The original **CLI** is still the whole toolkit from your terminal, perfect for Codespaces, servers, and CI.
+A bug-bounty hunting framework with two faces. New in **v2.0**, **the Suite** is a local web workbench — scanning, a raw-HTTP Repeater and an automated fuzzer, a triageable Issues board, one-drop authenticated scanning, and an autonomous AI pentester — all behind a single command. The original **CLI** is still the whole toolkit from your terminal, perfect for Codespaces, servers, and CI.
 
 Under the hood: 33 scanner modules, 22 external tool integrations, 57K+ payloads, a 7-phase Kill Chain methodology, and AI-assisted analysis. Targets can be domains, URLs, or raw IP addresses.
 
@@ -14,7 +14,7 @@ Under the hood: 33 scanner modules, 22 external tool integrations, 57K+ payloads
 
 ## The Suite (GUI)
 
-**Your whole workflow in the browser — new in v2.0.** One command spins up a local web workbench. No Burp license, no cloud, nothing leaves your machine — it all runs on `127.0.0.1`:
+**Your whole workflow in the browser — new in v2.0.** One command spins up a local web workbench. No license, no cloud, nothing leaves your machine — it all runs on `127.0.0.1`:
 
 ```bash
 beatrix-suite
@@ -28,13 +28,13 @@ It's one app with per-project sessions and seven workspaces:
 
 - **Dashboard** — a hunt control panel: presets, module selection, a live event/finding terminal, a Stop button, and one-click **Save HTML**.
 - **Issues** — every finding in a sortable, re-triageable table with full **Advisory / Request / Response / PoC** detail — real captured HTTP, not reconstructed guesses.
-- **Repeater** — a Burp-Repeater-style raw HTTP editor: byte-faithful send, syntax-highlighted request/response, tabs, and response timing.
-- **AutoRepeater** — a Burp-Intruder-style fuzzer: Sniper / Battering-ram / Pitchfork / Cluster-bomb, payload sets and processing rules, grep-match/extract, and a live results table.
+- **Repeater** — a raw HTTP editor: byte-faithful send, syntax-highlighted request/response, tabs, and response timing.
+- **AutoRepeater** — an automated fuzzer: Sniper / Battering-ram / Pitchfork / Cluster-bomb, payload sets and processing rules, grep-match/extract, and a live results table.
 - **Auth** — set up authenticated scans from a HAR drop, a cookie/token paste, or IDOR user slots — and manage your AI provider keys.
 - **Ghost** — hand findings to the autonomous AI pentester for validation, one at a time or in bulk by severity/module, to save tokens.
-- **Scope** — Burp-style target scope, enforced end-to-end across the suite.
+- **Scope** — target scope, enforced end-to-end across the suite.
 
-### Issues — triage like Burp, with real requests
+### Issues — triage with real requests
 
 <p align="center"><img src="screenshots/b2.png" alt="Beatrix Suite — Issues tab" width="820"></p>
 
@@ -105,22 +105,21 @@ Most bug bounty tools solve one problem. Beatrix solves the whole workflow.
 
 **Nuclei** is excellent at template-based scanning — known CVEs and patterns against a target. It doesn't crawl, doesn't manage auth sessions, doesn't chain tools together, and doesn't tell you what to do next. You still have to run subfinder, then amass, then nmap, then nuclei, then sqlmap, then dalfox, then manually correlate the output.
 
-**Burp Suite Pro** is the industry standard for manual web testing, but it costs $449/year and needs its desktop app running. Beatrix v2.0 brings the same point-and-click workflow — **Repeater, Intruder, and an Issues board** — to a free, local web UI, and it *also* runs fully headless from the CLI in Codespaces or CI.
+Beatrix v2.0 pairs that automation with the manual-testing bench automation alone can't replace — a **Repeater, an automated fuzzer, and an Issues board** — in a free, local web UI, and it *also* runs fully headless from the CLI in Codespaces or CI.
 
 Beatrix is the orchestration layer that was missing — now with the manual-testing bench, too.
 
-| Feature | Beatrix | Nuclei | Burp Suite Pro |
-|---------|:-------:|:------:|:--------------:|
-| Full web GUI (Repeater · Intruder · Issues) | ✅ | ❌ | ✅ |
-| 7-phase Kill Chain methodology | ✅ | ❌ | ❌ |
-| Auto-login & session management | ✅ | ❌ | Manual |
-| Autonomous AI pentester (GHOST) | ✅ | ❌ | ❌ |
-| 22 external tool orchestration | ✅ | ❌ | ❌ |
-| Built-in OOB / PoC server | ✅ | ❌ | ✅ (Collaborator) |
-| Authenticated crawling | ✅ | ❌ | ✅ |
-| CLI / automation-friendly | ✅ | ✅ | ❌ |
-| Runs in headless environments | ✅ | ✅ | ❌ |
-| Cost | Free | Free | $449/yr |
+| Feature | Beatrix | Nuclei |
+|---------|:-------:|:------:|
+| Full web GUI (Repeater · AutoRepeater · Issues) | ✅ | ❌ |
+| 7-phase Kill Chain methodology | ✅ | ❌ |
+| Auto-login & session management | ✅ | ❌ |
+| Autonomous AI pentester (GHOST) | ✅ | ❌ |
+| 22 external tool orchestration | ✅ | ❌ |
+| Built-in OOB / PoC server | ✅ | ❌ |
+| Authenticated crawling | ✅ | ❌ |
+| CLI / automation-friendly | ✅ | ✅ |
+| Runs in headless environments | ✅ | ✅ |
 
 One command. Every phase. All the tools.
 
@@ -342,7 +341,7 @@ Run `beatrix arsenal` for the full table — **33 registered modules** (verify w
 | `error_disclosure` | Stack traces, SQL errors, framework debug info leaks |
 | `cache_poisoning` | Unkeyed header injection, fat GET, parameter cloaking |
 | `prototype_pollution` | Server-side and client-side JS prototype pollution |
-| `sequencer` | Session-token randomness / entropy analysis (Burp-Sequencer-style) |
+| `sequencer` | Session-token randomness / entropy analysis |
 
 **Phase 3 — Delivery**
 
@@ -577,7 +576,7 @@ Beatrix supports authenticated scanning via config file, CLI flags, environment 
 
 ### Auto-Login
 
-Beatrix can authenticate before scanning by probing login endpoints, similar to a Burp Suite login macro.
+Beatrix can authenticate before scanning by probing login endpoints and replaying the login flow automatically.
 
 ```bash
 # Interactive wizard (saves to ~/.beatrix/auth.yaml)
