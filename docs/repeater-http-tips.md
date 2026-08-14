@@ -50,58 +50,100 @@ value type usually means a new `case` in `hlHeaderValue`), then tick it off belo
 
 ## Covered
 
-**~174 static tips across 12 categories, plus live JWT decoding.**
+**~370 static tips across 12 categories, plus live JWT decoding.**
 
 ### Request methods (`m:`)
-GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE, CONNECT
+GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE, CONNECT,
+PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, REPORT, SEARCH (WebDAV),
+PURGE, TRACK, DEBUG
 
 ### Status codes (`s:`)
-200, 201, 204, 206, 301, 302, 303, 304, 307, 308,
-400, 401, 403, 404, 405, 406, 409, 415, 418, 422, 429,
-500, 501, 502, 503, 504 — plus class fallbacks (`1xx`/`2xx`/`3xx`/`4xx`/`5xx`)
+100, 101, 200, 201, 202, 203, 204, 205, 206, 226,
+300, 301, 302, 303, 304, 305, 307, 308,
+400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414,
+415, 416, 417, 418, 421, 422, 423, 424, 425, 426, 428, 429, 431, 451,
+500, 501, 502, 503, 504, 505, 507, 508, 510, 511 —
+plus class fallbacks (`1xx`/`2xx`/`3xx`/`4xx`/`5xx`)
 
 ### Header names (`h:`)
 host, user-agent, accept, accept-encoding, accept-language, referer, origin,
 authorization, cookie, set-cookie, content-type, content-length,
 content-encoding, transfer-encoding, connection, cache-control, pragma, date,
 expires, etag, last-modified, location, server, x-powered-by, vary,
-www-authenticate, content-disposition,
-x-frame-options, content-security-policy, strict-transport-security,
-x-content-type-options, x-xss-protection, referrer-policy,
-access-control-allow-origin, access-control-allow-credentials
+www-authenticate, content-disposition, content-language, content-md5, link,
+accept-ranges, range, content-range, if-match, if-none-match, if-modified-since,
+if-unmodified-since, if-range, te, expect, upgrade, keep-alive, max-forwards, dnt.
+**Security headers:** x-frame-options, content-security-policy,
+content-security-policy-report-only, x-content-security-policy (legacy),
+x-webkit-csp (legacy), strict-transport-security, x-content-type-options,
+x-xss-protection, referrer-policy, permissions-policy, feature-policy,
+cross-origin-opener-policy, cross-origin-embedder-policy,
+cross-origin-resource-policy, clear-site-data, timing-allow-origin, nel,
+x-permitted-cross-domain-policies, x-dns-prefetch-control, x-download-options.
+**CORS:** access-control-allow-origin, access-control-allow-credentials,
+access-control-allow-methods, access-control-allow-headers,
+access-control-expose-headers, access-control-max-age,
+access-control-request-method, access-control-request-headers.
+**Proxy / forwarding:** x-forwarded-for, x-forwarded-host, x-forwarded-proto,
+x-forwarded-port, x-forwarded-server, forwarded, x-real-ip, x-host, via,
+proxy-authorization, proxy-authenticate, x-original-url, x-rewrite-url,
+x-http-method-override.
+**Fetch metadata / client hints:** sec-fetch-site, sec-fetch-mode,
+sec-fetch-dest, sec-fetch-user, sec-ch-ua, sec-ch-ua-platform, sec-ch-ua-mobile.
+**Caching / rate-limit / tracing:** age, x-cache, cf-cache-status, retry-after,
+allow, server-timing, report-to, reporting-endpoints, x-request-id,
+x-correlation-id, x-amzn-trace-id, x-ratelimit-limit, x-ratelimit-remaining,
+x-ratelimit-reset
 
 ### HTML/XML tags (`t:`)
 html, head, title, meta, link, script, style, iframe, form, input, button,
-textarea, a, img, svg, object, embed, base, `<!DOCTYPE>`
+textarea, a, img, svg, object, embed, base, `<!DOCTYPE>`,
+body, video, audio, source, template, noscript, noembed, math, annotation-xml,
+foreignObject, frame, frameset, applet, select, option, label, details,
+marquee, dialog, portal, table, xml
 
 ### Cookie attributes (`cookie:`) — on the Set-Cookie / Cookie **value**
-HttpOnly, Secure, SameSite (+ Strict/Lax/None values), Domain, Path, Max-Age, Expires
+HttpOnly, Secure, SameSite (+ Strict/Lax/None values), Domain, Path, Max-Age,
+Expires, Partitioned, and the `__Host-` / `__Secure-` name prefixes
 
 ### CSP tokens (`csp:`) — on the Content-Security-Policy **value**
-default-src, script-src, style-src, img-src, connect-src, font-src, object-src,
-frame-src, frame-ancestors, base-uri, form-action, report-uri, report-to,
-upgrade-insecure-requests, block-all-mixed-content, sandbox;
-sources `'unsafe-inline'`, `'unsafe-eval'`, `'self'`, `'none'`, `'strict-dynamic'`, `*`
+default-src, script-src, script-src-elem, script-src-attr, style-src,
+style-src-elem, style-src-attr, img-src, connect-src, font-src, object-src,
+frame-src, child-src, worker-src, manifest-src, media-src, prefetch-src,
+frame-ancestors, base-uri, form-action, navigate-to, report-uri, report-to,
+trusted-types, require-trusted-types-for, webrtc, upgrade-insecure-requests,
+block-all-mixed-content, sandbox;
+sources `'unsafe-inline'`, `'unsafe-eval'`, `'wasm-unsafe-eval'`,
+`'unsafe-hashes'`, `'self'`, `'none'`, `'strict-dynamic'`, `'report-sample'`,
+`'inline-speculation-rules'`, `data:`, `blob:`, `https:`, `*`
 
 ### Cache-Control directives (`cc:`)
 no-store, no-cache, private, public, max-age, s-maxage, must-revalidate,
-immutable, stale-while-revalidate, no-transform
+proxy-revalidate, immutable, stale-while-revalidate, stale-if-error,
+only-if-cached, max-stale, min-fresh, must-understand, no-transform
 
 ### HSTS tokens (`hsts:`)
 max-age, includeSubDomains, preload
 
 ### Content-Type media types (`ct:`)
-application/json, x-www-form-urlencoded, multipart/form-data, application/xml,
-text/xml, text/html, text/plain, octet-stream, application/javascript,
-application/graphql, text/csv
+application/json, x-www-form-urlencoded, multipart/form-data, multipart/mixed,
+application/xml, text/xml, application/soap+xml, application/xhtml+xml,
+image/svg+xml, text/html, text/plain, octet-stream, application/javascript,
+application/graphql, text/csv, application/ld+json, application/vnd.api+json,
+application/hal+json, application/jwt, application/x-yaml, text/yaml,
+application/pdf, application/zip, application/wasm, text/event-stream,
+application/x-ndjson, application/x-protobuf, application/x-amf,
+application/dns-message
 
 ### Authorization schemes (`auth:`)
-Basic, Bearer, Digest, Negotiate, NTLM
+Basic, Bearer, Digest, Negotiate, NTLM, AWS4-HMAC-SHA256 (AWS SigV4), Hawk,
+Signature (HTTP Message Signatures)
 
 ### HTML attributes (`attr:`)
 on* (event handlers), src, href, action, formaction, srcdoc, sandbox, rel,
 target, type, http-equiv, content, integrity, nonce, style, autocomplete, name,
-method, value
+method, value, enctype, formmethod, formenctype, crossorigin, referrerpolicy,
+ping, download, allow, loading
 
 ### JWT (`jwt:`) — dynamic
 Any `eyJ….eyJ….` token (in Authorization, Cookie, or a body) is decoded live:
@@ -118,9 +160,16 @@ Ordered roughly by value for manual hunting.
       Content-Length *and* Transfer-Encoding are present on the same message.
 - [ ] **CORS correlation** — flag ACAO reflecting the request Origin, or ACAO
       `*`/`null` combined with Allow-Credentials `true` (needs cross-line logic).
-- [ ] **More response headers** — Retry-After, Allow, Age, Via, X-Cache,
+- [x] **More response headers** — Retry-After, Allow, Age, Via, X-Cache,
       Permissions-Policy, Cross-Origin-* (COOP/COEP/CORP), Timing-Allow-Origin,
-      X-Request-Id, Server-Timing, Report-To/Reporting-Endpoints.
+      X-Request-Id, Server-Timing, Report-To/Reporting-Endpoints — *plus* the
+      full forwarding/proxy set (X-Forwarded-*, Forwarded, X-Original-URL, …),
+      Fetch-metadata/client hints (Sec-Fetch-*, Sec-CH-UA-*), the complete CORS
+      family, conditional/range validators, and rate-limit headers. Done.
+- [x] **Broader methods / status / content-types** — WebDAV methods
+      (PROPFIND…UNLOCK, plus PURGE/TRACK/DEBUG), the remaining 1xx–5xx status
+      codes (incl. 421/425/431/451/511), and many more media types
+      (image/svg+xml, SOAP/XHTML, YAML, protobuf, AMF, …). Done.
 - [ ] **JSON structure tips** — hovering a key path; flag likely secrets/IDs and
       IDOR-ish fields (id, uuid, role, isAdmin, token).
 - [ ] **URL / query params** — hover a query key; note commonly injectable params.

@@ -832,7 +832,7 @@ def _finding_to_issue(finding: Any, scanner: str, origin: str) -> Dict[str, Any]
 # bodies can be large); the full record is fetched per-issue via /issues/detail.
 _ISSUE_SUMMARY_FIELDS = ("id", "title", "severity", "confidence", "host", "path",
                          "url", "module", "origin", "highlight", "validated",
-                         "discovered_at")
+                         "false_positive", "discovered_at")
 
 
 class _IssueStore:
@@ -903,6 +903,7 @@ class _IssueStore:
             issue["id"] = data["next_id"]
             issue["key"] = key
             issue["highlight"] = None
+            issue["false_positive"] = False
             issue["discovered_at"] = time.time()
             data["next_id"] += 1
             data["issues"].append(issue)
@@ -915,8 +916,10 @@ class _IssueStore:
         return [{k: i.get(k) for k in _ISSUE_SUMMARY_FIELDS} for i in data["issues"]]
 
     def count(self, pid: Any) -> int:
+        # Powers the tab badge — a call to attention, so dismissed (false
+        # positive) issues don't count toward it.
         with self._lock:
-            return len(self._read(pid)["issues"])
+            return sum(1 for i in self._read(pid)["issues"] if not i.get("false_positive"))
 
     def get(self, pid: Any, issue_id: Any) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -927,7 +930,8 @@ class _IssueStore:
         return None
 
     def update(self, pid: Any, issue_id: Any, severity: Optional[str] = None,
-               highlight: Optional[str] = None) -> Dict[str, Any]:
+               highlight: Optional[str] = None,
+               false_positive: Optional[bool] = None) -> Dict[str, Any]:
         with self._lock:
             data = self._read(pid)
             for i in data["issues"]:
@@ -943,6 +947,8 @@ class _IssueStore:
                         if color not in _HIGHLIGHT_COLORS:
                             return {"ok": False, "error": f"invalid highlight '{highlight}'"}
                         i["highlight"] = None if color == "none" else color
+                    if false_positive is not None:
+                        i["false_positive"] = bool(false_positive)
                     self._write(pid, data)
                     return {"ok": True, "issue": {k: i.get(k) for k in _ISSUE_SUMMARY_FIELDS}}
             return {"ok": False, "error": "no such issue"}
@@ -1223,6 +1229,16 @@ _PAGE = r"""<!doctype html>
   .iss-list-wrap { flex:1 1 55%; min-height:80px; overflow:auto; }
   .iss-detail-wrap { flex:1 1 45%; min-height:120px; border-top:1px solid var(--border);
     display:flex; flex-direction:column; overflow:hidden; }
+
+  /* ── Resizable split gutters: drag the bar to resize adjacent panes ── */
+  .splitter { flex:0 0 7px; align-self:stretch; position:relative; z-index:6; background:var(--border); }
+  .splitter-x { cursor:col-resize; }        /* side-by-side panes → vertical bar */
+  .splitter-y { cursor:row-resize; }        /* stacked panes → horizontal bar */
+  .splitter:hover, .splitter:focus-visible { background:var(--accent); outline:none; }
+  .splitter::after { content:""; position:absolute; background:var(--muted); border-radius:3px; opacity:.55; }
+  .splitter-x::after { top:calc(50% - 15px); left:calc(50% - 1.5px); width:3px; height:30px; }
+  .splitter-y::after { left:calc(50% - 15px); top:calc(50% - 1.5px); height:3px; width:30px; }
+  .splitter:hover::after, .splitter:focus-visible::after { background:#08131a; opacity:1; }
   table.iss { width:100%; border-collapse:collapse; font-size:12.5px; }
   table.iss thead th { position:sticky; top:0; background:var(--panel); text-align:left; padding:7px 10px;
     border-bottom:1px solid var(--border); cursor:pointer; user-select:none; white-space:nowrap; color:var(--muted); font-weight:600; }
@@ -1239,6 +1255,13 @@ _PAGE = r"""<!doctype html>
   table.iss tbody tr.hl-blue { box-shadow:inset 3px 0 0 #5aa9ff; }
   table.iss tbody tr.hl-purple { box-shadow:inset 3px 0 0 #b98cff; }
   table.iss tbody tr.hl-gray { box-shadow:inset 3px 0 0 #8a94a6; }
+  /* False positives: dismissed, so they read as muted/struck but stay visible. */
+  table.iss tbody tr.fp td { opacity:.5; }
+  table.iss tbody tr.fp td:nth-child(2) { text-decoration:line-through; }
+  table.iss tbody tr.fp .sev { filter:grayscale(1); }
+  .fptag { display:inline-block; margin-left:7px; padding:0 6px; border-radius:4px; font-size:9px;
+    font-weight:700; text-transform:uppercase; letter-spacing:.04em; vertical-align:middle;
+    text-decoration:none; background:var(--border); color:var(--muted); }
   .sev { display:inline-block; padding:1px 7px; border-radius:4px; font-size:10.5px; font-weight:700;
     text-transform:uppercase; letter-spacing:.03em; color:#08131a; }
   .sev.critical { background:#ff5f57; color:#fff; } .sev.high { background:#ff9f43; }
@@ -1282,9 +1305,14 @@ _PAGE = r"""<!doctype html>
     cursor:pointer; }
   .iss-ctx .sw:hover { outline:2px solid var(--accent); }
   .iss-ctx hr { border:0; border-top:1px solid var(--border); margin:5px 4px; }
+  .iss-ctx .fp { display:block; width:100%; text-align:left; font:inherit; font-size:12.5px; color:var(--fg);
+    background:transparent; border:0; padding:6px 8px; border-radius:4px; cursor:pointer; }
+  .iss-ctx .fp:hover { background:var(--bg); }
   .iss-ctx .del { display:block; width:100%; text-align:left; font:inherit; font-size:12.5px; color:var(--red);
     background:transparent; border:0; padding:6px 8px; border-radius:4px; cursor:pointer; }
   .iss-ctx .del:hover { background:var(--bg); }
+  .iss-detail .fpbanner { color:var(--muted); font-size:11.5px; margin:0 0 12px; padding:6px 10px;
+    background:var(--panel); border:1px solid var(--border); border-radius:6px; }
 
   /* ── Repeater ── */
   #pane-repeater.active { display:flex; flex-direction:column; overflow:hidden; }
@@ -1678,6 +1706,7 @@ _PAGE = r"""<!doctype html>
           <span class="spacer"></span>
           <span id="rep-status" class="rep-status"></span>
           <button id="rep-tips" class="rep-tipbtn" title="Hover any header, method, status code, or tag for an explanation">Tips: off</button>
+          <button id="rep-pretty" class="rep-tipbtn" title="Pretty-print the response body (JSON / XML / HTML). Headers are left as-is; toggle off for the raw bytes.">Beautify: off</button>
           <div class="rep-settings">
             <button id="rep-gear" class="rep-gear" title="Font & colors">Aa ▾</button>
             <div id="rep-pop" class="rep-pop">
@@ -1825,8 +1854,95 @@ document.querySelectorAll("nav button").forEach(btn => {
     if (tab === "issues") loadIssuesFor(activeProject);   // freshen on view
     if (tab === "repeater") loadRepeaterFor(activeProject);
     if (tab === "autorepeater") loadAutoRepeaterFor(activeProject);
+    reclampSplitters();   // a newly-shown pane can now measure itself
   };
 });
+
+// ── Resizable panes: a draggable gutter between two flex children ──
+// One reusable splitter for every module. `axis` is "x" for side-by-side
+// columns (a vertical bar you drag left/right) or "y" for stacked rows (a
+// horizontal bar you drag up/down). The first pane gets an explicit pixel
+// size; the second flexes to fill the rest. The chosen size persists per
+// `storeKey` and is re-clamped on window resize / tab switch so it can never
+// collapse a pane or overflow the container. Double-click resets to default;
+// arrow keys (when the bar is focused) nudge it for keyboard users.
+const _splitters = [];
+function makeSplitter(container, axis, storeKey) {
+  if (!container) return;
+  const kids = Array.prototype.filter.call(container.children,
+    n => n.nodeType === 1 && !n.classList.contains("splitter"));
+  if (kids.length < 2) return;
+  const first = kids[0], horiz = axis === "x";
+  const g = document.createElement("div");
+  g.className = "splitter " + (horiz ? "splitter-x" : "splitter-y");
+  g.tabIndex = 0;
+  g.setAttribute("role", "separator");
+  g.setAttribute("aria-orientation", horiz ? "vertical" : "horizontal");
+  g.title = "Drag to resize · double-click to reset";
+  container.insertBefore(g, kids[1]);
+
+  const MIN = 60;                                            // px floor for either pane
+  const sizeOf = () => horiz ? container.clientWidth : container.clientHeight;
+  const gsz = () => (horiz ? g.offsetWidth : g.offsetHeight) || 7;
+  const clamp = (v) => Math.max(MIN, Math.min(v, sizeOf() - MIN - gsz()));
+  let px = null;
+  const apply = (v) => { px = clamp(v); first.style.flex = "0 0 " + px + "px"; };
+  const persist = () => { if (storeKey) { try { localStorage.setItem("beatrix.split." + storeKey, String(px)); } catch (e) {} } };
+  const reclamp = () => { if (px != null && sizeOf() > 0) first.style.flex = "0 0 " + clamp(px) + "px"; };
+
+  if (storeKey) {                                            // restore last size (clamped lazily once visible)
+    try { const v = parseFloat(localStorage.getItem("beatrix.split." + storeKey));
+      if (v > 0) { px = v; first.style.flex = "0 0 " + v + "px"; } } catch (e) {}
+  }
+  let drag = false;
+  g.addEventListener("pointerdown", (e) => {
+    drag = true;
+    try { g.setPointerCapture(e.pointerId); } catch (_) {}
+    document.body.style.cursor = horiz ? "col-resize" : "row-resize";
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+  g.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const r = container.getBoundingClientRect();
+    apply(horiz ? (e.clientX - r.left) : (e.clientY - r.top));
+    e.preventDefault();
+  });
+  const end = (e) => {
+    if (!drag) return;
+    drag = false;
+    try { g.releasePointerCapture(e.pointerId); } catch (_) {}
+    document.body.style.cursor = ""; document.body.style.userSelect = "";
+    persist();
+  };
+  g.addEventListener("pointerup", end);
+  g.addEventListener("pointercancel", end);
+  g.addEventListener("dblclick", () => {
+    px = null; first.style.flex = "";
+    if (storeKey) { try { localStorage.removeItem("beatrix.split." + storeKey); } catch (e) {} }
+  });
+  g.addEventListener("keydown", (e) => {
+    const cur = horiz ? first.offsetWidth : first.offsetHeight;
+    const step = e.shiftKey ? 40 : 12;
+    let nv = null;
+    if (horiz && e.key === "ArrowLeft") nv = cur - step;
+    else if (horiz && e.key === "ArrowRight") nv = cur + step;
+    else if (!horiz && e.key === "ArrowUp") nv = cur - step;
+    else if (!horiz && e.key === "ArrowDown") nv = cur + step;
+    if (nv == null) return;
+    apply(nv); persist(); e.preventDefault();
+  });
+  _splitters.push({ reclamp });
+}
+function reclampSplitters() { for (const s of _splitters) s.reclamp(); }
+function initSplitters() {
+  makeSplitter(document.querySelector(".iss-split"), "y", "iss");        // list / advisory
+  makeSplitter(document.querySelector(".rep-split"), "x", "rep");        // request / response
+  makeSplitter(document.querySelector(".ar-config"), "x", "ar-config");  // template / payloads
+  makeSplitter(document.querySelector(".ar-results"), "x", "ar-results");// results / detail
+}
+window.addEventListener("resize", reclampSplitters);
+initSplitters();
 
 // ── Ghost: each project has its OWN run + event stream on the server.
 // `pollProject` is the project id the in-flight poll loop belongs to; every
@@ -2280,15 +2396,19 @@ function renderIssues() {
   renderIssueHead();
   const body = $("iss-body"); body.innerHTML = "";
   const rows = issuesData.slice().sort(cmpIssues);
-  $("iss-count").textContent = issuesData.length;
+  const fpCount = issuesData.filter(i => i.false_positive).length;
+  $("iss-count").textContent = fpCount
+    ? `${issuesData.length} (${fpCount} false positive)` : issuesData.length;
   $("iss-empty").style.display = rows.length ? "none" : "block";
   for (const it of rows) {
     const tr = document.createElement("tr");
     if (it.highlight) tr.className = "hl-" + it.highlight;
     if (selectedIssue === it.id) tr.className += " sel";
+    if (it.false_positive) tr.className += " fp";
+    const fpTag = it.false_positive ? ` <span class="fptag">false positive</span>` : "";
     tr.innerHTML =
       `<td><span class="sev ${esc(it.severity)}">${esc(it.severity)}</span></td>` +
-      `<td>${esc(it.title)}</td><td>${esc(it.host)}</td><td>${esc(it.path)}</td>` +
+      `<td>${esc(it.title)}${fpTag}</td><td>${esc(it.host)}</td><td>${esc(it.path)}</td>` +
       `<td>${esc(it.module)}</td><td class="conf">${esc(it.confidence)}</td>`;
     tr.onclick = () => selectIssue(it.id);
     tr.oncontextmenu = (e) => { e.preventDefault(); showIssueCtx(e, it.id); };
@@ -2305,7 +2425,7 @@ async function loadIssuesFor(id) {
   try { list = (await (await fetch("/issues?project=" + id)).json()).issues || []; } catch (e) {}
   if (id !== activeProject) return;      // switched away while fetching
   issuesData = list;
-  updateIssueBadge(list.length);
+  updateIssueBadge(list.filter(i => !i.false_positive).length);
   if (selectedIssue !== null && !list.some(i => i.id === selectedIssue)) {
     selectedIssue = null; issueDetail = null; renderIssueDetail();
   }
@@ -2349,7 +2469,10 @@ function renderIssueDetail() {
   if (!d) { box.innerHTML = '<div class="none">Select an issue to view its details.</div>'; return; }
   if (issueDetailTab === "advisory") {
     box.innerHTML =
-      '<div class="detail-actions"><button id="iss-to-ghost" class="btn">Validate with Ghost</button></div>' +
+      '<div class="detail-actions">' +
+      `<button id="iss-fp" class="btn">${d.false_positive ? "Unmark false positive" : "Mark as false positive"}</button>` +
+      '<button id="iss-to-ghost" class="btn">Validate with Ghost</button></div>' +
+      (d.false_positive ? '<div class="fpbanner">Marked as a false positive — excluded from the open-issue count.</div>' : "") +
       `<h3>${esc(d.title)}</h3>` +
       `<div class="kv"><span class="sev ${esc(d.severity)}">${esc(d.severity)}</span> · ` +
       `confidence <b>${esc(d.confidence)}</b> · module <b>${esc(d.module)}</b> · ` +
@@ -2359,6 +2482,14 @@ function renderIssueDetail() {
       fld("Classifications", [d.cwe, d.owasp].filter(Boolean), { list:true, hideEmpty:true }) +
       fld("References / documentation", d.references, { links:true });
     $("iss-to-ghost").onclick = () => sendIssuesToGhost([d.id], "this issue");
+    $("iss-fp").onclick = async () => {
+      const nv = !d.false_positive;
+      await fetch("/issues/update", { method:"POST",
+        body: JSON.stringify({ project: activeProject, id: d.id, false_positive: nv }) });
+      d.false_positive = nv;
+      renderIssueDetail();
+      loadIssuesFor(activeProject);
+    };
   } else if (issueDetailTab === "request") {
     const canSend = d.request && String(d.request).trim();
     box.innerHTML =
@@ -2451,15 +2582,18 @@ document.addEventListener("click", () => $("iss-ghost-menu").classList.remove("o
 // Right-click menu: set severity / highlight / delete.
 function showIssueCtx(e, id) {
   const m = $("issue-ctx");
+  const it = issuesData.find(x => x.id === id) || {};
   const sevBtns = Object.keys(SEV_RANK).map(s =>
     `<button data-act="sev" data-v="${s}">${s}</button>`).join("");
   const swatches = Object.entries(HL_COLORS).map(([name, col]) =>
     `<span class="sw" title="${name}" style="background:${col}" data-act="hl" data-v="${name}"></span>`).join("") +
     `<button data-act="hl" data-v="none" style="font-size:11px; padding:1px 6px;">none</button>`;
+  const fpLabel = it.false_positive ? "Unmark false positive" : "Mark as false positive";
   m.innerHTML =
     `<div class="lbl">Set severity</div><div class="opts">${sevBtns}</div>` +
     `<div class="lbl">Highlight</div><div class="opts">${swatches}</div>` +
-    `<hr><button class="del" data-act="del">Delete issue</button>`;
+    `<hr><button class="fp" data-act="fp" data-v="${it.false_positive ? "0" : "1"}">${fpLabel}</button>` +
+    `<button class="del" data-act="del">Delete issue</button>`;
   m.dataset.iid = id;
   m.style.display = "block"; m.style.left = e.clientX + "px"; m.style.top = e.clientY + "px";
   // keep the menu on-screen
@@ -2476,8 +2610,13 @@ function showIssueCtx(e, id) {
         if (selectedIssue === id) { selectedIssue = null; issueDetail = null; renderIssueDetail(); }
       } else {
         const patch = { project: activeProject, id };
-        if (act === "sev") patch.severity = v; else patch.highlight = v;
+        if (act === "sev") patch.severity = v;
+        else if (act === "fp") patch.false_positive = (v === "1");
+        else patch.highlight = v;
         await fetch("/issues/update", { method:"POST", body: JSON.stringify(patch) });
+        if (act === "fp" && issueDetail && issueDetail.id === id) {
+          issueDetail.false_positive = (v === "1"); renderIssueDetail();
+        }
       }
       loadIssuesFor(activeProject);
     };
@@ -2638,11 +2777,12 @@ function hlHeaderValue(nameLower, value) {
 }
 function hlCookie(value) {
   // Cookie attributes, SameSite values, and any embedded JWT (session tokens).
-  const re = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*|\b(HttpOnly|Secure|SameSite|Domain|Path|Max-Age|Expires)\b|\b(Strict|Lax|None)\b/gi;
+  const re = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*|(__(?:Host|Secure)-)|\b(HttpOnly|Secure|SameSite|Domain|Path|Max-Age|Expires|Partitioned)\b|\b(Strict|Lax|None)\b/gi;
   return hlTokens(value, re, m => {
     if (m[0].slice(0, 3).toLowerCase() === "eyj") return { tip: "jwt:" + m[0] };
-    if (m[1]) return { tip: "cookie:" + m[1].toLowerCase() };
-    if (m[2]) return { tip: "cookie:samesite-" + m[2].toLowerCase() };
+    if (m[1]) return { tip: "cookie:" + (m[1].toLowerCase() === "__host-" ? "host-prefix" : "secure-prefix") };
+    if (m[2]) return { tip: "cookie:" + m[2].toLowerCase() };
+    if (m[3]) return { tip: "cookie:samesite-" + m[3].toLowerCase() };
     return null;
   });
 }
@@ -2659,7 +2799,8 @@ function hlAuth(value) {
   const m = value.match(/^(\s*)(\S+)(\s+)([\s\S]*)$/);
   if (!m) return hlValueMaybeJwt(value);
   const scheme = m[2].toLowerCase();
-  const known = ["basic", "bearer", "digest", "negotiate", "ntlm"];
+  const known = ["basic", "bearer", "digest", "negotiate", "ntlm",
+    "aws4-hmac-sha256", "hawk", "signature"];
   const schemeHtml = known.includes(scheme)
     ? repSpanTip("tok-kw", m[2], "auth:" + scheme) : esc(m[2]);
   return esc(m[1]) + schemeHtml + esc(m[3]) + hlValueMaybeJwt(m[4]);
@@ -2674,7 +2815,9 @@ function attrTipKey(name) {
   if (/^on[a-z]/.test(n)) return "attr:on";
   const known = ["src", "href", "action", "formaction", "srcdoc", "sandbox", "rel",
     "target", "type", "http-equiv", "content", "integrity", "nonce", "style",
-    "autocomplete", "name", "method", "value"];
+    "autocomplete", "name", "method", "value", "enctype", "formmethod",
+    "formenctype", "crossorigin", "referrerpolicy", "ping", "download", "allow",
+    "loading"];
   return known.includes(n) ? "attr:" + n : null;
 }
 function hlJson(s) {
@@ -2877,6 +3020,12 @@ function initRepSettings() {
   try { tipsSaved = localStorage.getItem("beatrix.rep.tips") === "1"; } catch (e) {}
   setRepTips(tipsSaved);
 
+  // Beautify toggle — pretty-print the response body; restore the last state.
+  $("rep-pretty").onclick = () => setRepPretty(!repPrettyOn);
+  let prettySaved = false;
+  try { prettySaved = localStorage.getItem("beatrix.rep.pretty") === "1"; } catch (e) {}
+  setRepPretty(prettySaved);
+
   applyRepDisplay();
 }
 function syncRepControls() {
@@ -2916,7 +3065,19 @@ const HTTP_TIPS = {
     head: { title: "HEAD", desc: "Like GET but returns headers only, no body. Used to check existence or metadata." },
     options: { title: "OPTIONS", desc: "Asks which methods/capabilities the server allows; used in CORS preflight.", sec: "The Allow and Access-Control-* response headers reveal attack surface." },
     trace: { title: "TRACE", desc: "Echoes the received request back for debugging.", sec: "Should be disabled — enables Cross-Site Tracing (XST) to steal headers/cookies." },
-    connect: { title: "CONNECT", desc: "Establishes a tunnel, usually for HTTPS through a proxy.", sec: "An open CONNECT proxy can be abused to reach internal hosts." }
+    connect: { title: "CONNECT", desc: "Establishes a tunnel, usually for HTTPS through a proxy.", sec: "An open CONNECT proxy can be abused to reach internal hosts." },
+    propfind: { title: "PROPFIND (WebDAV)", desc: "Retrieves properties/metadata of a resource or collection.", sec: "If WebDAV is unexpectedly enabled it can enumerate files and directories." },
+    proppatch: { title: "PROPPATCH (WebDAV)", desc: "Sets or removes properties on a resource.", sec: "Writable WebDAV properties can be a foothold — confirm authorization." },
+    mkcol: { title: "MKCOL (WebDAV)", desc: "Creates a new collection (directory).", sec: "Creating directories often precedes arbitrary file upload." },
+    copy: { title: "COPY (WebDAV)", desc: "Copies a resource to the URL in the Destination header.", sec: "Can duplicate files into web-served paths — test upload-to-webroot." },
+    move: { title: "MOVE (WebDAV)", desc: "Moves/renames a resource to the Destination header URL.", sec: "May rename an upload to an executable extension — a classic upload bypass." },
+    lock: { title: "LOCK (WebDAV)", desc: "Places a lock on a resource for exclusive editing." },
+    unlock: { title: "UNLOCK (WebDAV)", desc: "Removes a WebDAV lock." },
+    report: { title: "REPORT (WebDAV/versioning)", desc: "Runs a server-defined report, often over version history." },
+    search: { title: "SEARCH (WebDAV)", desc: "Server-side search over a collection.", sec: "Query handling here can expose injection or over-broad access." },
+    purge: { title: "PURGE", desc: "Non-standard method that caches (Varnish, Nginx) use to evict an entry.", sec: "An exposed PURGE lets anyone flush the cache — a DoS / cache-poisoning lever." },
+    track: { title: "TRACK", desc: "A Microsoft-IIS analog of TRACE that echoes the request back.", sec: "Like TRACE, enables Cross-Site Tracing (XST) — should be disabled." },
+    debug: { title: "DEBUG", desc: "Non-standard debugging method exposed by some servers/frameworks.", sec: "May toggle verbose diagnostics or stack traces — probe what it returns." }
   },
   status: {
     "200": { title: "200 OK", desc: "The request succeeded and the body holds the result." },
@@ -2944,7 +3105,38 @@ const HTTP_TIPS = {
     "501": { title: "501 Not Implemented", desc: "The server does not support this functionality." },
     "502": { title: "502 Bad Gateway", desc: "An upstream server returned an invalid response.", sec: "Proxy/upstream boundaries are where smuggling and SSRF live." },
     "503": { title: "503 Service Unavailable", desc: "The server is overloaded or down for maintenance." },
-    "504": { title: "504 Gateway Timeout", desc: "An upstream server did not respond in time.", sec: "Timing differences can signal SSRF or slow back-end calls." }
+    "504": { title: "504 Gateway Timeout", desc: "An upstream server did not respond in time.", sec: "Timing differences can signal SSRF or slow back-end calls." },
+    "100": { title: "100 Continue", desc: "The server will accept the body; the client may proceed (paired with Expect: 100-continue)." },
+    "101": { title: "101 Switching Protocols", desc: "Switching protocols per the Upgrade header (WebSocket, h2c).", sec: "Upgrade handling is where WebSocket smuggling and h2c-desync bugs live." },
+    "202": { title: "202 Accepted", desc: "Accepted for asynchronous processing; the result isn't ready yet." },
+    "203": { title: "203 Non-Authoritative Information", desc: "A proxy returned a modified version of the origin's response." },
+    "205": { title: "205 Reset Content", desc: "Success; the client should reset the form/view that made the request." },
+    "226": { title: "226 IM Used", desc: "The response is a delta encoding of the resource (RFC 3229)." },
+    "300": { title: "300 Multiple Choices", desc: "Several representations exist; the client or user picks one." },
+    "305": { title: "305 Use Proxy", desc: "Deprecated — the resource must be reached through the named proxy.", sec: "Historically abused to steer clients at an attacker proxy; browsers ignore it." },
+    "402": { title: "402 Payment Required", desc: "Reserved; some APIs use it to signal a billing or quota limit." },
+    "407": { title: "407 Proxy Authentication Required", desc: "Like 401, but a proxy demands auth (see Proxy-Authenticate).", sec: "Reveals a proxy hop in the path — relevant to SSRF and header trust." },
+    "408": { title: "408 Request Timeout", desc: "The client was too slow sending the request; the connection closes.", sec: "Abused in Slowloris-style DoS and some request-smuggling timing tricks." },
+    "410": { title: "410 Gone", desc: "The resource is permanently gone with no forwarding URL." },
+    "411": { title: "411 Length Required", desc: "The server refuses the request without a Content-Length." },
+    "412": { title: "412 Precondition Failed", desc: "An If-* precondition header evaluated to false." },
+    "413": { title: "413 Content Too Large", desc: "The body exceeds the server's size limit.", sec: "The limit itself is useful recon for upload and buffer tests." },
+    "414": { title: "414 URI Too Long", desc: "The request URI exceeds what the server will parse.", sec: "Marks the URL-length ceiling — relevant to limit-based and cache-key tricks." },
+    "416": { title: "416 Range Not Satisfiable", desc: "The requested Range can't be served.", sec: "Malformed ranges have driven cache-poisoning and DoS bugs." },
+    "417": { title: "417 Expectation Failed", desc: "The server can't meet the Expect header's requirement." },
+    "421": { title: "421 Misdirected Request", desc: "The request reached a server that can't answer for that authority.", sec: "Central to HTTP/2 connection-coalescing and cross-host desync/smuggling." },
+    "423": { title: "423 Locked (WebDAV)", desc: "The resource is locked." },
+    "424": { title: "424 Failed Dependency (WebDAV)", desc: "The request failed because a dependent request failed." },
+    "425": { title: "425 Too Early", desc: "The server won't risk processing a possibly-replayed request (TLS early data).", sec: "Signals anti-replay handling around 0-RTT — worth probing for replay bugs." },
+    "426": { title: "426 Upgrade Required", desc: "The client must switch protocols (see Upgrade) to continue." },
+    "428": { title: "428 Precondition Required", desc: "The server requires the request to be conditional (an If-* header)." },
+    "431": { title: "431 Request Header Fields Too Large", desc: "One or more headers (or their total) exceed the server's limit.", sec: "The header-size ceiling matters for smuggling, cache-key, and cookie-bomb tests." },
+    "451": { title: "451 Unavailable For Legal Reasons", desc: "Access is denied for legal or censorship reasons." },
+    "505": { title: "505 HTTP Version Not Supported", desc: "The server won't support the request's HTTP version." },
+    "507": { title: "507 Insufficient Storage (WebDAV)", desc: "The server can't store the representation needed to complete the request." },
+    "508": { title: "508 Loop Detected (WebDAV)", desc: "An infinite loop was detected while processing the request." },
+    "510": { title: "510 Not Extended", desc: "Further extensions to the request are required to fulfill it." },
+    "511": { title: "511 Network Authentication Required", desc: "You must authenticate for network access — typically a captive portal.", sec: "A captive-portal interception point; on hostile networks the response may be attacker-controlled." }
   },
   statusClass: {
     "1xx": { title: "1xx Informational", desc: "A provisional response; the request continues." },
@@ -2988,7 +3180,79 @@ const HTTP_TIPS = {
     "x-xss-protection": { title: "X-XSS-Protection", desc: "A legacy browser XSS-filter toggle (deprecated).", sec: "Modern browsers ignore it; rely on CSP instead." },
     "referrer-policy": { title: "Referrer-Policy", desc: "Controls how much of the URL is sent in the Referer header.", sec: "A loose policy can leak tokens embedded in URLs to third parties." },
     "access-control-allow-origin": { title: "Access-Control-Allow-Origin", desc: "Which origins may read this response cross-site (CORS).", sec: "'*' or a reflected Origin — especially with credentials — is a serious CORS flaw." },
-    "access-control-allow-credentials": { title: "Access-Control-Allow-Credentials", desc: "If 'true', cross-site requests may include cookies/credentials.", sec: "'true' combined with a reflected Origin exposes authenticated data." }
+    "access-control-allow-credentials": { title: "Access-Control-Allow-Credentials", desc: "If 'true', cross-site requests may include cookies/credentials.", sec: "'true' combined with a reflected Origin exposes authenticated data." },
+    "access-control-allow-methods": { title: "Access-Control-Allow-Methods", desc: "Which methods are permitted cross-origin (CORS preflight response).", sec: "Reveals allowed methods; over-broad values widen cross-site attack surface." },
+    "access-control-allow-headers": { title: "Access-Control-Allow-Headers", desc: "Which request headers are permitted cross-origin (preflight response).", sec: "A wildcard or reflected value can loosen CORS more than intended." },
+    "access-control-expose-headers": { title: "Access-Control-Expose-Headers", desc: "Which response headers cross-origin JS is allowed to read." },
+    "access-control-max-age": { title: "Access-Control-Max-Age", desc: "How long (seconds) a CORS preflight result may be cached by the browser." },
+    "access-control-request-method": { title: "Access-Control-Request-Method", desc: "In a preflight, the method the real cross-origin request will use." },
+    "access-control-request-headers": { title: "Access-Control-Request-Headers", desc: "In a preflight, the headers the real cross-origin request will send." },
+    "x-forwarded-for": { title: "X-Forwarded-For", desc: "Client IP chain added by proxies/load balancers.", sec: "Often trusted for auth, rate-limits, or logging — spoof it to bypass IP allowlists or forge audit trails." },
+    "x-forwarded-host": { title: "X-Forwarded-Host", desc: "The original Host as seen by an upstream proxy.", sec: "A prime Host-injection vector — password-reset poisoning, cache poisoning, routing tricks." },
+    "x-forwarded-proto": { title: "X-Forwarded-Proto", desc: "The scheme (http/https) the client used, per an upstream proxy.", sec: "Trusting it blindly can defeat HTTPS-only checks and redirect logic." },
+    "x-forwarded-port": { title: "X-Forwarded-Port", desc: "The port the client connected to, per an upstream proxy." },
+    "x-forwarded-server": { title: "X-Forwarded-Server", desc: "Hostname of an upstream proxy that handled the request." },
+    "forwarded": { title: "Forwarded", desc: "The standardized (RFC 7239) proxy header carrying for/host/proto.", sec: "Same trust pitfalls as X-Forwarded-*; test spoofing of each element." },
+    "x-real-ip": { title: "X-Real-IP", desc: "Client IP set by a reverse proxy (common with Nginx).", sec: "Like X-Forwarded-For, spoofable when the app trusts it for IP checks." },
+    "x-original-url": { title: "X-Original-URL", desc: "Original request path, honored by some stacks (IIS/Symfony) for internal routing.", sec: "A well-known 403/authorization bypass — route to a forbidden path via this header." },
+    "x-rewrite-url": { title: "X-Rewrite-URL", desc: "Alternate path-override header honored by some frameworks.", sec: "Like X-Original-URL, test it for access-control / 403 bypass." },
+    "x-http-method-override": { title: "X-HTTP-Method-Override", desc: "Tells the server to treat the request as a different method (e.g. POST→DELETE).", sec: "Can smuggle a disallowed method past a filter that only checks the real verb." },
+    "x-host": { title: "X-Host", desc: "Non-standard host override honored by some back ends.", sec: "Another Host-injection surface — test alongside X-Forwarded-Host." },
+    "sec-fetch-site": { title: "Sec-Fetch-Site", desc: "Browser-set metadata: relationship of the request's origin to the target (same-origin, cross-site...).", sec: "Servers use it as a CSRF signal; note whether the app actually enforces it." },
+    "sec-fetch-mode": { title: "Sec-Fetch-Mode", desc: "Browser-set: the request mode (navigate, cors, no-cors, ...)." },
+    "sec-fetch-dest": { title: "Sec-Fetch-Dest", desc: "Browser-set: the destination of the request (document, script, image, ...)." },
+    "sec-fetch-user": { title: "Sec-Fetch-User", desc: "Browser-set: '?1' when the navigation was triggered by a real user gesture." },
+    "sec-ch-ua": { title: "Sec-CH-UA (Client Hint)", desc: "User-Agent client hint listing the browser brand(s) and major version." },
+    "sec-ch-ua-platform": { title: "Sec-CH-UA-Platform", desc: "User-Agent client hint naming the OS platform." },
+    "sec-ch-ua-mobile": { title: "Sec-CH-UA-Mobile", desc: "User-Agent client hint: '?1' on mobile, '?0' otherwise." },
+    "permissions-policy": { title: "Permissions-Policy", desc: "Controls which browser features (camera, geolocation, ...) the page and its frames may use.", sec: "Successor to Feature-Policy; a permissive policy can widen what embedded/injected content can do." },
+    "feature-policy": { title: "Feature-Policy", desc: "Legacy predecessor of Permissions-Policy controlling browser feature access." },
+    "cross-origin-opener-policy": { title: "Cross-Origin-Opener-Policy (COOP)", desc: "Isolates the page's browsing-context group from cross-origin openers.", sec: "Missing COOP leaves the window open to XS-Leaks and Spectre-style cross-origin probing." },
+    "cross-origin-embedder-policy": { title: "Cross-Origin-Embedder-Policy (COEP)", desc: "Requires embedded resources to opt in (CORP/CORS); enables cross-origin isolation." },
+    "cross-origin-resource-policy": { title: "Cross-Origin-Resource-Policy (CORP)", desc: "Restricts which origins may embed this resource.", sec: "Its absence can enable resource-based XS-Leaks and cross-origin inclusion." },
+    "clear-site-data": { title: "Clear-Site-Data", desc: "Instructs the browser to clear cookies, storage, and/or cache for the site.", sec: "Usually seen on logout; if triggerable by an attacker it can wipe client state (nuisance/DoS)." },
+    "timing-allow-origin": { title: "Timing-Allow-Origin", desc: "Which origins may read detailed Resource-Timing data for this resource.", sec: "Over-broad values can leak cross-origin timing usable in XS-Leaks." },
+    "report-to": { title: "Report-To", desc: "Named reporting endpoints (Reporting API) for CSP, NEL, and other violation reports." },
+    "reporting-endpoints": { title: "Reporting-Endpoints", desc: "The newer, structured way to declare Reporting-API endpoints." },
+    "nel": { title: "NEL (Network Error Logging)", desc: "Opts the site into browser reporting of network/connection failures.", sec: "Reporting endpoints can leak request metadata to a third party — note where reports go." },
+    "content-security-policy-report-only": { title: "Content-Security-Policy-Report-Only", desc: "Evaluates a CSP and reports violations without enforcing it.", sec: "Report-only means NO protection — an easy-to-miss misconfiguration." },
+    "x-permitted-cross-domain-policies": { title: "X-Permitted-Cross-Domain-Policies", desc: "Controls Adobe (Flash/PDF) cross-domain policy files.", sec: "'all' historically widened cross-domain data access for plugins." },
+    "x-dns-prefetch-control": { title: "X-DNS-Prefetch-Control", desc: "Enables or disables the browser's speculative DNS prefetching." },
+    "x-download-options": { title: "X-Download-Options", desc: "'noopen' stops legacy IE from opening downloads in the site's context.", sec: "Absence historically allowed HTML downloads to run in-origin (XSS)." },
+    "retry-after": { title: "Retry-After", desc: "How long to wait before retrying (seconds or a date); seen with 429/503.", sec: "Reveals rate-limit / backoff windows to pace brute-force around." },
+    "allow": { title: "Allow", desc: "Lists the methods valid for the resource; sent with 405.", sec: "Enumerates the method attack surface (PUT/DELETE/PATCH worth testing)." },
+    "age": { title: "Age", desc: "Seconds the response has sat in an intermediary cache.", sec: "A non-zero Age proves a shared cache is in play — relevant to cache poisoning/deception." },
+    "via": { title: "Via", desc: "Proxies/gateways the message passed through, with their protocols.", sec: "Exposes intermediary software and hops — recon for smuggling and SSRF." },
+    "x-cache": { title: "X-Cache", desc: "Whether a CDN/proxy served a HIT or MISS (non-standard but common).", sec: "HIT/MISS feedback is the key oracle when probing web-cache poisoning/deception." },
+    "cf-cache-status": { title: "CF-Cache-Status", desc: "Cloudflare's cache result (HIT/MISS/DYNAMIC/…).", sec: "Same cache-poisoning oracle as X-Cache, specific to Cloudflare." },
+    "server-timing": { title: "Server-Timing", desc: "Server-side timing metrics surfaced to the browser.", sec: "Can leak back-end timing and internal component names — minor info disclosure." },
+    "x-request-id": { title: "X-Request-ID", desc: "A correlation ID assigned to the request for tracing/logs.", sec: "Predictable IDs can aid log correlation or enumeration; note the format." },
+    "x-correlation-id": { title: "X-Correlation-ID", desc: "A cross-service correlation identifier for tracing a request." },
+    "x-amzn-trace-id": { title: "X-Amzn-Trace-Id", desc: "AWS ALB/X-Ray trace identifier — signals the request went through AWS infrastructure." },
+    "x-ratelimit-limit": { title: "X-RateLimit-Limit", desc: "The request quota for the current rate-limit window.", sec: "Maps the throttle so you can pace brute-force/enumeration under it." },
+    "x-ratelimit-remaining": { title: "X-RateLimit-Remaining", desc: "Requests left in the current rate-limit window." },
+    "x-ratelimit-reset": { title: "X-RateLimit-Reset", desc: "When the rate-limit window resets (epoch or seconds)." },
+    "accept-ranges": { title: "Accept-Ranges", desc: "Whether the server supports ranged requests ('bytes' or 'none')." },
+    "range": { title: "Range", desc: "Requests only part of a resource (byte ranges).", sec: "Crafted/overlapping ranges have caused cache-poisoning and DoS — worth fuzzing." },
+    "content-range": { title: "Content-Range", desc: "Which byte range of the resource this partial (206) response covers." },
+    "if-match": { title: "If-Match", desc: "Run the request only if the resource's ETag matches (optimistic concurrency)." },
+    "if-none-match": { title: "If-None-Match", desc: "Conditional request keyed on ETag; drives 304 caching revalidation." },
+    "if-modified-since": { title: "If-Modified-Since", desc: "Return the resource only if changed since this date; else 304." },
+    "if-unmodified-since": { title: "If-Unmodified-Since", desc: "Run the request only if the resource is unchanged since this date." },
+    "if-range": { title: "If-Range", desc: "Serve the Range only if the validator still matches; otherwise send the whole resource." },
+    "content-language": { title: "Content-Language", desc: "The natural language(s) of the body." },
+    "content-md5": { title: "Content-MD5", desc: "A (legacy) MD5 digest of the body for integrity checking." },
+    "link": { title: "Link", desc: "Typed relationships to other resources (preload, prev/next, canonical...).", sec: "preload/preconnect targets and rel=canonical can sometimes be influenced — check the URLs." },
+    "te": { title: "TE", desc: "Which transfer encodings the client accepts in the response (e.g. trailers).", sec: "Part of the framing surface — relevant when hunting request smuggling." },
+    "expect": { title: "Expect", desc: "Client expectation, usually '100-continue' before sending a large body.", sec: "Mishandled Expect has featured in request-smuggling and DoS research." },
+    "upgrade": { title: "Upgrade", desc: "Asks to switch protocols on this connection (WebSocket, h2c).", sec: "The entry point for WebSocket smuggling and h2c-desync — inspect closely." },
+    "keep-alive": { title: "Keep-Alive", desc: "Tuning (timeout, max) for a persistent connection." },
+    "proxy-authorization": { title: "Proxy-Authorization", desc: "Credentials for an intermediary proxy (not the origin server)." },
+    "proxy-authenticate": { title: "Proxy-Authenticate", desc: "With 407, the auth scheme a proxy requires.", sec: "Confirms a proxy in the path and names its auth mechanism." },
+    "max-forwards": { title: "Max-Forwards", desc: "Limits how many proxies a TRACE/OPTIONS request may traverse." },
+    "dnt": { title: "DNT (Do Not Track)", desc: "Legacy 'do not track' preference; largely ignored today.", sec: "Its uniqueness can add to browser fingerprinting." },
+    "x-content-security-policy": { title: "X-Content-Security-Policy (legacy)", desc: "Old, non-standard CSP header for legacy browsers.", sec: "If it's the ONLY CSP present, modern browsers ignore it — effectively no protection." },
+    "x-webkit-csp": { title: "X-WebKit-CSP (legacy)", desc: "Old WebKit-prefixed CSP header.", sec: "Superseded by Content-Security-Policy; ignored by modern browsers." }
   },
   tags: {
     "html": { title: "<html>", desc: "The root element of an HTML document." },
@@ -3009,7 +3273,29 @@ const HTTP_TIPS = {
     "object": { title: "<object>", desc: "Embeds external resources or plugins.", sec: "Can load untrusted content or plugins — an injection vector." },
     "embed": { title: "<embed>", desc: "Embeds external content such as media or plugins.", sec: "Like <object>, a potential vector for loading attacker content." },
     "base": { title: "<base>", desc: "Sets the base URL for all relative links on the page.", sec: "An injected <base href> hijacks every relative URL — serious." },
-    "doctype": { title: "<!DOCTYPE>", desc: "Declares the document type (e.g. html).", sec: "In XML, a DOCTYPE with entities is the gateway to XXE." }
+    "doctype": { title: "<!DOCTYPE>", desc: "Declares the document type (e.g. html).", sec: "In XML, a DOCTYPE with entities is the gateway to XXE." },
+    "body": { title: "<body>", desc: "The document's visible content.", sec: "onload/onpageshow on <body> are common XSS execution points." },
+    "video": { title: "<video>", desc: "Embeds video; can autoplay and fire media events.", sec: "onerror/onloadstart handlers make it a filter-dodging XSS vector." },
+    "audio": { title: "<audio>", desc: "Embeds audio; can fire media events.", sec: "Like <video>, its event handlers are used in XSS payloads." },
+    "source": { title: "<source>", desc: "A media source for <video>/<audio>/<picture>.", sec: "onerror on a bad src is a classic XSS trigger." },
+    "template": { title: "<template>", desc: "Holds inert markup that scripts clone at runtime.", sec: "Content is parsed but inert; a known mutation-XSS (mXSS) context to watch." },
+    "noscript": { title: "<noscript>", desc: "Content shown when scripting is disabled.", sec: "Its unusual parsing has enabled mutation-XSS bypasses of sanitizers." },
+    "math": { title: "<math> (MathML)", desc: "Inline MathML content.", sec: "MathML parsing quirks are a recurring mutation-XSS sanitizer bypass." },
+    "annotation-xml": { title: "<annotation-xml> (MathML)", desc: "A MathML container that can switch the parser into HTML integration mode.", sec: "A well-known mXSS gadget for escaping sanitizers." },
+    "foreignobject": { title: "<foreignObject> (SVG)", desc: "Embeds HTML inside an SVG document.", sec: "Lets HTML (and scripts/handlers) ride inside otherwise-trusted SVG — an XSS vector." },
+    "frame": { title: "<frame>", desc: "A single pane inside a legacy <frameset>.", sec: "Legacy framing; src can load untrusted content — clickjacking/UI-redress." },
+    "frameset": { title: "<frameset>", desc: "Legacy replacement for <body> that lays out <frame>s." },
+    "applet": { title: "<applet>", desc: "Loads a legacy Java applet (obsolete).", sec: "A dangerous legacy plugin/code-execution vector if ever honored." },
+    "select": { title: "<select>", desc: "A drop-down list of <option>s in a form." },
+    "option": { title: "<option>", desc: "One choice within a <select>." },
+    "label": { title: "<label>", desc: "A caption bound to a form control." },
+    "details": { title: "<details>", desc: "A disclosure widget that expands on click.", sec: "ontoggle fires without user script and is used in XSS payloads." },
+    "marquee": { title: "<marquee>", desc: "Obsolete scrolling-text element.", sec: "Legacy event handlers here appear in XSS filter-bypass payloads." },
+    "dialog": { title: "<dialog>", desc: "A native modal/non-modal dialog box." },
+    "portal": { title: "<portal>", desc: "Experimental element for previewing/embedding another page.", sec: "Like <iframe>, embedding untrusted pages warrants navigation/clickjacking review." },
+    "table": { title: "<table>", desc: "Tabular data container.", sec: "Table-related parsing (rows/cells) is a frequent mutation-XSS context." },
+    "noembed": { title: "<noembed>", desc: "Fallback content when <embed> is unsupported.", sec: "Raw-text parsing mode makes it another mXSS sanitizer-bypass gadget." },
+    "xml": { title: "<xml>", desc: "Legacy IE data-island element.", sec: "Historically abused for HTML+time / data-island based XSS in old IE." }
   },
   cookie: {
     "httponly": { title: "HttpOnly", desc: "The cookie can't be read by JavaScript (document.cookie).", sec: "Its absence on a session cookie means XSS can steal it — a finding." },
@@ -3021,7 +3307,10 @@ const HTTP_TIPS = {
     "domain": { title: "Domain", desc: "Which host(s) the cookie is scoped to.", sec: "A too-broad parent Domain widens exposure across subdomains." },
     "path": { title: "Path", desc: "The URL path prefix the cookie is scoped to.", sec: "Path scoping is not a security boundary between apps." },
     "max-age": { title: "Max-Age", desc: "Cookie lifetime in seconds (takes precedence over Expires)." },
-    "expires": { title: "Expires", desc: "Absolute expiry date/time of the cookie." }
+    "expires": { title: "Expires", desc: "Absolute expiry date/time of the cookie." },
+    "partitioned": { title: "Partitioned (CHIPS)", desc: "Binds the cookie to the top-level site, giving it a separate jar per embedding site.", sec: "Limits cross-site tracking; note that it changes how a third-party cookie is scoped." },
+    "host-prefix": { title: "__Host- prefix", desc: "A cookie-name prefix the browser only accepts if it's Secure, Path=/, and has no Domain.", sec: "A strong anti-fixation/scoping control — its use is a good sign; forging one cross-domain is blocked." },
+    "secure-prefix": { title: "__Secure- prefix", desc: "A cookie-name prefix the browser only accepts if the Secure flag is set.", sec: "Guarantees the cookie was set over HTTPS — resists insecure overwrites." }
   },
   csp: {
     "default-src": { title: "default-src", desc: "The fallback source list for content types without their own directive." },
@@ -3045,7 +3334,27 @@ const HTTP_TIPS = {
     "kw-self": { title: "'self'", desc: "Allows content from the page's own origin." },
     "kw-none": { title: "'none'", desc: "Allows nothing for this directive." },
     "kw-strict-dynamic": { title: "'strict-dynamic'", desc: "Trust propagates to scripts loaded by an already-trusted script; host allowlists are ignored.", sec: "Powerful but easy to misconfigure — check the nonce/hash it relies on." },
-    "star": { title: "* (wildcard source)", desc: "Allows any origin for this directive.", sec: "A wildcard source is permissive — a common CSP weakness." }
+    "star": { title: "* (wildcard source)", desc: "Allows any origin for this directive.", sec: "A wildcard source is permissive — a common CSP weakness." },
+    "child-src": { title: "child-src", desc: "Sources for workers and nested browsing contexts (frames).", sec: "Superseded by frame-src/worker-src but still honored — check what it allows." },
+    "worker-src": { title: "worker-src", desc: "Where Web/Shared/Service Workers may be loaded from.", sec: "Permissive worker-src can let injected code spin up a worker outside script-src." },
+    "manifest-src": { title: "manifest-src", desc: "Where the web-app manifest may be loaded from." },
+    "media-src": { title: "media-src", desc: "Where <audio>/<video> media may load from." },
+    "prefetch-src": { title: "prefetch-src", desc: "Sources for prefetch/prerender requests (deprecated)." },
+    "script-src-elem": { title: "script-src-elem", desc: "Sources for <script> elements specifically (overrides script-src for them).", sec: "A gap between -elem and -attr can leave one execution path under-restricted." },
+    "script-src-attr": { title: "script-src-attr", desc: "Controls inline event-handler attributes (onclick, ...) specifically.", sec: "If this is looser than script-src, on* handler XSS may still fire." },
+    "style-src-elem": { title: "style-src-elem", desc: "Sources for <style>/<link rel=stylesheet> specifically." },
+    "style-src-attr": { title: "style-src-attr", desc: "Controls inline style attributes specifically." },
+    "trusted-types": { title: "trusted-types", desc: "Declares allowed Trusted-Types policy names to lock down DOM-XSS sinks.", sec: "A strong DOM-XSS mitigation; a wildcard or 'allow-duplicates' weakens it." },
+    "require-trusted-types-for": { title: "require-trusted-types-for", desc: "Forces Trusted Types on dangerous DOM sinks (usually 'script').", sec: "When present with a tight policy, it blocks a whole class of DOM XSS." },
+    "navigate-to": { title: "navigate-to", desc: "Restricts where the document may navigate (proposed, largely unshipped).", sec: "Where supported, it can blunt injected-link/open-redirect navigations." },
+    "webrtc": { title: "webrtc", desc: "Allows or blocks the page's use of WebRTC ('allow' / 'block')." },
+    "data": { title: "data: (scheme source)", desc: "Allows resources loaded from data: URIs for this directive.", sec: "data: in script-src (or default-src) is a frequent CSP-bypass foothold." },
+    "blob": { title: "blob: (scheme source)", desc: "Allows resources loaded from blob: URLs for this directive.", sec: "blob: in script-src can be leveraged to run attacker-built scripts." },
+    "https": { title: "https: (scheme source)", desc: "Allows any HTTPS origin for this directive.", sec: "A bare https: source trusts the whole web — nearly as weak as '*'." },
+    "kw-wasm-unsafe-eval": { title: "'wasm-unsafe-eval'", desc: "Allows compiling/instantiating WebAssembly without allowing JS eval().", sec: "Narrower than 'unsafe-eval', but still review why Wasm compilation is needed." },
+    "kw-unsafe-hashes": { title: "'unsafe-hashes'", desc: "Allows specific inline event handlers/style attributes by hash.", sec: "Loosens script-src-attr — confirm the hashed handlers are truly static." },
+    "kw-report-sample": { title: "'report-sample'", desc: "Includes a short sample of the offending code in violation reports." },
+    "kw-inline-speculation-rules": { title: "'inline-speculation-rules'", desc: "Allows inline <script type=speculationrules> for prefetch/prerender hints." }
   },
   cc: {
     "no-store": { title: "no-store", desc: "Never cache this response anywhere.", sec: "Correct for sensitive pages; its absence can leak data into shared caches." },
@@ -3057,7 +3366,13 @@ const HTTP_TIPS = {
     "must-revalidate": { title: "must-revalidate", desc: "Once stale, the cache must revalidate before serving." },
     "immutable": { title: "immutable", desc: "The response won't change while fresh; skip revalidation." },
     "stale-while-revalidate": { title: "stale-while-revalidate", desc: "Serve stale while revalidating in the background." },
-    "no-transform": { title: "no-transform", desc: "Proxies must not modify the body (e.g. re-compress images)." }
+    "no-transform": { title: "no-transform", desc: "Proxies must not modify the body (e.g. re-compress images)." },
+    "proxy-revalidate": { title: "proxy-revalidate", desc: "Like must-revalidate, but applies only to shared (proxy) caches." },
+    "stale-if-error": { title: "stale-if-error", desc: "Serve a stale response if revalidation errors or the origin is down." },
+    "only-if-cached": { title: "only-if-cached", desc: "Request directive: return a cached response or 504, never hit the origin." },
+    "max-stale": { title: "max-stale", desc: "Request directive: accept a stale response up to this many seconds old." },
+    "min-fresh": { title: "min-fresh", desc: "Request directive: only accept responses fresh for at least this many more seconds." },
+    "must-understand": { title: "must-understand", desc: "Cache only if the cache understands the status code's caching rules." }
   },
   hsts: {
     "max-age": { title: "max-age (HSTS)", desc: "Seconds the browser will force HTTPS for this host.", sec: "A very small max-age barely protects; 0 disables HSTS." },
@@ -3075,14 +3390,35 @@ const HTTP_TIPS = {
     "application/octet-stream": { title: "application/octet-stream", desc: "Arbitrary binary data / a download." },
     "application/javascript": { title: "application/javascript", desc: "JavaScript source.", sec: "If it reflects input, consider JSONP/callback abuse." },
     "application/graphql": { title: "application/graphql", desc: "A GraphQL query body.", sec: "Probe introspection (__schema) and batching/alias abuse." },
-    "text/csv": { title: "text/csv", desc: "CSV data.", sec: "User-controlled cells can trigger CSV/formula injection in spreadsheet apps." }
+    "text/csv": { title: "text/csv", desc: "CSV data.", sec: "User-controlled cells can trigger CSV/formula injection in spreadsheet apps." },
+    "image/svg+xml": { title: "image/svg+xml", desc: "An SVG image — which is XML and can carry script and event handlers.", sec: "User-supplied SVG rendered inline (or same-origin) is a classic stored-XSS vector." },
+    "application/xhtml+xml": { title: "application/xhtml+xml", desc: "XHTML served as XML.", sec: "Strict XML parsing changes escaping rules — an mXSS and XXE surface." },
+    "application/soap+xml": { title: "application/soap+xml", desc: "A SOAP envelope (XML).", sec: "SOAP endpoints are prime XXE and XML-injection targets — probe DOCTYPE handling." },
+    "application/ld+json": { title: "application/ld+json", desc: "JSON-LD structured/linked data.", sec: "Often reflected into pages for SEO — check for injection into that context." },
+    "application/vnd.api+json": { title: "application/vnd.api+json", desc: "A JSON:API-formatted body." },
+    "application/hal+json": { title: "application/hal+json", desc: "HAL hypermedia JSON, exposing linked resources.", sec: "Embedded _links can reveal hidden endpoints worth testing." },
+    "application/jwt": { title: "application/jwt", desc: "The body is a JSON Web Token.", sec: "Hover the token itself to decode it and inspect alg/claims." },
+    "application/x-yaml": { title: "application/x-yaml", desc: "A YAML body.", sec: "Unsafe YAML deserialization (tags/anchors) can lead to RCE — check the parser." },
+    "text/yaml": { title: "text/yaml", desc: "A YAML body.", sec: "Same unsafe-deserialization surface as application/x-yaml." },
+    "application/pdf": { title: "application/pdf", desc: "A PDF document." },
+    "application/zip": { title: "application/zip", desc: "A ZIP archive.", sec: "Server-side unzip can enable zip-slip path traversal and zip-bomb DoS." },
+    "application/wasm": { title: "application/wasm", desc: "A compiled WebAssembly module." },
+    "text/event-stream": { title: "text/event-stream", desc: "Server-Sent Events — a long-lived stream of updates." },
+    "application/x-ndjson": { title: "application/x-ndjson", desc: "Newline-delimited JSON (one object per line)." },
+    "application/x-protobuf": { title: "application/x-protobuf", desc: "Protocol Buffers binary body.", sec: "Tamper with encoded fields to probe validation and mass-assignment." },
+    "application/x-amf": { title: "application/x-amf", desc: "Action Message Format (Flash/Flex remoting).", sec: "AMF endpoints have a history of unsafe deserialization — a serious RCE surface." },
+    "multipart/mixed": { title: "multipart/mixed", desc: "A body of several parts with differing content types." },
+    "application/dns-message": { title: "application/dns-message", desc: "A DNS query/response body (DNS-over-HTTPS)." }
   },
   auth: {
     "basic": { title: "Basic auth", desc: "Credentials are base64('user:pass') — encoding, not encryption.", sec: "Trivially decodable; capture and decode to recover the credentials." },
     "bearer": { title: "Bearer token", desc: "An opaque or JWT token proving the caller's identity.", sec: "If it's a JWT, hover the token itself to decode it and inspect alg/claims." },
     "digest": { title: "Digest auth", desc: "Challenge-response auth that avoids sending the raw password." },
     "negotiate": { title: "Negotiate (SPNEGO)", desc: "Kerberos/NTLM negotiation, common on Windows/AD networks." },
-    "ntlm": { title: "NTLM", desc: "Microsoft challenge-response auth.", sec: "Relay and hash-capture attacks are the usual angle." }
+    "ntlm": { title: "NTLM", desc: "Microsoft challenge-response auth.", sec: "Relay and hash-capture attacks are the usual angle." },
+    "aws4-hmac-sha256": { title: "AWS Signature v4", desc: "Amazon's SigV4 request-signing scheme; the header carries Credential, SignedHeaders, and Signature.", sec: "Leaks the AWS access-key ID and region/service; check for signature-bypass and replay (SignedHeaders scope)." },
+    "hawk": { title: "Hawk", desc: "HMAC-based request auth (id + mac + ts + nonce).", sec: "Weak or leaked shared keys allow request forgery; check nonce/timestamp replay windows." },
+    "signature": { title: "HTTP Signature", desc: "Signs selected headers with a keyId and algorithm (IETF HTTP Message Signatures).", sec: "Confirm which headers are actually signed — unsigned ones are tamperable." }
   },
   attr: {
     "on": { title: "Event handler (on*)", desc: "Runs JavaScript when the event fires (onerror, onload, onclick, ...).", sec: "A reflected/injected on* handler is direct XSS execution." },
@@ -3103,7 +3439,16 @@ const HTTP_TIPS = {
     "autocomplete": { title: "autocomplete", desc: "Hints whether the browser may autofill a field.", sec: "Sensitive fields should use off / new-password." },
     "name": { title: "name", desc: "The field name submitted with a form.", sec: "Reveals expected parameters — handy for mass-assignment / IDOR." },
     "method": { title: "method (form)", desc: "The HTTP method the form uses (GET/POST)." },
-    "value": { title: "value", desc: "The field's current value.", sec: "Hidden field values are tamperable client-side state." }
+    "value": { title: "value", desc: "The field's current value.", sec: "Hidden field values are tamperable client-side state." },
+    "enctype": { title: "enctype (form)", desc: "How form data is encoded on submit (urlencoded / multipart / text/plain).", sec: "Switching to text/plain is used to dodge CSRF content-type checks." },
+    "formmethod": { title: "formmethod", desc: "Overrides the form's method for one submit button.", sec: "Can flip a submit to GET/POST to reach a different, less-guarded handler." },
+    "formenctype": { title: "formenctype", desc: "Overrides the form's enctype for one submit button.", sec: "Like enctype, can be used to dodge content-type-based CSRF checks." },
+    "crossorigin": { title: "crossorigin", desc: "How a subresource is fetched cross-origin (anonymous / use-credentials).", sec: "'use-credentials' sends cookies to third-party resources; pair with SRI (integrity)." },
+    "referrerpolicy": { title: "referrerpolicy", desc: "Per-element control of how much Referer is sent when fetching it.", sec: "A loose value can leak tokens embedded in the current URL to third parties." },
+    "ping": { title: "ping (a)", desc: "URLs the browser POSTs to when the link is followed (click tracking).", sec: "A controllable ping list fires background POSTs to attacker URLs on click." },
+    "download": { title: "download (a)", desc: "Marks the link as a download and suggests a filename.", sec: "A controllable filename can enable reflected-file-download / misleading saves." },
+    "allow": { title: "allow (iframe)", desc: "Feature-policy grant list for the framed document (camera, geolocation, ...).", sec: "Over-broad grants let embedded/injected content use powerful browser features." },
+    "loading": { title: "loading", desc: "Lazy- or eager-loads an image/iframe ('lazy' / 'eager')." }
   }
 };
 // Decode a base64url segment to a string (best-effort).
@@ -3153,7 +3498,7 @@ function lookupTip(raw) {
   if (p === "jwt") return decodeJwtTip(k);
   return null;
 }
-let repTipsOn = false, repTipRAF = 0;
+let repTipsOn = false, repTipRAF = 0, repPrettyOn = false;
 function repShowTip(tip, x, y) {
   const b = $("rep-tip");
   b.innerHTML = '<div class="tip-title">' + esc(tip.title) + '</div>' +
@@ -3324,6 +3669,87 @@ async function sendRep() {
   }
 }
 
+// ── Beautify: pretty-print the response BODY, leaving the head untouched ──
+// Only JSON and XML/HTML are reformatted; anything else (or a malformed/
+// truncated body) is returned verbatim, so the toggle is always safe/lossless
+// to flip off. Headers keep their original bytes.
+function beautifyHttp(raw) {
+  const norm = String(raw || "").replace(/\r\n/g, "\n");
+  const idx = norm.indexOf("\n\n");
+  if (idx === -1) return raw;                       // headers only, no body
+  const head = norm.slice(0, idx), body = norm.slice(idx + 2);
+  const kind = repDetectCT(head.split("\n")) ||
+    (/^\s*[{\[]/.test(body) ? "json" : /^\s*</.test(body) ? "xml" : "");
+  let pretty = null;
+  try {
+    if (kind === "json") pretty = JSON.stringify(JSON.parse(body), null, 2);
+    else if (kind === "xml") pretty = beautifyMarkup(body);
+  } catch (e) { pretty = null; }                    // malformed/truncated → leave as-is
+  return pretty == null ? raw : head + "\n\n" + pretty;
+}
+// Reindent XML/HTML by nesting depth. Raw-text elements (script/style/pre/
+// textarea), comments, and CDATA are emitted byte-for-byte so we never mangle
+// code or significant whitespace.
+function beautifyMarkup(src) {
+  const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr"]);
+  const RAW = new Set(["script", "style", "pre", "textarea"]);
+  const s = String(src), out = [];
+  let depth = 0, i = 0;
+  const pad = () => "  ".repeat(depth < 0 ? 0 : depth);
+  const push = (line) => { const t = line.trim(); if (t) out.push(pad() + t); };
+  const openRe = /<([a-zA-Z][\w:-]*)\b[^>]*?(\/?)>/y;
+  while (i < s.length) {
+    if (s[i] === "<") {
+      if (s.startsWith("<!--", i)) {                // comment (may contain '>')
+        const e = s.indexOf("-->", i); const end = e === -1 ? s.length : e + 3;
+        out.push(pad() + s.slice(i, end)); i = end; continue;
+      }
+      if (s.startsWith("<![CDATA[", i)) {
+        const e = s.indexOf("]]>", i); const end = e === -1 ? s.length : e + 3;
+        out.push(pad() + s.slice(i, end)); i = end; continue;
+      }
+      openRe.lastIndex = i;
+      const om = openRe.exec(s);
+      if (om && om.index === i && om[2] !== "/" && RAW.has(om[1].toLowerCase())) {
+        const closeRe = new RegExp("</" + om[1] + "\\s*>", "ig");
+        closeRe.lastIndex = openRe.lastIndex;
+        const cm = closeRe.exec(s);
+        const end = cm ? cm.index + cm[0].length : s.length;
+        out.push(pad() + s.slice(i, end)); i = end; continue;
+      }
+      const gt = s.indexOf(">", i);
+      if (gt === -1) { push(s.slice(i)); break; }
+      const tag = s.slice(i, gt + 1);
+      if (/^<\//.test(tag)) { depth--; push(tag); }                 // closing
+      else if (/^<[!?]/.test(tag)) { push(tag); }                   // doctype / PI
+      else if (om && om.index === i && (om[2] === "/" || VOID.has(om[1].toLowerCase()))) push(tag);
+      else { push(tag); depth++; }                                  // opening
+      i = gt + 1;
+    } else {
+      const gt = s.indexOf("<", i);
+      const end = gt === -1 ? s.length : gt;
+      push(s.slice(i, end));
+      i = end;
+    }
+  }
+  return out.join("\n");
+}
+// The response currently on screen (live buffer or the scrubbed history entry).
+function currentRepResponse() {
+  const t = repTab(); if (!t) return null;
+  if (repView.live) return t.response || null;
+  const h = (t.history || [])[repView.idx];
+  return h ? (h.response || null) : null;
+}
+function setRepPretty(on) {
+  repPrettyOn = on;
+  const btn = $("rep-pretty");
+  if (btn) { btn.classList.toggle("on", on); btn.textContent = on ? "Beautify: on" : "Beautify: off"; }
+  try { localStorage.setItem("beatrix.rep.pretty", on ? "1" : "0"); } catch (e) {}
+  renderRepResponse(currentRepResponse());          // re-render whatever's shown
+}
+
 function renderRepResponse(resp) {
   const pre = $("rep-response");
   if (!resp) { pre.textContent = ""; pre.classList.remove("err"); $("rep-status").textContent = ""; return; }
@@ -3333,7 +3759,7 @@ function renderRepResponse(resp) {
     return;
   }
   pre.classList.remove("err");
-  pre.innerHTML = hlHttp(resp.raw || "", "response");
+  pre.innerHTML = hlHttp(repPrettyOn ? beautifyHttp(resp.raw || "") : (resp.raw || ""), "response");
   const cls = resp.status >= 200 && resp.status < 300 ? "ok"
             : resp.status >= 400 ? "bad" : "dim";
   const bits = ['<span class="' + cls + '">' + resp.status + " " + esc(resp.reason || "") + "</span>",
@@ -5388,7 +5814,8 @@ class SuiteServer:
                     self._json(suite.issues.update(
                         proj, payload.get("id"),
                         severity=payload.get("severity"),
-                        highlight=payload.get("highlight")))
+                        highlight=payload.get("highlight"),
+                        false_positive=payload.get("false_positive")))
                 elif path == "/issues/delete":
                     proj = payload.get("project")
                     if proj is None:

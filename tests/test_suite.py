@@ -897,6 +897,33 @@ def test_issue_update_severity_and_highlight(tmp_path):
     assert store.update(1, 999, severity="low")["ok"] is False
 
 
+def test_issue_false_positive_toggle_and_badge_count(tmp_path):
+    store = _IssueStore(_ProjectStore(tmp_path / "suite"))
+    store.add_finding(1, _finding(), "injection", "hunt")
+    store.add_finding(1, _finding(url="https://example.com/x?id=2"), "injection", "hunt")
+
+    # New issues start un-flagged and count toward the badge.
+    assert store.list(1)[0]["false_positive"] is False
+    assert store.count(1) == 2
+
+    # Marking one as a false positive drops it from the badge count but keeps
+    # the issue in the list.
+    res = store.update(1, 1, false_positive=True)
+    assert res["ok"] is True and res["issue"]["false_positive"] is True
+    assert store.get(1, 1)["false_positive"] is True
+    assert store.count(1) == 1
+    assert len(store.list(1)) == 2
+
+    # Un-marking restores it to the count.
+    assert store.update(1, 1, false_positive=False)["issue"]["false_positive"] is False
+    assert store.count(1) == 2
+
+    # A user's false-positive decision survives a re-scan (completion sweep).
+    store.update(1, 2, false_positive=True)
+    assert store.add_finding(1, _finding(url="https://example.com/x?id=2"), "injection", "hunt") is None
+    assert store.get(1, 2)["false_positive"] is True
+
+
 def test_dedup_refreshes_stale_severity_but_not_user_retriage(tmp_path):
     import json
 
