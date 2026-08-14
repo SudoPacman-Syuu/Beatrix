@@ -123,6 +123,12 @@ class TargetCrawler:
         self._scan_check_registry = None
         self._passive_findings: List = []
 
+        # Debug/verbosity sink — the engine sets these (like it does on every
+        # scanner) when a run is in debug mode, so every crawl request surfaces
+        # a live ``http`` line. Off by default and fully guarded.
+        self._debug: bool = False
+        self._debug_emit = None
+
     def set_scan_check_registry(self, registry):
         """
         Attach a ScanCheckRegistry so passive checks run during crawling.
@@ -230,6 +236,27 @@ class TargetCrawler:
         else:
             print(f"[crawler] {message}")
 
+    async def _debug_response_hook(self, response):
+        """httpx response event-hook: in debug mode, emit one ``http`` line per
+        crawl request. Registered on the client so it covers EVERY fetch (initial
+        page, followed links, soft-404 probe, tech enrichment) in one place."""
+        if not (self._debug and self._debug_emit):
+            return
+        try:
+            el = int(response.elapsed.total_seconds() * 1000)
+        except Exception:
+            el = 0
+        try:
+            self._debug_emit("http", {
+                "scanner": "crawl",
+                "method": response.request.method if response.request else "GET",
+                "url": str(response.url),
+                "status": response.status_code,
+                "elapsed_ms": el,
+            })
+        except Exception:
+            pass
+
     async def crawl(self, target: str, auth=None) -> CrawlResult:
         """
         Crawl the target and build the attack surface.
@@ -272,6 +299,7 @@ class TargetCrawler:
             verify=False,
             cookies=client_cookies,
             headers=client_headers,
+            event_hooks={"response": [self._debug_response_hook]},
         ) as client:
             # Initial fetch
             self.log(f"Fetching {target}")
