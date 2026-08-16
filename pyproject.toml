@@ -4,11 +4,18 @@ version = "2.0.0"
 description = "The Black Mamba — Bug Bounty Hunting CLI"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
-    {name = "SudoPacman-Syuu"}
+    {name = "John Fraumeni"}
 ]
 keywords = ["security", "pentesting", "bug-bounty", "vulnerability-scanner"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Security",
+    "Environment :: Console",
+]
 
 dependencies = [
     # CLI

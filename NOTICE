@@ -1,0 +1,10 @@
+Beatrix Suite — The Black Mamba
+Copyright 2026 John Fraumeni
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+Beatrix orchestrates a number of third-party security tools (for example
+nuclei, nmap, sqlmap, subfinder, and ffuf) as external programs invoked at
+runtime. Those tools are not distributed as part of this Work; each remains
+under its own license and copyright.

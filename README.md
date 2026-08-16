@@ -2,9 +2,9 @@
 
 > *"Revenge is a dish best served with a working PoC."*
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python) ![License](https://img.shields.io/badge/License-Source%20Available-lightgrey?style=flat-square) ![Platform](https://img.shields.io/badge/Platform-Linux-orange?style=flat-square&logo=linux) ![GitHub Stars](https://img.shields.io/github/stars/SudoPacman-Syuu/Beatrix-suite?style=flat-square) ![Version](https://img.shields.io/badge/Version-2.0-brightgreen?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python) ![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square) ![Platform](https://img.shields.io/badge/Platform-Linux-orange?style=flat-square&logo=linux) ![GitHub Stars](https://img.shields.io/github/stars/SudoPacman-Syuu/Beatrix-suite?style=flat-square) ![Version](https://img.shields.io/badge/Version-2.0-brightgreen?style=flat-square)
 
-**License:** Source Available — Free for non-commercial use. Commercial use requires a separate license. See [LICENSE](LICENSE).
+**License:** Apache-2.0 — free and open source, for commercial and non-commercial use alike. See [LICENSE](LICENSE).
 
 A bug-bounty hunting framework with two faces. New in **v2.0**, **the Suite** is a local web workbench — scanning, a raw-HTTP Repeater and an automated fuzzer, a triageable Issues board, one-drop authenticated scanning, and an autonomous AI pentester — all behind a single command. The original **CLI** is still the whole toolkit from your terminal, perfect for Codespaces, servers, and CI.
 
